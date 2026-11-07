@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 pub(super) fn failure(message: &str) -> DbErr {
     DbErr::Custom(message.to_owned())
 }
-/// Existing database timestamps are Shanghai wall-clock values, regardless of server TZ.
+/// Account timestamps use Shanghai wall-clock values, regardless of server TZ.
 pub(super) fn now() -> NaiveDateTime {
     Utc::now()
         .with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap())
@@ -66,35 +66,83 @@ pub(super) fn validate(
         })
         .transpose()
 }
-pub(super) fn authorize(
+pub(super) enum PolicyDenial {
+    ActorNotPermitted,
+    TargetRoleUnknown,
+    State(authz::FreezeDenial),
+    Role(authz::RoleChangeDenial),
+}
+
+impl PolicyDenial {
+    pub(super) fn code(&self) -> &'static str {
+        use authz::{FreezeDenial as F, RoleChangeDenial as R};
+        match self {
+            Self::ActorNotPermitted
+            | Self::State(F::NotPermitted)
+            | Self::Role(R::NotPermitted) => "actor_not_permitted",
+            Self::TargetRoleUnknown => "target_role_unknown",
+            Self::State(F::SelfTarget) | Self::Role(R::SelfTarget) => "self_target",
+            Self::State(F::TargetSuperadmin) | Self::Role(R::TargetSuperadmin) => {
+                "target_superadmin"
+            }
+            Self::State(F::PeerAdmin) => "peer_admin",
+            Self::Role(R::UnknownRole) => "unknown_role",
+            Self::Role(R::NotAssignable) => "role_not_assignable",
+            Self::Role(R::AdminTargetTier) => "admin_target_tier",
+            Self::Role(R::AdminAssignTier) => "admin_assign_tier",
+        }
+    }
+
+    pub(super) fn message(self, action: &Action) -> String {
+        match self {
+            Self::ActorNotPermitted => "只有有效的管理员账号可以管理账号".into(),
+            Self::TargetRoleUnknown => "该账号角色未登记，不能改状态".into(),
+            Self::Role(denial) => temp_user::role_change_denial_message(denial),
+            Self::State(denial) => {
+                if matches!(action, Action::Mute | Action::Unmute) {
+                    temp_user::mute_denial_message(denial, *action == Action::Mute)
+                } else {
+                    temp_user::freeze_denial_message(denial, *action == Action::Freeze)
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn policy(
     actor: &user::Model,
     target: &user::Model,
-    intent: &Intent,
-) -> Result<(), DbErr> {
+    action: &Action,
+    role: Option<&str>,
+) -> Result<(), PolicyDenial> {
     if authz::is_frozen(actor.status) || !authz::can_access_console(&actor.role) {
-        return Err(failure("只有有效的管理员账号可以管理账号"));
+        return Err(PolicyDenial::ActorNotPermitted);
     }
-    if intent.action == Action::SetRole {
+    if *action == Action::SetRole {
         authz::check_role_change(
             actor.id,
             &actor.role,
             target.id,
             &target.role,
-            intent.role.as_deref().unwrap_or(""),
+            role.unwrap_or(""),
         )
-        .map_err(|v| failure(&temp_user::role_change_denial_message(v)))
+        .map_err(PolicyDenial::Role)
     } else {
         if !authz::is_known_role(&target.role) {
-            return Err(failure("该账号角色未登记，不能改状态"));
+            return Err(PolicyDenial::TargetRoleUnknown);
         }
-        authz::check_freeze(actor.id, &actor.role, target.id, &target.role).map_err(|v| {
-            failure(&if matches!(intent.action, Action::Mute | Action::Unmute) {
-                temp_user::mute_denial_message(v, intent.action == Action::Mute)
-            } else {
-                temp_user::freeze_denial_message(v, intent.action == Action::Freeze)
-            })
-        })
+        authz::check_freeze(actor.id, &actor.role, target.id, &target.role)
+            .map_err(PolicyDenial::State)
     }
+}
+
+pub(super) fn authorize(
+    actor: &user::Model,
+    target: &user::Model,
+    intent: &Intent,
+) -> Result<(), DbErr> {
+    policy(actor, target, &intent.action, intent.role.as_deref())
+        .map_err(|denial| failure(&denial.message(&intent.action)))
 }
 pub(super) async fn revision<C: ConnectionTrait>(db: &C, id: i32) -> Result<i64, DbErr> {
     let row = db
@@ -175,7 +223,7 @@ pub(super) async fn prepare<C: ConnectionTrait>(
     }
     let changed = before != after || intent.action == Action::Freeze;
     let revoke_sessions = changed && matches!(intent.action, Action::Freeze | Action::SetRole);
-    // Hash explicit business fields only. Revisions detect ABA even in legacy update paths.
+    // Hash explicit business fields; revisions detect ABA across every account write path.
     let digest = serde_json::to_vec(&(
         intent,
         &before,

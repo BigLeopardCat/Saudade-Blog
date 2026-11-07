@@ -222,7 +222,7 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
         .await
         .unwrap();
     assert_eq!(Account::from(&read(db, 2).await).muted_until, Some(until));
-    // Legacy route clears exactly the same mute column and produces a transactional notice.
+    // Direct console changes use the same mute column and transactional notice.
     let Json(legacy_result) = crate::routes::temp_user::set_user_muted(
         State(ctx.state.clone()),
         headers(1, 0),
@@ -362,7 +362,7 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     assert_eq!(notice_count(db, 2).await, count);
     assert_eq!(read(db, 2).await, before);
     sql(db, "ALTER TABLE \"user\" DROP CONSTRAINT reject_status").await;
-    // Verify all real new/legacy routes are behind the complete administrator middleware chain.
+    // Every account write route uses the administrator middleware.
     use axum::{body::Body, http::Request};
     for path in [
         "/api/protected/account-actions/prepare",
@@ -429,7 +429,10 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(result["code"], 200);
     let version = result["data"]["plan"]["version"].as_str().unwrap();
-    assert_eq!(result["data"]["intent"], serde_json::to_value(&unfreeze).unwrap());
+    assert_eq!(
+        result["data"]["intent"],
+        serde_json::to_value(&unfreeze).unwrap()
+    );
     let app = crate::routes::create_router(state(scoped_db(&ctx.url, &ctx.schema).await));
     let response = app
         .oneshot(
@@ -464,7 +467,7 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
     assert_eq!(read(db, 2).await.token_version, before_ver + 1);
     assert_eq!(notice_count(db, 2).await, before_count + 1);
-    // Old status/role success paths must reach the shared service through the actual Router too.
+    // Direct console status and role changes use the shared service.
     for (path, body, expected_role, token_increment) in [
         (
             "/api/temp-users/2/status",
@@ -502,7 +505,7 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
         assert_eq!(after.token_version, before.token_version + token_increment);
         assert_eq!(notice_count(db, 2).await, notices_before + 1);
     }
-    // Existing superadmin policy may repair a historical unknown role; no new target policy is invented.
+    // Superadmins can repair an unregistered role under the same authorization policy.
     sql(
         db,
         "UPDATE \"user\" SET role='historical_unknown' WHERE id=2",
@@ -517,5 +520,216 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
         .unwrap();
     assert_eq!(read(db, 2).await.role, "user");
     db.execute_unprepared("SELECT 1").await.unwrap();
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn postgres_account_eligibility_is_authoritative_readonly_and_not_an_execution_grant() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        assert!(std::env::var_os("CI").is_none(), "CI requires TEST_PG_URL");
+        return;
+    };
+    let ctx = PgContext::new(url).await;
+    sql(&ctx.state.db, "INSERT INTO \"user\"(id,username,nickname,role) VALUES (6,'other_root','root','superadmin'),(7,'unknown_role','unknown','unregistered')").await;
+    let snapshot = |db: sea_orm::DatabaseConnection| async move {
+        let value = db
+            .query_one(Statement::from_string(
+                DatabaseBackend::Postgres,
+                "SELECT jsonb_agg(to_jsonb(u) ORDER BY id) AS snapshot FROM \"user\" u".to_owned(),
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get::<serde_json::Value>("", "snapshot")
+            .unwrap();
+        db.close().await.unwrap();
+        value
+    };
+    let before = snapshot(scoped_db(&ctx.url, &ctx.schema).await).await;
+    let app = crate::routes::create_router(state(scoped_db(&ctx.url, &ctx.schema).await));
+    for (actor, target, action, role, reason) in [
+        (4, 4, "mute", None, Some("self_target")),
+        (4, 1, "mute", None, Some("target_superadmin")),
+        (1, 6, "mute", None, Some("target_superadmin")),
+        (4, 5, "mute", None, Some("peer_admin")),
+        (4, 2, "mute", None, None),
+        (1, 5, "mute", None, None),
+        (4, 7, "mute", None, Some("target_role_unknown")),
+        (4, 5, "freeze", None, Some("peer_admin")),
+        (4, 2, "unfreeze", None, None),
+        (4, 2, "unmute", None, None),
+        (4, 2, "set_role", Some("admin"), Some("admin_assign_tier")),
+        (4, 5, "set_role", Some("user"), Some("admin_target_tier")),
+        (
+            1,
+            2,
+            "set_role",
+            Some("superadmin"),
+            Some("role_not_assignable"),
+        ),
+        (1, 2, "set_role", Some("admin"), None),
+        (1, 7, "set_role", Some("user"), None),
+    ] {
+        let uri = format!(
+            "/api/protected/account-actions/eligibility?accountId={target}&action={action}{}",
+            role.map(|role| format!("&role={role}")).unwrap_or_default()
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(uri)
+                    .header("authorization", headers(actor, 0)["authorization"].clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+        assert_eq!(body["data"]["accountId"], target);
+        assert_eq!(body["data"]["action"], action);
+        assert_eq!(body["data"]["role"], serde_json::to_value(role).unwrap());
+        assert_eq!(body["data"]["allowed"], reason.is_none());
+        assert_eq!(
+            body["data"]["reasonCode"],
+            serde_json::to_value(reason).unwrap()
+        );
+        assert!(body["data"]["message"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()));
+        assert_eq!(body["data"].as_object().unwrap().len(), 6);
+        let text = body.to_string();
+        for secret in [
+            "sensitive-password",
+            "password",
+            "tokenVersion",
+            "accountActionVersion",
+            "nickname",
+        ] {
+            assert!(!text.contains(secret));
+        }
+    }
+    let delegated = crate::auth_jwt::delegation::issue(
+        4,
+        "superadmin",
+        0,
+        crate::auth_jwt::delegation::Scope::Tools,
+        chrono::Utc::now().timestamp() as usize,
+    )
+    .expect("account policy integration requires BLOG_DELEGATION_SECRET");
+    let response = app
+        .oneshot(
+            Request::get("/api/protected/account-actions/eligibility?accountId=5&action=mute")
+                .header("authorization", format!("Bearer {delegated}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+    assert_eq!(body["data"]["allowed"], false);
+    assert_eq!(body["data"]["reasonCode"], "peer_admin");
+    assert_eq!(
+        snapshot(scoped_db(&ctx.url, &ctx.schema).await).await,
+        before
+    );
+    for id in 1..=7 {
+        assert_eq!(notice_count(&ctx.state.db, id).await, 0);
+    }
+    sql(
+        &ctx.state.db,
+        "UPDATE \"user\" SET role='superadmin' WHERE id=2",
+    )
+    .await;
+    let request: PrepareRequest = serde_json::from_value(json!({
+        "action":"mute", "target":{"id":2}, "hours":1,
+    }))
+    .unwrap();
+    let Json(response) = prepare(State(ctx.state.clone()), headers(4, 0), Json(request)).await;
+    assert_ne!(
+        response.code, 200,
+        "a past allowed eligibility check never grants execution authority"
+    );
+    assert_eq!(response.message, "不能禁言超级管理员账号");
+    assert!(read(&ctx.state.db, 2).await.muted_until.is_none());
+    assert_eq!(notice_count(&ctx.state.db, 2).await, 0);
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn postgres_account_eligibility_rejects_bad_arguments_missing_targets_and_invalid_actors() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        assert!(std::env::var_os("CI").is_none(), "CI requires TEST_PG_URL");
+        return;
+    };
+    let ctx = PgContext::new(url).await;
+    let app = crate::routes::create_router(state(scoped_db(&ctx.url, &ctx.schema).await));
+    for (actor, version, query, expected) in [
+        (0, 0, "accountId=2&action=mute", StatusCode::UNAUTHORIZED),
+        (2, 0, "accountId=2&action=mute", StatusCode::FORBIDDEN),
+        (4, 8, "accountId=2&action=mute", StatusCode::UNAUTHORIZED),
+        (4, 0, "accountId=99&action=mute", StatusCode::NOT_FOUND),
+        (4, 0, "accountId=0&action=mute", StatusCode::BAD_REQUEST),
+        (4, 0, "accountId=2&action=set_role", StatusCode::BAD_REQUEST),
+        (
+            4,
+            0,
+            "accountId=2&action=mute&role=user",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            4,
+            0,
+            "accountId=2&action=set_role&role=unregistered",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            4,
+            0,
+            "accountId=2&action=mute&hours=1",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let mut request = Request::get(format!(
+            "/api/protected/account-actions/eligibility?{query}"
+        ));
+        if actor > 0 {
+            request = request.header(
+                "authorization",
+                headers(actor, version)["authorization"].clone(),
+            );
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{query}");
+        let bytes = to_bytes(response.into_body(), 8192).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("sensitive-password"));
+    }
+    sql(&ctx.state.db, "UPDATE \"user\" SET status=1 WHERE id=4").await;
+    let response = app
+        .oneshot(
+            Request::get("/api/protected/account-actions/eligibility?accountId=2&action=mute")
+                .header("authorization", headers(4, 0)["authorization"].clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     ctx.close().await;
 }
