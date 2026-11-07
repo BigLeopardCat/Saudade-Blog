@@ -319,7 +319,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: BigLeopardCat/saudade-blog-agent
-          ref: 49afa907b52eda8e553af5ff5be6d2cbb6623a58
+          ref: 17b78f880b7907364ed6970ca066994217d462e9
           path: _agent-stack
           persist-credentials: false
       - name: Setup stack Python
