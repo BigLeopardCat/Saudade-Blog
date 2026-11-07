@@ -144,7 +144,7 @@ describe('homepage invalidation', () => {
         expect(request.mock.calls).toEqual([[1, 2], [2, 2]])
         expect(feed.snapshot()).toMatchObject({ items: ['1a', '1b', '2a', '2b'], page: 2, hasMore: true })
         await feed.more()
-        expect(request.mock.calls.at(-1)).toEqual([3, 2])
+        expect(request.mock.calls[request.mock.calls.length - 1]).toEqual([3, 2])
     })
 
     it('coalesces invalidations while More is pending and includes that completed page', async () => {

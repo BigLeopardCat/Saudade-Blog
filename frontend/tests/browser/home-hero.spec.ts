@@ -84,8 +84,8 @@ test('Agent completion refreshes loaded pages and carousel without losing the Mo
   await expect(more).toBeEnabled()
   await more.click()
   await expect(more).toBeEnabled()
-  await expect.poll(() => requested.at(-1)?.page).toBe(2)
-  const size = requested.at(-1)!.size
+  await expect.poll(() => requested[requested.length - 1]?.page).toBe(2)
+  const size = requested[requested.length - 1]!.size
   await expect(page.locator('.ArticleCard')).toHaveCount(size * 2)
   revision = 'new'
   const start = requested.length
@@ -99,7 +99,7 @@ test('Agent completion refreshes loaded pages and carousel without losing the Mo
   await expect(more).toBeEnabled()
   expect(requested.slice(start)).toEqual([{page: 1, size}, {page: 2, size}])
   await more.click()
-  await expect.poll(() => requested.at(-1)?.page).toBe(3)
+  await expect.poll(() => requested[requested.length - 1]?.page).toBe(3)
   await expect(page.locator('.ArticleCard')).toHaveCount(size * 3)
 })
 
