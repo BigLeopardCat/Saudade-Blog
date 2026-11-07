@@ -10,6 +10,16 @@ export interface GalleryImage {
 export interface GalleryFolder {id:number; parentId:number; name:string; imageCount:number}
 export interface GalleryFilters {folderId?:number; search?:string; favorite?:boolean}
 export interface GalleryPage {items:GalleryImage[]; nextCursor:number|null}
+export const GALLERY_MOVE_LIMIT=100
+export interface GalleryMoveIntent {action:'move';imageIds:number[];folderId:number}
+export interface GalleryMovePreview {
+  version:string;expiresAt:number;intent:GalleryMoveIntent;matchedIds:number[]
+  preview:{imageId:number;displayName:string|null;folderId:number;isFavorite:boolean}[]
+  previewTruncated:boolean;destination:{id:number;name:string;parentId:number}|null
+}
+export interface GalleryMoveResult {
+  action:'move';changed:boolean;beforeVersion:string;matchedIds:number[];changedIds:number[];cleanupPendingIds:number[]
+}
 export type GalleryPatch = Partial<Pick<GalleryImage,'displayName'|'description'|'folderId'|'isFavorite'>>
 
 const request=fetchBaseQuery({baseUrl:runtimeBaseURL,timeout:15000,prepareHeaders:headers=>{
@@ -38,6 +48,13 @@ export const galleryApi=createApi({
     folders:builder.query<GalleryFolder[],void>({query:()=>'/api/protect/gallery/folders',providesTags:['Folders']}),
     updateImage:builder.mutation<{changed:boolean;state:GalleryImage},{id:number;version:string;patch:GalleryPatch}>({
       query:({id,version,patch})=>({url:`/api/protect/gallery/images/${id}`,method:'PUT',body:{version,...patch}}),
+      invalidatesTags:['Images','Folders'],
+    }),
+    prepareMove:builder.mutation<GalleryMovePreview,GalleryMoveIntent>({
+      query:body=>({url:'/api/protect/gallery/image-actions/prepare',method:'POST',body}),
+    }),
+    moveImages:builder.mutation<GalleryMoveResult,Pick<GalleryMovePreview,'version'|'expiresAt'|'intent'>>({
+      query:body=>({url:'/api/protect/gallery/image-actions',method:'POST',body}),
       invalidatesTags:['Images','Folders'],
     }),
     createFolder:builder.mutation<GalleryFolder,{parentId:number;name:string}>({

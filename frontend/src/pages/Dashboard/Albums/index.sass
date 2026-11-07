@@ -2,7 +2,7 @@
   padding: 16px
   color: var(--washi-ink, #4a3550)
 
-.albumToolbar, .albumFilters, .albumFolders, .albumDetailEdit
+.albumToolbar, .albumFilters, .albumDetailEdit
   display: flex
   align-items: center
   flex-wrap: wrap
@@ -15,15 +15,10 @@
     margin: 0
 
 .albumFilters
-  .ant-select
-    min-width: 180px
   .ant-input-search
     flex: 1
     min-width: 180px
     max-width: 360px
-
-.albumFolders
-  margin-top: 16px
 
 .albumLibrary .ant-breadcrumb button
   border: 0
@@ -252,7 +247,12 @@
     padding: 0
     background: transparent
     .ant-checkbox-inner
-      box-shadow: 0 1px 4px #0004
+      background: transparent
+      border-color: #fff
+      box-shadow: 0 0 0 1px #0007, 0 1px 4px #0004
+    .ant-checkbox-checked .ant-checkbox-inner
+      background: var(--washi-pink-deep, #854795)
+      border-color: transparent
     &:has(input:focus-visible)
       outline: 2px solid var(--washi-lav, #b9a7f5)
       outline-offset: 2px
@@ -275,3 +275,78 @@
 
 .albumDetailImage .asset-image-failure
   min-height: 180px
+
+
+.albumWorkspace
+  display: grid
+  grid-template-columns: 190px minmax(0, 1fr)
+  gap: 16px
+  align-items: start
+
+.albumContents
+  min-width: 0
+
+.albumFolderNavigation
+  position: sticky
+  top: 0
+  padding: 10px
+  border: 1px solid var(--washi-line, #e7d6e6)
+  border-radius: 12px
+  max-height: min(520px, 60dvh)
+  overflow: auto
+  .ant-tree
+    background: transparent
+    color: inherit
+  .ant-tree-node-content-wrapper
+    min-width: 0
+    display: flex
+  .ant-tree-title
+    flex: 1
+    min-width: 0
+
+.albumFolderHeading
+  display: flex
+  align-items: center
+  justify-content: space-between
+  margin-bottom: 8px
+
+.albumFolderLabel
+  display: flex
+  align-items: center
+  gap: 8px
+  > span
+    min-width: 0
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+  small
+    opacity: .65
+
+.albumBatchActions
+  display: flex
+  align-items: center
+  flex-wrap: wrap
+  gap: 8px
+  min-height: 40px
+  margin: 12px 0
+  > span
+    min-width: 72px
+    font-variant-numeric: tabular-nums
+  .ant-btn
+    min-width: 100px
+
+@media (max-width: 760px)
+  .albumWorkspace
+    grid-template-columns: minmax(0, 1fr)
+  .albumFolderNavigation
+    position: static
+    max-height: 220px
+
+.albumMoveBody
+  min-height: 230px
+  ul
+    max-height: 180px
+    overflow: auto
+    padding-inline-start: 20px
+  li
+    overflow-wrap: anywhere

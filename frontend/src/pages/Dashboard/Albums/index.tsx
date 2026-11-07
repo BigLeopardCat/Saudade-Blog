@@ -1,19 +1,21 @@
 import AssetImage from '../../../components/AssetImage'
 import {useEffect, useMemo, useState} from 'react'
 import {useDispatch} from 'react-redux'
-import {Alert, Breadcrumb, Button, Card, Checkbox, Empty, Input, Modal, Segmented, Space, Spin, TreeSelect, Upload, message} from 'antd'
+import {Alert, Breadcrumb, Button, Card, Checkbox, Empty, Input, Modal, Segmented, Space, Spin, Upload, message} from 'antd'
 import type {UploadProps, UploadFile} from 'antd'
 import {AppstoreOutlined, FolderAddOutlined, InboxOutlined, StarFilled, UnorderedListOutlined} from '@ant-design/icons'
 import {useNavigate} from 'react-router-dom'
 import type {AppDispatch} from '../../../store'
-import {galleryApi, galleryError, type GalleryImage} from '../../../apis/galleryApi'
+import {galleryApi, galleryError, GALLERY_MOVE_LIMIT, type GalleryFolder, type GalleryImage} from '../../../apis/galleryApi'
 import {delImages, getR2Usage, uploadImages, type UploadTarget} from '../../../apis/ImageMethods'
 import ImageCompression from '../../../apis/ImageCompression'
 import type {R2Usage} from '../../../interface/Setting'
 import {uploadBlocked, usagePercent} from '../../../utils/r2Quota'
 import {assetDisplayName} from '../../../utils/assetName'
-import ImageDetail, {folderOptions} from './ImageDetail'
+import ImageDetail from './ImageDetail'
 import ImageGeneration from './ImageGeneration'
+import FolderNavigation from './FolderNavigation'
+import MoveImages from './MoveImages'
 import './index.sass'
 
 export default function Albums() {
@@ -30,6 +32,9 @@ export default function Albums() {
   const [detail,setDetail]=useState<GalleryImage|null>(null)
   const [deleteItems,setDeleteItems]=useState<GalleryImage[]>([])
   const [deleting,setDeleting]=useState(false)
+  const [moveItems,setMoveItems]=useState<GalleryImage[]>([])
+  const [deleteFolderTarget,setDeleteFolderTarget]=useState<GalleryFolder|null>(null)
+  const [removingFolder,setRemovingFolder]=useState(false)
   const [newFolder,setNewFolder]=useState(false)
   const [folderName,setFolderName]=useState('')
   const [uploadTarget,setUploadTarget]=useState<UploadTarget|null>(null)
@@ -58,6 +63,12 @@ export default function Albums() {
   const toggle=(id:number,checked:boolean)=>setSelected(before=>{
     const next=new Set(before);if(checked)next.add(id);else next.delete(id);return next
   })
+  const chooseFolder=(id:number|undefined)=>{setSelected(new Set());setFolderId(id)}
+  const beginMove=()=>{
+    const items=images.filter(image=>selected.has(image.imageKey))
+    if(items.length!==selected.size){void message.warning('所选图片已变化，请重新选择');return}
+    setMoveItems(items)
+  }
   const remove=async()=>{
     setDeleting(true)
     try {
@@ -77,9 +88,14 @@ export default function Albums() {
     } catch(error){void message.error(galleryError(error))}
   }
   const removeFolder=async()=>{
-    if(!folderId)return
-    try {await deleteFolder(folderId).unwrap();setFolderId(undefined)}
-    catch(error){void message.error(galleryError(error))}
+    if(!deleteFolderTarget)return
+    setRemovingFolder(true)
+    try {
+      await deleteFolder(deleteFolderTarget.id).unwrap()
+      if(folderId===deleteFolderTarget.id)chooseFolder(deleteFolderTarget.parentId||undefined)
+      setDeleteFolderTarget(null)
+    }catch(error){void message.error(galleryError(error))}
+    finally{setRemovingFolder(false)}
   }
   const upload:UploadProps={multiple:true,fileList:uploadedFiles,onChange:info=>setUploadedFiles(info.fileList),
     customRequest:async req=>{
@@ -108,12 +124,9 @@ export default function Albums() {
         <Button disabled={!canUploadR2} title={!r2?.configured?'请先配置 R2 存储':blocked.reason}
           onClick={()=>setUploadTarget('r2')}>传到 R2</Button>
         <Button onClick={()=>setNewFolder(true)} icon={<FolderAddOutlined/>}>新建文件夹</Button>
-        <Button danger disabled={!selected.size} onClick={()=>setDeleteItems(images.filter(i=>selected.has(i.imageKey)))}>删除选中（{selected.size}）</Button>
       </Space>
     </div>
     <div className="albumFilters">
-      <TreeSelect aria-label="图库文件夹" placeholder="全部图片" allowClear value={folderId}
-        treeData={folderOptions(folders)} treeDefaultExpandAll onChange={setFolderId}/>
       <Input.Search aria-label="搜索图库" placeholder="搜索文件名或描述" allowClear onSearch={setSearch}/>
       <Checkbox checked={favorite} onChange={e=>setFavorite(e.target.checked)}>只看收藏</Checkbox>
       <Segmented value={view} onChange={value=>chooseView(value as 'grid'|'list')}
@@ -122,12 +135,18 @@ export default function Albums() {
         {r2&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'R2 存储'}
       </Button>
     </div>
-    <Breadcrumb items={[{title:<button type="button" onClick={()=>setFolderId(undefined)}>全部图片</button>},
-      ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>setFolderId(folder.id)}>{folder.name}</button>})))]}/>
-    <div className="albumFolders">
-      {folders.filter(f=>f.parentId===(folderId??0)).map(folder=><Button key={folder.id}
-        onClick={()=>setFolderId(folder.id)}>📁 {folder.name}（{folder.imageCount}）</Button>)}
-      {folderId!==undefined&&folderId>0&&<Button danger size="small" onClick={()=>void removeFolder()}>删除空文件夹</Button>}
+    <div className="albumWorkspace">
+    <FolderNavigation folders={folders} selected={folderId} onSelect={chooseFolder}
+      onDelete={setDeleteFolderTarget}/>
+    <div className="albumContents">
+    <Breadcrumb items={[{title:<button type="button" onClick={()=>chooseFolder(undefined)}>全部图片</button>},
+      ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>chooseFolder(folder.id)}>{folder.name}</button>})))]}/>
+    <div className="albumBatchActions">
+      <span aria-live="polite">已选 {selected.size} 张</span>
+      <Button disabled={!selected.size||selected.size>GALLERY_MOVE_LIMIT}
+        title={selected.size>GALLERY_MOVE_LIMIT?`每批最多移动 ${GALLERY_MOVE_LIMIT} 张图片`:undefined} onClick={beginMove}>移动选中</Button>
+      <Button danger disabled={!selected.size} onClick={()=>setDeleteItems(images.filter(i=>selected.has(i.imageKey)))}>删除选中</Button>
+      <Button type="text" disabled={!selected.size} onClick={()=>setSelected(new Set())}>清除选择</Button>
     </div>
     {(query.isError||foldersQuery.isError)&&<Alert type="error" showIcon message={galleryError(query.error||foldersQuery.error)}
       action={<Button onClick={()=>{void query.refetch();void foldersQuery.refetch()}}>重试</Button>}/>}
@@ -146,11 +165,19 @@ export default function Albums() {
         })}
       </div>}
     {query.hasNextPage&&<div className="albumMore"><Button loading={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>加载更多</Button></div>}
+    </div></div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
     <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true}} okText="删除" cancelText="取消"
       onOk={()=>void remove()} onCancel={()=>{if(!deleting)setDeleteItems([])}}>
       确认删除这 {deleteItems.length} 张图片？如有图片仍被文章使用，本次删除将全部取消。
+    </Modal>
+    {!!moveItems.length&&<MoveImages items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
+      onComplete={()=>{setMoveItems([]);setSelected(new Set())}}/>}
+    <Modal title="删除文件夹" open={!!deleteFolderTarget} confirmLoading={removingFolder}
+      okText="删除文件夹" cancelText="取消" okButtonProps={{danger:true}}
+      onOk={()=>void removeFolder()} onCancel={()=>{if(!removingFolder)setDeleteFolderTarget(null)}}>
+      确认删除空文件夹「{deleteFolderTarget?.name}」？
     </Modal>
     <Modal title="新建文件夹" open={newFolder} onOk={()=>void addFolder()} confirmLoading={creating}
       okButtonProps={{disabled:!folderName.trim()}} onCancel={()=>setNewFolder(false)} okText="创建" cancelText="取消">
