@@ -167,24 +167,31 @@ pub async fn get_web_settings(
     Json(ApiResponse::success(payload))
 }
 
-pub(crate) async fn site_author(db: &sea_orm::DatabaseConnection) -> (String, String) {
-    let infos = web_info::Entity::find().all(db).await.unwrap_or(vec![]);
+pub(crate) async fn site_author<C: sea_orm::ConnectionTrait>(db: &C) -> (String, String) {
+    let infos = web_info::Entity::find().all(db).await.unwrap_or_default();
+    let owner = user::Entity::find_by_id(1).one(db).await.unwrap_or(None);
+    site_author_values(&infos, owner.as_ref())
+}
 
+pub(crate) async fn site_author_checked<C: sea_orm::ConnectionTrait>(
+    db: &C,
+) -> Result<(String, String), DbErr> {
+    let infos = web_info::Entity::find().all(db).await?;
+    let owner = user::Entity::find_by_id(1).one(db).await?;
+    Ok(site_author_values(&infos, owner.as_ref()))
+}
+
+fn site_author_values(infos: &[web_info::Model], owner: Option<&user::Model>) -> (String, String) {
     let get_val = |k: &str| -> String {
         infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or_default()
     };
 
-    // 头像与署名同源（uid=1 那一行），一次查询取两样
-    let owner = user::Entity::find_by_id(1).one(db).await.unwrap_or(None);
-
     let avatar = owner
-        .as_ref()
         .and_then(|u| u.avatar.clone())
         .filter(|a| !a.trim().is_empty())
         .unwrap_or_else(|| get_val("avatar"));
 
     let author = owner
-        .as_ref()
         .map(|u| u.nickname.trim().to_string())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| get_val("author"));

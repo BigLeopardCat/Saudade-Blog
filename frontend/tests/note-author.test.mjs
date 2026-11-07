@@ -15,11 +15,7 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-/**
- * 断言前先去掉注释：这几个文件的**头注本身就在讲这件事**（"改造前印的是站点级那份"、
- * "判据只有一份"…），拿全文去数会把自己的说明文字数进去，判据就变成"注释怎么写"
- * 而不是"代码怎么写"。同 `article-card-stats.test.mjs` 的处置。
- */
+/** Source wiring checks ignore comments; display behavior is exercised below. */
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const readSrc = (p) => stripComments(readFileSync(path.join(root, p), 'utf8'));
 
@@ -34,7 +30,7 @@ const M = await import(pathToFileURL(file).href);
 
 const SITE = { name: '站长', avatar: '/site.png' };
 
-console.log('\n① 有作者记录 ⇒ 用文章那份（本轮报的 bug 就是这里印成了站点级）');
+console.log('\n① 有作者记录 ⇒ 用文章那份');
 {
     const who = M.noteAuthor({ authorName: '管理员甲', authorAvatar: '/jia.png' }, SITE);
     ok(who.name === '管理员甲', '署名是文章作者，不是站点主人', who.name);
@@ -65,7 +61,7 @@ console.log('\n③ 键在场 = 后端定过稿：空头像不许借站长的脸'
         '两端空白抹掉再用');
     const none = M.noteAuthor({}, {});
     ok(none.name === '' && none.avatar === '',
-        '站点级也没有（redux 未加载完）⇒ 空串，与改造前行为一致（antd 画默认头像）', none);
+        '站点级也没有（redux 未加载完）⇒ 空串（antd 画默认头像）', none);
 }
 
 console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 `|| 站点级`');
@@ -73,7 +69,7 @@ console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 
     const article = readSrc('src/frontHome/Content/ContentHome/Article.tsx');
     ok(/<NoteByline\b/.test(article), '首页文章卡片用了共享的 NoteByline');
     ok(!/<Avatar\s+src=\{avatar\}/.test(article),
-        '卡片里没有残留的"直接拿 redux 头像渲染"（改造前就是这一句让每篇文章都顶着站长）');
+        '卡片里没有残留的"直接拿 redux 头像渲染"');
 
     const home = readSrc('src/frontHome/Content/ContentHome/index.tsx');
     ok(/<NoteByline\b/.test(home), '置顶轮播那一份也走 NoteByline（不是第二份副本）');
@@ -140,11 +136,11 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
     const nAvatar = (authBody.match(/author_avatar = Some\(/g) || []).length;
     ok(nName === 2 && nAvatar === 2,
         '★ 两个键成对写（有作者 / 没作者两个分支各写一对，不多不少）', { nName, nAvatar });
-    ok(/u\.username\.trim\(\)/.test(authBody), '昵称空时退到账号名（不是站长名）');
-    ok(/as_deref\(\)\.unwrap_or\(""\)/.test(authBody),
-        '头像空时发的是**空串**（键在场 = 这个人没设过头像），不是站点级');
+    const boundedMetadata = readFileSync(path.join(repo, 'src/routes/document_reads/metadata.rs'), 'utf8');
+    ok(/authors::profiles\(/.test(authBody) && /authors::profiles\(/.test(boundedMetadata),
+        '文章展示与有界读取复用公开作者投影');
     ok(!/unwrap_or_else\(\|\| site_avatar/.test(authBody),
-        '★ 已无"这个字段空就退站点级"的老回退链（用户报的 bug 的根因）');
+        '★ 已无"这个字段空就退站点级"的老回退链');
 
     const entity = readFileSync(path.join(repo, 'src/entity/note.rs'), 'utf8');
     ok(/pub user_id: Option<i32>/.test(entity), '实体里有 user_id 列（Option = 老文章那批没有记录）');

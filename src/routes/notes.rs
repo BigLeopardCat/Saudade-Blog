@@ -1,3 +1,5 @@
+pub(crate) mod authors;
+
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
 use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, DerivePartialModel, TransactionTrait};
 // `Expr` / `SimpleExpr` 只服务关键词预筛那几处（列表达式要带表名限定，见 `search_notes`）。
@@ -5,7 +7,7 @@ use sea_orm::sea_query::{Expr, SimpleExpr};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::entity::{note, category, user};
+use crate::entity::{note, category};
 use crate::routes::note_tags::{self, attach_tags};
 use crate::routes::AppState;
 use crate::search_core::{count_terms, keyword_given, keyword_prefilter, score_term_sum, split_terms};
@@ -1007,50 +1009,20 @@ async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) 
         return;
     }
 
-    struct AuthorRow {
-        username: String,
-        nickname: String,
-        avatar: Option<String>,
-    }
-    let users: Vec<(i32, AuthorRow)> = match user::Entity::find()
-        .select_only()
-        .column(user::Column::Id)
-        .column(user::Column::Username)
-        .column(user::Column::Nickname)
-        .column(user::Column::Avatar)
-        .filter(user::Column::Id.is_in(ids))
-        .into_tuple::<(i32, String, String, Option<String>)>()
-        .all(db)
-        .await
-    {
-        Ok(v) => v
-            .into_iter()
-            .map(|(id, username, nickname, avatar)| {
-                (id, AuthorRow { username, nickname, avatar })
-            })
-            .collect(),
-        Err(e) => {
-            tracing::warn!("[notes] 作者查询失败，本页不挂署名（前端回退站点级）: {e}");
+    let by_id = match authors::profiles(db, ids).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(error=%error, "public article attribution unavailable");
             return;
         }
     };
-    let by_id: HashMap<i32, AuthorRow> = users.into_iter().collect();
     let (site_name, site_avatar) = crate::routes::web_info::site_author(db).await;
 
     for dto in dtos.iter_mut() {
         match dto.author_id.and_then(|id| by_id.get(&id)) {
-            // 有作者记录：两个字段都只出自这个账号，谁也不退到站长（见函数头注）
-            Some(u) => {
-                let nick = u.nickname.trim();
-                dto.author_name = Some(if nick.is_empty() {
-                    u.username.trim().to_string()
-                } else {
-                    nick.to_string()
-                });
-                // 空串**要发出去**（`skip_serializing_if` 只跳过 `None`）：键在场 =
-                // "这个人没设过头像" ⇒ 前端画默认头像；键缺席 = "这一路没挂作者" ⇒
-                // 前端回退站点级。两件事在连线上必须是两个样子。
-                dto.author_avatar = Some(u.avatar.as_deref().unwrap_or("").trim().to_string());
+            Some(author) => {
+                dto.author_name = Some(author.name.clone());
+                dto.author_avatar = Some(author.avatar.clone());
             }
             None => {
                 dto.author_name = Some(site_name.clone());
