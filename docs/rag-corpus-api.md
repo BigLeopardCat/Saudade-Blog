@@ -1,4 +1,36 @@
-# Versioned public RAG corpus API
+# Public document reads and RAG corpus
+
+## Original text
+
+`GET /api/public/documents/{type}/{id}/read` reads one public document without
+recording a view. `type` is `note`, `talk`, `board` or `announcement`; IDs are
+positive i32 values. Notes use the published-root predicate below; talks and
+board messages must match their source type and be approved. Private drafts and
+editor buffers are not available through this route.
+
+`offset` and `limit` count Unicode code points in the selected original Markdown.
+The default limit is 12,000 and the maximum is 24,000. An optional `section`
+selects a unique heading or source section ID; a parent section includes its
+descendants. Duplicate titles return an empty unresolved frame with `source=null`,
+never an arbitrary match. Images remain their original Markdown references.
+
+Successful data includes `content`, `contentRevision`, `sectionSchema`,
+`readOffset`, `nextOffset`, `totalChars`, `readComplete` and a bounded section list.
+`source` binds type, ID, canonical revision, section schema, selected section ID
+and the exact visible range. A complete selected section does not imply the
+whole document was read. For continuation or an `sN` section ID, provide both
+`revision=contentRevision` and `section_schema=sectionSchema`. Changed content or
+section policy returns 409; missing locator versions or invalid ranges return 400.
+The current section policy is `commonmark-top-level-source-v1`. Oversized source
+bodies above 4 MiB return 413; unavailable data, admission or deadline returns 503.
+Successful reads use `Cache-Control: no-store`.
+
+`GET /api/public/notes/{id}/stats` is independent of body reads and does not add a
+view. It shares the same public-root rule; database failures return 503 rather
+than pretending the article is missing. Public consumers should use numeric
+counts only; anonymous `liked=false` does not describe an authenticated user.
+
+## Corpus export
 
 GET /api/public/rag/corpus exports only records accepted by notes::public_condition:
 public/published status, is_public=true, and draft_of IS NULL. It reuses the same
@@ -15,6 +47,14 @@ Parameters:
 The success envelope remains code/message/data. data contains schema_version=1,
 revision, total, documents and next_cursor. Each document has id, title, content
 and revision. next_cursor is null on the last page. IDs are strictly increasing.
+
+Each complete serialized document is limited to 4 MiB and the complete corpus
+page to 12 MiB. PostgreSQL projects JSON sizes before any selected bodies are
+transferred. A page may contain fewer than `limit` documents because of this byte
+budget; only `next_cursor=null` means the end. A non-null cursor is the last
+returned ID. A single oversized document fails explicitly with 503 and is never
+truncated or silently omitted. Transport consumers allow up to 16 MiB for the
+complete response envelope, independent of the ordinary API response budget.
 
 Document revision is SHA-256 of the compact UTF-8 JSON array [title, content].
 Corpus revision is an opaque SHA-256 over the ordered public ID/title/content-hash
@@ -36,3 +76,18 @@ or a partial page as an empty corpus.
 The host owns the public corpus contract. The Agent owns index publication,
 embedding configuration and retrieval. See the Agent's current RAG documentation:
 https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/rag-design.md
+
+## Current visibility
+
+`POST /api/public/documents/validate` checks candidate article identities against
+the current public corpus before the Agent presents retrieval results. The body
+is `{documents:[{type:"note",id,revision}]}`; revision is the canonical content
+hash. At most 256 request rows and 64 unique IDs are accepted.
+
+Data has `schemaVersion:1` and exactly one entry per requested ID, in any order:
+`{type:"note",id,visible,contentRevision}`. Missing, deleted and non-public
+articles all return `visible:false,contentRevision:null`, without titles, bodies
+or hidden metadata. Visible entries return the current canonical content hash;
+the consumer requires an exact candidate revision match. Database failure,
+capacity exhaustion and deadline expiry return 503, never a successful zero-hit
+result. Malformed identities return 400 before database access.
