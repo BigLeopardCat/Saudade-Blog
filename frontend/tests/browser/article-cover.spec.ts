@@ -75,6 +75,18 @@ for (const cover of ['', '/broken-cover.png']) {
     })
 }
 
+test('article header renders the provided author without an unrelated fallback', async ({page, sandboxURL}) => {
+    await article(page, '', {authorName: '本文作者', authorAvatar: '/article-author.svg'})
+    await page.route('**/article-author.svg', route => route.fulfill({
+        contentType: 'image/svg+xml', body: portrait,
+    }))
+    await page.goto(sandboxURL)
+    await expect(page.locator('.readAuthorName')).toHaveText('本文作者')
+    await expect(page.locator('.readAuthor img')).toHaveAttribute('src', '/article-author.svg')
+    await expect(page.locator('.readAuthor img')).toHaveJSProperty('naturalWidth', 300)
+    await expect(page.locator('img[src=""]')).toHaveCount(0)
+})
+
 test('a held lazy route shows centered existing loading art without visible status text', async ({page, sandboxURL}) => {
     await page.route('**/loading.svg', route => route.fulfill({contentType: 'image/svg+xml',
         body: readFileSync(new URL('../../public/loading.svg', import.meta.url), 'utf8')}))
