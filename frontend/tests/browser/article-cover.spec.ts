@@ -182,6 +182,10 @@ for (const width of [375, 1440]) {
         await page.goto(sandboxURL)
         const frame = page.locator('.readCoverMedia')
         await expect(frame.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
+        await expect.poll(async () => {
+            const info = await page.locator('.readInfo').boundingBox()
+            return !!info && info.x >= 0 && info.x + info.width <= width + 1
+        }).toBe(true)
         const media = await frame.boundingBox()
         const info = await page.locator('.readInfo').boundingBox()
         expect(media && info).toBeTruthy()
