@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod notes;
+pub mod document_visibility;
 pub mod categories;
 pub mod tags;
 pub mod web_info;
@@ -148,7 +149,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/activity/announcements", get(public_activity::announcements::list))
         .route("/api/public/activity/guestbook", get(public_activity::messages::guestbook))
         .route("/api/public/activity/talks", get(public_activity::messages::talks))
-        .route("/api/public/activity/search", get(public_activity::search::search))
+        .route("/api/public/activity/search", post(public_activity::search::search)
+            .layer(DefaultBodyLimit::max(8192)))
         .route("/api/public/articles", get(public_catalog::articles))
         .route("/api/public/categories", get(public_catalog::categories::list))
         .route("/api/public/tags", get(public_catalog::tags::list))
@@ -158,6 +160,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/device-gateway/{*path}", axum::routing::any(device_gateway::proxy)
             .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/public/rag/corpus", get(rag_corpus::export))
+        .route("/api/public/documents/validate", post(document_visibility::validate).layer(DefaultBodyLimit::max(32768)))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes).layer(DefaultBodyLimit::max(4096)))
         .route("/api/public/search", post(search::search_all).layer(DefaultBodyLimit::max(2048)))
