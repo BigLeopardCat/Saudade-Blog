@@ -8,9 +8,10 @@ export type LiveRefreshOptions = {
     pollMs?: number
     poll?: boolean
     skip?: () => boolean
+    agentEvent?: (event: Event) => boolean
 }
 
-type Consumer = { fire: (invalidate?: boolean) => void; poll: boolean }
+type Consumer = { fire: (invalidate?: boolean, event?: Event) => void; poll: boolean }
 
 const consumers = new Set<Consumer>()
 let timer: ReturnType<typeof setInterval> | null = null
@@ -20,11 +21,11 @@ function visible(): boolean {
     return typeof document === 'undefined' || !document.hidden
 }
 
-function fanout(pollersOnly: boolean, invalidate = false): void {
+function fanout(pollersOnly: boolean, invalidate = false, event?: Event): void {
     consumers.forEach((c) => {
         if (pollersOnly && !c.poll) return
         try {
-            c.fire(invalidate)
+            c.fire(invalidate, event)
         } catch { /* Isolate subscriber failures. */
         }
     })
@@ -44,7 +45,7 @@ function syncTimer(): void {
 }
 
 if (typeof window !== 'undefined') {
-    window.addEventListener(AGENT_TURN_DONE_EVENT, () => { fanout(false, true) })
+    window.addEventListener(AGENT_TURN_DONE_EVENT, event => { fanout(false, true, event) })
     window.addEventListener('focus', () => { fanout(false) })
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) fanout(false)
@@ -52,7 +53,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function retainLive(
-    reload: () => void | Promise<void>,
+    reload: (invalidate?: boolean) => void | Promise<void>,
     opts: LiveRefreshOptions = {},
 ): () => void {
     let last = 0
@@ -60,8 +61,9 @@ export function retainLive(
     let alive = true
     let pendingInvalidation = false
 
-    const fire = (invalidate = false): void => {
+    const fire = (invalidate = false, event?: Event): void => {
         if (!alive) return
+        if (event && opts.agentEvent && !opts.agentEvent(event)) return
         if (inflight) {
             pendingInvalidation ||= invalidate
             return
@@ -70,7 +72,7 @@ export function retainLive(
         const now = Date.now()
         if (!invalidate && now - last < MIN_GAP_MS) return
         last = now
-        const out = reload()
+        const out = reload(invalidate)
 
         if (out && typeof (out as Promise<void>).then === 'function') {
             inflight = true
@@ -102,18 +104,21 @@ export function retainLive(
 }
 
 export function useLiveRefresh(
-    reload: () => void | Promise<void>,
+    reload: (invalidate?: boolean) => void | Promise<void>,
     opts: LiveRefreshOptions = {},
 ): void {
     const reloadRef = useRef(reload)
     reloadRef.current = reload
     const skipRef = useRef(opts.skip)
     skipRef.current = opts.skip
+    const agentEventRef = useRef(opts.agentEvent)
+    agentEventRef.current = opts.agentEvent
     const { pollMs: ms, poll } = opts
-    useEffect(() => retainLive(() => reloadRef.current(), {
+    useEffect(() => retainLive(invalidate => reloadRef.current(invalidate), {
         pollMs: ms,
         poll,
         skip: () => (skipRef.current ? skipRef.current() : false),
+        agentEvent: event => agentEventRef.current ? agentEventRef.current(event) : true,
     }), [ms, poll])
 }
 

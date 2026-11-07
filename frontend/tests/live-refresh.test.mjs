@@ -57,7 +57,7 @@ let nowMs = 1_000_000;
 const realNow = Date.now;
 Date.now = () => nowMs;
 const advance = (ms) => { nowMs += ms; };
-const fireWin = (t) => (winEvents[t] || []).forEach((f) => f({ type: t }));
+const fireWin = (t, detail) => (winEvents[t] || []).forEach((f) => f({ type: t, detail }));
 const fireDoc = (t) => (docEvents[t] || []).forEach((f) => f({ type: t }));
 
 let boot = 0;
@@ -270,6 +270,23 @@ console.log('\n⑨ Agent 变更在途合并，完成后只补一次');
     c.pending.shift()();
     await tick();
     eq(c.n, 1, '卸载后不启动已排队的刷新');
+}
+
+
+{
+    const mod = await fresh();
+    const c = counter();
+    c.hang = true;
+    const off = mod.retainLive(c.fn, {poll: false, agentEvent: event => event.detail?.article === true});
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done', {article: false});
+    eq(c.n, 0, '普通闲聊与无关变更不刷新文章');
+    fireWin('agent-turn-done', {article: true});
+    fireWin('agent-turn-done', {article: false});
+    c.pending.shift()();
+    await tick();
+    eq(c.n, 1, '被过滤事件不会设置待刷新标记');
+    off();
 }
 
 Date.now = realNow;

@@ -6,6 +6,7 @@ import './index.sass'
 import './sections.sass'
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
+import {hasArticleInvalidation} from "../../../components/UserCenter/agentTurn.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
@@ -212,14 +213,15 @@ const ContentHome = () => {
         fetchTop();
     }, []);
 
-    useLiveRefresh(() => {
+    useLiveRefresh((invalidate) => {
+        if (!invalidate && (feed.snapshot().page > 1 || feed.snapshot().pending)) return;
         const generation = topGenerationRef.current;
         const top = topPendingRef.current;
         const refreshTop = top
             ? top.then(() => generation === topGenerationRef.current ? fetchTop() : undefined)
             : fetchTop();
-        return Promise.all([refreshTop, feed.refresh()]).then(() => {});
-    }, { poll: false });
+        return Promise.all([refreshTop, invalidate ? feed.refresh() : feed.first(pageSizeRef.current, true)]).then(() => {});
+    }, { poll: false, agentEvent: hasArticleInvalidation });
     const handleScrollDown = () => {
         window.scrollTo({
             top: window.innerHeight,
