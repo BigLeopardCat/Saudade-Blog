@@ -292,7 +292,7 @@ for(const detail of [false,true]){
     await page.goto(sandboxURL)
     if(detail){
       await page.getByRole('button',{name:'查看图片 删除样例1'}).click()
-      await page.getByRole('dialog',{name:'删除样例1',exact:true}).getByRole('button',{name:'删除',exact:true}).click()
+      await page.getByRole('dialog',{name:'删除样例1',exact:true}).getByRole('button',{name:/^删\s*除$/}).click()
     }else{
       for(const id of imageIds)await page.getByRole('checkbox',{name:'选择图片 删除样例'+id}).check()
       await page.getByRole('button',{name:'删除选中',exact:true}).click()
