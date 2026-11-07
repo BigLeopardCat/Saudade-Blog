@@ -39,7 +39,7 @@ for (const [name, contents] of Object.entries(sources)) {
       // so this routing regression does not bundle dashboard charts/home media.
       {name:'route-destinations',setup(builder){
         builder.onResolve({filter:/^\./},args=>{
-          if(args.importer!==path.join(root,'src/router/index.tsx')||['../components/NotFound','./spaNavigate.ts'].includes(args.path))return;
+          if(args.importer!==path.join(root,'src/router/index.tsx')||['../components/NotFound','./spaNavigate.ts','./RoutePage'].includes(args.path))return;
           return {path:args.path,namespace:'route-fixture'};
         });
         builder.onLoad({filter:/.*/,namespace:'route-fixture'},args=>({loader:'tsx',resolveDir:root,contents:
@@ -56,6 +56,7 @@ for (const [name, contents] of Object.entries(sources)) {
   files[`/${name}`] = {type:'text/html',body:`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/${name}.css">${name==='mascot'?'':'<style>body{margin:0;background:#fbf6fa;font-family:system-ui,sans-serif}</style>'}<div id="root"></div><script src="/${name}.js"></script>`};
 }
 files['/'] = files['/mascot'];
+files['/loading.svg'] = {type:'image/svg+xml',body:await readFile(path.join(root,'public/loading.svg'))};
 let imageBytes = 0;
 for (const name of ['neutral','pain','cry','bump-small','bump-medium','bump-large']) {
   const body=await readFile(path.join(root,'public/mascot-404',name+'.webp'));

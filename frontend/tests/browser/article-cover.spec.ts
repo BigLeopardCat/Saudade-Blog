@@ -34,6 +34,7 @@ for (const fit of ['contain', 'cover'] as const) {
         await expect(image).toHaveJSProperty('naturalHeight', 900)
         await expect(image).toHaveCSS('object-fit', fit)
         await expect(page.locator('.readCover video')).toHaveCount(0)
+        await expect(page.locator('img[src=""]')).toHaveCount(0)
         const initial = await image.elementHandle()
         expect(initial).not.toBeNull()
         if (fit === 'cover') await expect(image).toHaveCSS('object-position', '20% 80%')
@@ -51,7 +52,16 @@ for (const fit of ['contain', 'cover'] as const) {
 for (const cover of ['', '/broken-cover.png']) {
     test(`missing or failed cover keeps a stable readable fallback: ${cover || 'empty'}`, async ({page, sandboxURL}) => {
         await article(page, cover)
-        if (cover) await page.route('**/broken-cover.png', route => route.fulfill({status: 404, body: ''}))
+        if (cover) {
+            await page.route('**/broken-cover.png', route => route.fulfill({status: 404, body: ''}))
+            await page.route('**/api/monitor/log', route => {
+                expect(route.request().method()).toBe('POST')
+                const payload = route.request().postDataJSON()
+                expect(payload.type).toBe('resource_error')
+                expect(new URL(payload.url).pathname).toBe('/broken-cover.png')
+                return route.fulfill({json: {code: 200}})
+            })
+        }
         await page.goto(sandboxURL)
         const fallback = page.locator('.readCoverFallback')
         await expect(fallback).toBeVisible()

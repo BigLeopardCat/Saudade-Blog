@@ -474,7 +474,7 @@ const ArticleResource = ({id}: {id: string}) => {
                             <div className="readInfo">
                                 <div className="readAuthor">
                                     <Flex gap={"small"} align={"center"} className="readAuthorRow">
-                                        <Avatar src={who.avatar} size={40} className="frontAvatar" />
+                                        <Avatar src={who.avatar || undefined} size={40} className="frontAvatar" />
                                         <span className="readAuthorName">{who.name}</span>
                                     </Flex>
                                     <div className="readTimes">
