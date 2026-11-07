@@ -43,6 +43,6 @@ export default function MoveImages({items,folders,onClose,onComplete}:Props) {
         <p>确认后整批移动；图片或目标目录已变化时，本批操作会取消。</p>
       </section>}
     </div>
-    {error&&<Alert type="error" showIcon message={error}/>}
+    <div className="albumMoveStatus">{error&&<Alert type="error" showIcon message={error}/>}</div>
   </Modal>
 }

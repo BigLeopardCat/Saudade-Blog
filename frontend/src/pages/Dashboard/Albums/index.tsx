@@ -168,14 +168,16 @@ export default function Albums() {
     </div></div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
-    <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true}} okText="删除" cancelText="取消"
+    <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true,style:{width:100}}}
+      cancelButtonProps={{disabled:deleting}} closable={!deleting} maskClosable={!deleting} keyboard={!deleting} okText="删除" cancelText="取消"
       onOk={()=>void remove()} onCancel={()=>{if(!deleting)setDeleteItems([])}}>
       确认删除这 {deleteItems.length} 张图片？如有图片仍被文章使用，本次删除将全部取消。
     </Modal>
     {!!moveItems.length&&<MoveImages items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
       onComplete={()=>{setMoveItems([]);setSelected(new Set())}}/>}
     <Modal title="删除文件夹" open={!!deleteFolderTarget} confirmLoading={removingFolder}
-      okText="删除文件夹" cancelText="取消" okButtonProps={{danger:true}}
+      okText="删除文件夹" cancelText="取消" okButtonProps={{danger:true,style:{width:120}}}
+      cancelButtonProps={{disabled:removingFolder}} closable={!removingFolder} maskClosable={!removingFolder} keyboard={!removingFolder}
       onOk={()=>void removeFolder()} onCancel={()=>{if(!removingFolder)setDeleteFolderTarget(null)}}>
       确认删除空文件夹「{deleteFolderTarget?.name}」？
     </Modal>
