@@ -15,9 +15,6 @@ import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { noteAuthor } from "../../../utils/noteAuthor";
 import { coverCropMotionStyle, cropFromRow } from "../../../utils/coverCrop";
 import { resolveApiAssetUrl } from "../../../utils/runtimeApi";
-import { useIsDarkMode } from "../../../theme";
-import readDayVideo from '../../../assets/read_day.mp4';
-import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
 import {CommentIcon, EyeIcon, HeartIcon, HeartOutlineIcon, StarIcon, StarOutlineIcon} from "../../../components/NoteStatIcons/index.tsx";
@@ -30,7 +27,6 @@ import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import CommentSection from "../../../components/CommentSection";
 import {createRequestScope} from "../../../utils/requestScope";
 
-// ByteMD imports
 import { Viewer } from '@bytemd/react'
 import gfm from '@bytemd/plugin-gfm'
 import breaks from "@bytemd/plugin-breaks";
@@ -55,14 +51,14 @@ const readLog = (): Record<string, string> => {
         const o = JSON.parse(localStorage.getItem(READ_LOG_KEY) || 'null');
         return o && typeof o === 'object' ? o : {};
     } catch {
-        // 脏值（手工改过、别的版本写的）当"没记过"处理，不炸页面
+        // Corrupt local read state must not block the article.
         return {};
     }
 };
 
 const todayStr = () => dayjs().format('YYYY-MM-DD');
 
-/** 今天是不是第一次读这篇。**是则当场记账**，调用方负责在请求失败时还回来 */
+/** Claim one daily view; release the claim if reporting fails. */
 const claimTodayRead = (noteId: string): boolean => {
     const today = todayStr();
     const log = readLog();
@@ -70,23 +66,21 @@ const claimTodayRead = (noteId: string): boolean => {
     log[noteId] = today;
     try {
         localStorage.setItem(READ_LOG_KEY, JSON.stringify(log));
-    } catch { /* 隐私模式 / 配额满：退化成"每次都上报"，不影响正文 */ }
+    } catch { /* Local persistence is optional. */ }
     return true;
 };
 
-/** 上报失败 ⇒ 把今天的记账还回去（只还今天这一条，别的日期不动），下次还有机会记上 */
+/** Release only today's claim so a failed view report can be retried. */
 const releaseTodayRead = (noteId: string) => {
     const log = readLog();
     if (log[noteId] !== todayStr()) return;
     delete log[noteId];
     try {
         localStorage.setItem(READ_LOG_KEY, JSON.stringify(log));
-    } catch { /* 同上：存不进去也无所谓，最坏是这一天不再上报 */ }
+    } catch { /* Local persistence is optional. */ }
 };
 
-// markdown-navbar 是 CJS 包，Vite 8 之后默认 import 拿到的可能是名字空间对象而不是组件
-// （整个 `Element type is invalid … got: object` 就是这么来的，判据与三种形态见
-//  utils/cjsDefault.ts 的头注）。**不要改回 `import MarkdownNavbar from …`。**
+// Normalize the CJS namespace before rendering it as a React component.
 const MarkdownNavbar = cjsDefault(MarkdownNavbarDefault)
 
 const plugins = [
@@ -95,7 +89,7 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    // 配色走 utils/mermaidTheme.ts 那一份（看板娘对话框用同一份，见 chatMarkdown.ts）
+    // The article and chat renderer share Mermaid configuration.
     mermaid(MERMAID_CONFIG),
     math(),
     bytemdStickers
@@ -123,12 +117,10 @@ const ArticleResource = ({id}: {id: string}) => {
     const [comments, setComments] = useState<number | null>(null)
     const [liked, setLiked] = useState(false)
     const [likeBusy, setLikeBusy] = useState(false)
-    // 本 id 的统计是否已经拿到过。用于区分"今天第一次读"（要上报 +1）与
-    // "今天已经记过"（只读回当前值）——后者在 useLiveRefresh 每次聚焦时都会走，
-    // 没有这道闸就会变成每次聚焦都发一次 GET。
+    // Reuse the current article's stats during background refreshes.
     const statsLoadedRef = useRef(false)
 
-    /** 一次性吃下统计三件套（stats 与 view 上报返回的是同一个形状） */
+    /** Stats reads and view reports share the same verified snapshot. */
     const applyStats = (s: NoteStats) => {
         statsLoadedRef.current = true
         setViews(s.views)
@@ -137,30 +129,16 @@ const ArticleResource = ({id}: {id: string}) => {
         setLiked(!!s.liked)
     }
 
-    const isDarkMode = useIsDarkMode()
-    // 视频开始播放后 poster 层淡出；换源先复位（见下面的 effect）
-    const [videoReady, setVideoReady] = useState(false)
-    // 素材加载失败 → 永久停用视频层，退回封面图（占位期/未上传素材时不至于空白）
-    const [videoFailed, setVideoFailed] = useState(false)
-    const coverRef = useRef<HTMLDivElement>(null)
-    const coverVideoRef = useRef<HTMLVideoElement>(null)
-    // 访客要求减少动效时不放视频（无障碍 / 省电）
-    const prefersReducedMotion = typeof window !== 'undefined'
-        && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const videoEnabled = !prefersReducedMotion && !videoFailed
+    const coverSource = resolveApiAssetUrl(article?.cover || '')
+    const [failedCover, setFailedCover] = useState<string | null>(null)
 
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
 
-    /** 拉这篇正文。`silent` = 背景重拉（跨端同步）：**不切加载屏**——详情页的
-     *  `isLoading` 会把整篇文章换成一个加载页，读者正读着的时候为了一次后台核对闪一下
-     *  是最坏的观感（同后台那几页"背景重拉不亮 loading"的纪律）。
-     *  404 照常走 `notFound`（两种模式都一样）：文章真被删了就该说它没了——
-     *  静默留着旧正文才是撒谎。 */
+    // Background refreshes retain the article; a verified 404 still removes it.
     const loadArticle = (opts?: { silent?: boolean }) => {
         if (!id) return;
-        // 非背景那一次：整篇换成加载页，并抹掉上一次的 404（不抹的话从死链跳到活文章
-        // 会先闪一下"文章不存在"——渲染顺序是 notFound 优先于 isLoading）
+        // A foreground request owns the initial loading and not-found state.
         if (!opts?.silent) { setLoading(true); setNotFound(false); }
         setLoadError(false);
         return scope.run('body', signal => getNoteById(id, signal), {
@@ -184,9 +162,7 @@ const ArticleResource = ({id}: {id: string}) => {
         });
     };
 
-    /** 今天第一次读这篇 ⇒ 上报 +1；已经记过 ⇒ 只读回当前值（不发 +1）。
-     *  上报失败**静默**：它是个副作用，把读者的正文页面换成一句"上报失败"是本末倒置。
-     *  `statsLoadedRef` 只挡住同一个 id 上的重复 GET；换 id 时由下面的 effect 复位。 */
+    // Report each daily view once. Stats failures never hide the article.
     const reportReadOnce = (noteId: string) => {
         // A pending pre-like stats snapshot must never overwrite the like result.
         if (likeLock.current) return;
@@ -215,8 +191,7 @@ const ArticleResource = ({id}: {id: string}) => {
             const res = liked ? await unlikeNote(id) : await likeNote(id)
             if (!token.current()) return
             if (ok(res)) {
-                // 后端回的是权威值（计数与状态一起回来）⇒ 照抄，不在前端 ±1
-                // （前端自增在"另一处刚点过/被取消"时会算错，且重复请求会漂）
+                // Counts and current-user state come from the same backend receipt.
                 setLikes(res.data.data.likes)
                 setLiked(!!res.data.data.liked)
                 statsLoadedRef.current = true
@@ -267,9 +242,7 @@ const ArticleResource = ({id}: {id: string}) => {
             const res = faved ? await removeFavorite(Number(id)) : await addFavorite(Number(id))
             if (!token.current() || getToken() !== accountToken) return
             if (ok(res)) {
-                // 写入成功 ⇒ 把结果交给共享状态（它顺手拉一次全量对齐：个人中心那份列表
-                // 与这里的★立刻是同一个事实）。**不在这里改本地 boolean**——两份状态正是
-                // 这轮要修的洞（见 favorites.ts 头注）。
+                // Favorites are shared with the personal center, not duplicated locally.
                 applyLocalFavorite(Number(id), !faved)
                 message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
             } else {
@@ -283,28 +256,6 @@ const ArticleResource = ({id}: {id: string}) => {
     }
 
     const content = article?.noteContent || '';
-
-    // 换源（切主题）→ 新 video 还在加载：先让 poster 层回来，等 onPlaying 再淡出
-    useEffect(() => {
-        setVideoReady(false)
-    }, [isDarkMode])
-
-    // 离屏暂停（抄首页 hero 的写法）：详情页一往下滚横幅就出视口，
-    // 不停会白烧 CPU/流量（视频解码是持续成本）
-    useEffect(() => {
-        const cover = coverRef.current
-        const video = coverVideoRef.current
-        if (!cover || !video) return
-        const observer = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting) {
-                video.play().catch(() => {})
-            } else {
-                video.pause()
-            }
-        }, { threshold: 0.05 })
-        observer.observe(cover)
-        return () => observer.disconnect()
-    }, [videoEnabled, isDarkMode])
 
     // Effect: mermaid 图 + 正文图片单击放大(委托,兼容 mermaid 异步渲染)
     useEffect(() => {
@@ -332,11 +283,10 @@ const ArticleResource = ({id}: {id: string}) => {
         return () => observer.disconnect();
     }, [isLoading, content]);
 
-    // Effect to handle link clicks by delegation (Open in new tab), cleanup duplicate effects
+    // Delegate links so asynchronously rendered Markdown is covered.
     useEffect(() => {
         const handleGlobalClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
-            // Check if click happened inside markdown-body
             const markdownContainer = target.closest('.markdown-body');
             if (!markdownContainer) return;
 
@@ -350,7 +300,6 @@ const ArticleResource = ({id}: {id: string}) => {
             }
         };
 
-        // Bind to document to catch dynamically added content
         document.addEventListener('click', handleGlobalClick);
 
         return () => {
@@ -413,7 +362,6 @@ const ArticleResource = ({id}: {id: string}) => {
                 clearInterval(intervalId);
                 navContainerRef = navContainer;
                 
-                // Add click listener
                 navContainer.addEventListener('mousedown', handleTocClick);
                 navContainer.addEventListener('click', handleTocClick);
 
@@ -501,11 +449,15 @@ const ArticleResource = ({id}: {id: string}) => {
             ) : (
                 <>
                     {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
-                    <div className="readCover" ref={coverRef}>
-                        {article?.cover ? (
+                    <div className="readCover">
+                        {coverSource && coverSource !== failedCover ? (
                             <motion.img
-                                className={`readCoverPoster${videoReady ? ' isHidden' : ''}`}
-                                src={resolveApiAssetUrl(article.cover)}
+                                key={coverSource}
+                                className="readCoverPoster"
+                                src={coverSource}
+                                alt=""
+                                aria-hidden="true"
+                                onError={() => setFailedCover(coverSource)}
                                 style={coverCropMotionStyle(cropFromRow(article))}
                                 initial={{ filter: "blur(10px)" }}
                                 animate={{ filter: "blur(0px)" }}
@@ -513,23 +465,6 @@ const ArticleResource = ({id}: {id: string}) => {
                             />
                         ) : (
                             <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
-                        )}
-                        {videoEnabled && (
-                            <video
-                                key={isDarkMode ? 'night' : 'day'}
-                                ref={coverVideoRef}
-                                className="readCoverVideo"
-                                src={isDarkMode ? readNightVideo : readDayVideo}
-                                muted
-                                loop
-                                autoPlay
-                                playsInline
-                                preload="metadata"
-                                disablePictureInPicture
-                                aria-hidden="true"
-                                onPlaying={() => setVideoReady(true)}
-                                onError={() => setVideoFailed(true)}
-                            />
                         )}
                         <motion.div
                             initial={{ opacity: 0, x: -30 }}
