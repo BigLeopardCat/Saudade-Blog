@@ -1,5 +1,7 @@
 import {useRef, useState} from 'react'
 import {createRoot} from 'react-dom/client'
+import {Provider} from 'react-redux'
+import store from '../../../src/store'
 import ArticleCollaboration from '../../../src/components/ArticleCollaboration'
 import Editor, {type EditorHandle} from '../../../src/components/Editor'
 
@@ -17,4 +19,4 @@ function Preview() {
     <output aria-label="草稿正文">{content}</output>
   </>
 }
-createRoot(document.getElementById('root')!).render(<Preview/>)
+createRoot(document.getElementById('root')!).render(<Provider store={store}><Preview/></Provider>)

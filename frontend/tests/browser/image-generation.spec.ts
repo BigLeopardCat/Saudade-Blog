@@ -26,7 +26,7 @@ test('image generation requires request approval and a separate visible-result a
         const draft=route.request().postDataJSON()
         expect(draft).toEqual({prompt,model:'fixture-image',size:'1536x1024',quality:'high',referenceIds:[]})
         job={id,request:{...draft,provider:'https://api.openai.com/v1',references:[]},requestHash:'a'.repeat(64),status:'pending',
-          outputHash:null,previewUrl:null,imageId:null,error:null,usage:null,createdAt:'2026-11-04T12:00:00Z'}
+          outputHash:null,previewUrl:null,imageId:null,imageRemoved:false,error:null,usage:null,createdAt:'2026-11-04T12:00:00Z'}
       }
       await route.fulfill({json:{code:200,data:job}})
     }else await route.fulfill({json:{code:200,data:path.endsWith('/jobs')?(job?[{id:job.id,title:job.request.prompt,status:job.status}]:[]):job}})
@@ -75,7 +75,7 @@ test('history menus preserve selection and layout, copy full prompts and retry o
   const makeJob=(id:string,status:string):GenerationJob=>({id,status,
     request:{provider:'https://api.openai.com/v1',model:'fixture-image',prompt:id===oldId?prompt:'执行中的另一个请求 '+status,size:'1536x1024',quality:'high',
       references:[{imageId:4,name:'冻结参考图',digest:'c'.repeat(64),previewUrl:'/fixture/reference.svg'}]},
-    requestHash:'a'.repeat(64),previewUrl:null,outputHash:null,imageId:null,error:null,usage:null,createdAt:'2026-11-07T00:00:00Z'})
+    requestHash:'a'.repeat(64),previewUrl:null,outputHash:null,imageId:null,imageRemoved:false,error:null,usage:null,createdAt:'2026-11-07T00:00:00Z'})
   const records=new Map([[oldId,makeJob(oldId,'unknown')],[runningId,makeJob(runningId,'generating')],[savingId,makeJob(savingId,'saving')]])
   let retries=0,paidCalls=0
   const deleted:string[]=[]
@@ -159,4 +159,65 @@ test('history menus preserve selection and layout, copy full prompts and retry o
   await dialog.getByLabel('提示词',{exact:true}).focus()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
+})
+
+test('gallery deletion invalidates cached generation facts and never presents a removed image as still retained',async({page,sandboxURL})=>{
+  const id='dc374055-000d-4d92-bbc7-c8e6c63a65fe'
+  let removed=false,detailReads=0,paidCalls=0
+  const intent={action:'delete',imageIds:[31]}
+  const frozen={version:'d'.repeat(64),expiresAt:4_000_000_000,intent}
+  const image={imageKey:31,imageUrl:'/fixture/retained.svg',displayName:'保留过的图',description:'',folderId:0,isFavorite:false,version:'a'.repeat(64)}
+  const job=():GenerationJob=>({id,status:'accepted',imageId:31,imageRemoved:removed,
+    previewUrl:'/fixture/retained.svg',outputHash:'b'.repeat(64),requestHash:'c'.repeat(64),error:null,usage:null,
+    request:{provider:'https://api.openai.com/v1',model:'fixture-image',prompt:'保留过的图',size:'1024x1024',quality:'high',references:[]},createdAt:'2026-11-07T00:00:00Z'})
+  await page.route('**/fixture/retained.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>'}))
+  await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{configured:false}}}))
+  await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:[]}}))
+  await page.route('**/api/protect/gallery/images**',route=>route.fulfill({json:{code:200,data:{items:removed?[]:[image],nextCursor:null}}}))
+  await page.route('**/api/protect/image-generation/options',route=>route.fulfill({json:{code:200,data:{configured:true,models:['fixture-image'],defaultModel:'fixture-image'}}}))
+  await page.route('**/api/protect/image-generation/jobs**',route=>{
+    if(route.request().method()==='POST'){paidCalls++;return route.fulfill({status:500,json:{code:500}})}
+    if(new URL(route.request().url()).pathname.endsWith('/jobs'))return route.fulfill({json:{code:200,data:[{id,status:'accepted',title:'保留过的图'}]}})
+    detailReads++
+    return route.fulfill({json:{code:200,data:job()}})
+  })
+  await page.route('**/api/protect/gallery/image-actions/prepare',route=>{
+    expect(route.request().postDataJSON()).toEqual(intent)
+    return route.fulfill({json:{code:200,data:{...frozen,matchedIds:[31],destination:null,previewTruncated:false,
+      preview:[{imageId:31,displayName:image.displayName,folderId:0,isFavorite:false}]}}})
+  })
+  await page.route('**/api/protect/gallery/image-actions',route=>{
+    expect(route.request().postDataJSON()).toEqual(frozen)
+    removed=true
+    return route.fulfill({json:{code:200,data:{action:'delete',changed:true,beforeVersion:frozen.version,
+      matchedIds:[31],changedIds:[31],cleanupPendingIds:[31]}}})
+  })
+  await page.goto(sandboxURL)
+  const openHistory=async()=>{
+    await page.getByRole('button',{name:'AI 生图',exact:true}).click()
+    const modal=page.getByRole('dialog',{name:'AI 生图',exact:true})
+    await modal.locator(`.generationHistoryItem[data-job-id="${id}"] .generationHistorySelect`).click()
+    return modal
+  }
+  const first=await openHistory()
+  await expect(first.getByRole('img',{name:'本次生成结果'})).toBeVisible()
+  await expect(first.getByText('已存入图库，图片编号 31。可在文章编辑页选择封面，或请助手设置。')).toBeVisible()
+  expect(detailReads).toBe(1)
+  await first.getByRole('button',{name:/^关\s*闭$/}).click()
+  await page.getByRole('checkbox',{name:'选择图片 保留过的图'}).check()
+  await page.getByRole('button',{name:'删除选中',exact:true}).click()
+  const confirmation=page.getByRole('dialog',{name:'删除图片',exact:true})
+  await confirmation.getByRole('button',{name:'查看预览',exact:true}).click()
+  await expect(confirmation.getByRole('region',{name:'删除预览'})).toBeVisible()
+  await confirmation.getByRole('button',{name:'确认删除',exact:true}).click()
+  await expect(confirmation).toHaveCount(0)
+  const after=await openHistory()
+  await expect(after.getByRole('heading',{name:'图片已从图库移除',exact:true})).toBeVisible()
+  await expect(after.locator('.generationHistoryStatus')).toHaveText('图片已从图库移除')
+  await expect(after.getByText('图片已从图库移除，曾保存的任务结果仍保留。',{exact:true})).toBeVisible()
+  await expect(after.getByRole('img',{name:'本次生成结果'})).toHaveCount(0)
+  await expect(after.getByText('已存入图库，图片编号 31。可在文章编辑页选择封面，或请助手设置。')).toHaveCount(0)
+  await expect(after.getByText('生成失败',{exact:true})).toHaveCount(0)
+  expect(detailReads).toBe(2)
+  expect(paidCalls).toBe(0)
 })

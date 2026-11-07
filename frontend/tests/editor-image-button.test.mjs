@@ -12,21 +12,14 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-/** 读仓库里的文件；**读不到就是红**（不是跳过 —— 守卫看不见源码等于守卫不存在）。 */
+/** Missing contract sources fail the check. */
 const readRel = (rel) => {
     const abs = path.join(root, rel);
     if (!existsSync(abs)) { ok(false, `读得到 ${rel}`, abs); return null; }
     return readFileSync(abs, 'utf8');
 };
 
-/**
- * 契约三组读的那份 bytemd 源码住哪儿。
- *
- * 默认就是 `node_modules/bytemd`。`BYTEMD_SRC` 是给**负控自检**用的旁路：把源码复制一份、
- * 改几个字节（例如把图片那颗挪个位子）再跑一次，确认本套件真的会红 —— 守卫没被验证过红，
- * 就等于没写。它**不能**用来"换一个 bytemd"：第 ⓿ 组会断言这份副本的版本与被解析到的那份
- * 逐字一致（同版本、不同字节 = 正是上游改动的形态），换版本会被当场拦下。
- */
+/** Optional same-version source fixture for toolbar negative controls. */
 const bytemdDir = process.env.BYTEMD_SRC ? path.resolve(process.env.BYTEMD_SRC) : null;
 const readVendor = (rel) => {
     const abs = path.join(bytemdDir || path.join(root, 'node_modules/bytemd'), rel);
@@ -259,7 +252,7 @@ console.log('\n③ 前提：omit `uploadImages` 会连拖拽/粘贴一起关掉 
     }
 }
 
-console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这条守卫就该跟着改）');
+console.log('\n④ Bytemd 图片工具集成契约');
 {
     const src = readRel('src/components/Editor/index.tsx');
     if (src) {
@@ -289,7 +282,7 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
             '插入用 `appendBlock(\'![](encodeAssetUrl(url))\')`（地址先编码再拼 markdown）');
         ok(/setSelection\(pos, ctx\.codemirror\.Pos\(pos\.line\)\)/.test(f), '光标落在刚插入的那一行上');
 
-        // 同一轮修掉的真缺陷：本仓失败一律 HTTP 200 + code:500
+        // HTTP success still requires a successful application envelope.
         ok(/response\.data\?\.code !== 200/.test(f), '上传判**业务码** code !== 200（不是 HTTP 状态）');
         ok(!/response\.status === 200/.test(f), '不再用 `response.status === 200` 判成功（恒真 ⇒ 假成功）');
         // bytemd 会把返回值 map/join 后 appendBlock ⇒ 空数组 = 插一个空行 + 按 `length*2-2`
@@ -310,19 +303,10 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
         ok(/onPick\(img\.imageUrl\)/.test(f), '图库选中时递出去的是**库里那个原始地址**');
         ok(!/onPick\(resolveApiAssetUrl/.test(f), '递出去的不是 CDN 化后的地址（换公开域名就认不回桶了）');
         ok(/src=\{resolveApiAssetUrl\(img\.imageUrl\)\}/.test(f), 'CDN 化只用在缩略图 src 上');
-        ok(/useGalleryPager\(\)/.test(f), '图库列表经 useGalleryPager 取（分页/判据的唯一一处在 utils/galleryPager.ts）');
-        ok(/accept="image\/\*"/.test(f) && /Upload\.Dragger/.test(f), '本地上传仍是拖拽/点选（accept=image/*）');
+                ok(/accept="image\/\*"/.test(f) && /Upload\.Dragger/.test(f), '本地上传仍是拖拽/点选（accept=image/*）');
     }
 
-    const pager = readRel('src/utils/galleryPager.ts');
-    if (pager) {
-        const f = flat(pager);
-        ok(/res\.data\?\.code !== 200/.test(f), '图库列表判**业务码**（HTTP 200 ≠ 业务成功）');
-        ok(!/res\.status === 200/.test(f), '图库列表不用 HTTP 状态判成功（恒真 ⇒ 假成功）');
-        // 游标 = 已加载的最后一张；`hasMore` 与页大小同源（服务端不报总数，见 galleryPager 头注）
-        ok(/loaded\.current\[loaded\.current\.length - 1\]/.test(f), '下一页游标取的是**最后一张**（不是第一张）');
-        ok(/rows\.length >= GALLERY_PAGE_SIZE/.test(f), '`hasMore` 与页大小同源（页大小只有一份）');
-    }
+
 }
 
 console.log('\n════ ' + pass + '/' + (pass + fail) + ' 项通过 ════\n');

@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {build, transform} from 'esbuild';
+import ts from 'typescript';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'draft-save-'));
 try {
@@ -21,10 +22,30 @@ try {
 
     // 执行组件的真实保存与生命周期函数，用可控网络回执重现竞态，无须浏览器或 React DOM。
     const source = readFileSync('src/pages/Dashboard/Notes/NewNotes/index.tsx', 'utf8');
-    const saveSource = source.slice(source.indexOf('    const latestPayload ='), source.indexOf('    // 回填完毕后'));
-    const resumeSource = source.slice(source.indexOf('    // bfcache 恢复'), source.indexOf('    // 标签字典'));
-    const publishSource = source.slice(source.indexOf('    const onFinish = async'), source.indexOf('    /**\n     * 回列表页'));
-    const body = (await transform(`${saveSource}\n${resumeSource}\n${publishSource}\nreturn {flushAutosave, onFinish};`, {loader: 'ts'})).code;
+    const tree = ts.createSourceFile('NewNotes.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const component = tree.statements.filter(ts.isVariableStatement)
+        .flatMap(statement => [...statement.declarationList.declarations])
+        .find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === 'NewNotes');
+    assert(component?.initializer && ts.isArrowFunction(component.initializer) && ts.isBlock(component.initializer.body));
+    const statements = [...component.initializer.body.statements];
+    const declaration = name => {
+        const matches = statements.filter(statement => ts.isVariableStatement(statement)
+            && statement.declarationList.declarations.some(node => ts.isIdentifier(node.name) && node.name.text === name));
+        assert.equal(matches.length, 1, `one production declaration for ${name}`);
+        return matches[0].getText(tree);
+    };
+    const listensForPageHide = node => {
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+            && node.expression.name.text === 'addEventListener' && node.arguments.length > 0
+            && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === 'pagehide') return true;
+        return !!ts.forEachChild(node, child => listensForPageHide(child) || undefined);
+    };
+    const effects = statements.filter(statement => ts.isExpressionStatement(statement)
+        && ts.isCallExpression(statement.expression) && ts.isIdentifier(statement.expression.expression)
+        && statement.expression.expression.text === 'useEffect' && listensForPageHide(statement));
+    assert.equal(effects.length, 1, 'one production page lifecycle effect');
+    const functions = ['latestPayload', 'onAutosaveFail', 'flushAutosave', 'scheduleAutosave', 'onFinish'].map(declaration);
+    const body = (await transform(`${functions.join('\n')}\n${effects[0].getText(tree)}\nreturn {flushAutosave, onFinish};`, {loader: 'ts'})).code;
     const ref = current => ({current});
     const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b}); return {promise, resolve, reject}; };
     const response = (id, code = 200) => ({status: 200, data: {code, data: {id, version: 'draft-version', updateTime: '2026-10-23 12:00:00'}}});

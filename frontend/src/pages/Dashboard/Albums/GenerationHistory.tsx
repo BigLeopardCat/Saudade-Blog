@@ -73,7 +73,7 @@ export default function GenerationHistory({items,active,detail,failed,statusName
         }}>
         <Tooltip title={item.title} placement="right">
           <button type="button" className="generationHistorySelect" aria-current={active?.id===item.id?'true':undefined} onClick={()=>onSelect({...item,status})}>
-            <span className="generationHistoryStatus">{running&&<LoadingOutlined spin/>}{statusNames[status]||status}</span>
+            <span className="generationHistoryStatus">{running&&<LoadingOutlined spin/>}{detail?.id===item.id&&detail.imageRemoved?'图片已从图库移除':statusNames[status]||status}</span>
             <span className="generationHistoryTitle">{item.title||'未命名图片'}</span>
           </button>
         </Tooltip>
