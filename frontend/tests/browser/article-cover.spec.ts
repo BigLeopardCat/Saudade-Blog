@@ -29,7 +29,7 @@ for (const fit of ['contain', 'cover'] as const) {
             return route.fulfill({contentType: 'image/svg+xml', body: portrait})
         })
         await page.goto(sandboxURL)
-        const image = page.locator('.readCover > img')
+        const image = page.locator('.readCover > .asset-image > img')
         await expect(image).toBeVisible()
         await expect(image).toHaveJSProperty('naturalHeight', 900)
         await expect(image).toHaveCSS('object-fit', fit)
@@ -65,7 +65,7 @@ for (const cover of ['', '/broken-cover.png']) {
         await page.goto(sandboxURL)
         const fallback = page.locator('.readCoverFallback')
         await expect(fallback).toBeVisible()
-        await expect(page.locator('.readCover > img, .readCover video')).toHaveCount(0)
+        await expect(page.locator('.readCover > .asset-image > img, .readCover video')).toHaveCount(0)
         const background = await fallback.evaluate(element => getComputedStyle(element).backgroundImage)
         expect(background).not.toBe('none')
         await page.getByRole('button', {name: '切换主题'}).click()
@@ -110,4 +110,65 @@ test('a held lazy route shows centered existing loading art without visible stat
     await page.evaluate(() => window.finishRouteLoad?.())
     await expect(page.getByRole('heading', {name: '页面已就绪'})).toBeVisible()
     await expect(status).toHaveCount(0)
+})
+
+test('real cover pending art unmounts on error, retries the same URL and stops after load', async ({page, sandboxURL}) => {
+    await page.emulateMedia({reducedMotion: 'no-preference'})
+    await article(page, '/pending-cover.svg')
+    const requests: string[] = []
+    let releaseFailure!: () => void, releaseSuccess!: () => void
+    const failure = new Promise<void>(resolve => {releaseFailure = resolve})
+    const success = new Promise<void>(resolve => {releaseSuccess = resolve})
+    await page.route('**/api/monitor/log', route => route.fulfill({json: {code: 200}}))
+    await page.route('**/pending-cover.svg', async route => {
+        requests.push(route.request().url())
+        if (requests.length === 1) {
+            await failure
+            return route.fulfill({status: 404, body: ''})
+        }
+        await success
+        return route.fulfill({contentType: 'image/svg+xml', body: portrait})
+    })
+    await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
+    const cover = page.locator('.readCover')
+    const pending = cover.locator('.sweep-loading')
+    await expect(pending).toBeVisible()
+    await expect(pending.locator('.sweep-loading__sprite')).toHaveCSS('animation-play-state', 'running')
+    const bounds = await cover.boundingBox()
+    releaseFailure()
+    await expect(cover.getByRole('button', {name: '重新加载图片：文章封面'})).toBeVisible()
+    await expect(pending).toHaveCount(0)
+    await expect(cover.locator('.readCoverFallback')).toBeVisible()
+    await cover.getByRole('button', {name: '重新加载图片：文章封面'}).click()
+    await expect(pending).toBeVisible()
+    await expect(cover).toHaveCSS('height', `${bounds!.height}px`)
+    releaseSuccess()
+    await expect(cover.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
+    await expect(pending).toHaveCount(0)
+    expect(requests).toHaveLength(2)
+    expect(requests[0]).toBe(requests[1])
+    await expect(cover.locator('.asset-image')).toHaveAttribute('aria-busy', 'false')
+    expect(await cover.evaluate(element => element.getAnimations({subtree: true})
+        .filter(animation => animation instanceof CSSAnimation && animation.animationName === 'saudade-sweep-loading').length)).toBe(0)
+})
+
+test('article data loading uses scoped quiet art rather than the retired global animation', async ({page, sandboxURL}) => {
+    let release!: () => void
+    const waiting = new Promise<void>(resolve => {release = resolve})
+    await article(page, '')
+    await page.route('**/api/public/notes/1', async route => {
+        await waiting
+        return route.fulfill({json: {code: 200, data: {noteKey: 1, noteTitle: '等待后就绪',
+            noteContent: '文章正文。', cover: '', description: '', noteTags: [], status: 'public',
+            authorName: '示例作者', authorAvatar: '', createTime: '2026-01-01', updateTime: '2026-01-01'}}})
+    })
+    await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
+    const status = page.getByRole('status', {name: '正在加载文章'})
+    await expect(status.locator('.sweep-loading')).toBeVisible()
+    await expect(status).toHaveText('')
+    await expect(page.locator('#bongo-cat, .LoadingContainer')).toHaveCount(0)
+    release()
+    await expect(page.getByRole('heading', {name: '等待后就绪'})).toBeVisible()
+    await expect(status).toHaveCount(0)
+    await expect(page.locator('.sweep-loading')).toHaveCount(0)
 })

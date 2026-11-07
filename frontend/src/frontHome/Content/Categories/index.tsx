@@ -1,3 +1,4 @@
+import SweepLoading from '../../../components/SweepLoading'
 import './index.sass'
 import { useEffect, useRef, useState } from "react";
 import {useNavigate, useParams} from "react-router-dom";
@@ -67,7 +68,7 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
                         onClick={() => navigate(`/article/${item.noteKey}`)}
                     >
                     <li>
-                        <AssetImage alt={item.noteTitle} src={item.cover}/>
+                        <AssetImage pending={<SweepLoading/>} alt={item.noteTitle} src={item.cover}/>
                         <div className='article'>
                             <div className="articleTop">
                                 <h2>{item.noteTitle}</h2>

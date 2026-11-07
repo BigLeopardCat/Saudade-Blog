@@ -1,3 +1,4 @@
+import SweepLoading from '../../../components/SweepLoading'
 import AssetImage from '../../../components/AssetImage'
 import {useEffect, useMemo, useState} from 'react'
 import {useDispatch} from 'react-redux'
@@ -137,7 +138,7 @@ export default function Albums() {
           const name=image.displayName||assetDisplayName(image.imageUrl)
           return <Card key={image.imageKey} size="small" className={'albumTile '+(selected.has(image.imageKey)?'is-checked':'')}>
             <div className="albumOpen">
-              <AssetImage className="albumThumb" src={image.imageUrl} alt={name} onClick={()=>setDetail(image)}/>
+              <AssetImage pending={<SweepLoading/>} className="albumThumb" src={image.imageUrl} alt={name} onClick={()=>setDetail(image)}/>
               <button type="button" className="albumText albumTextOpen" aria-label={'查看图片 '+name} onClick={()=>setDetail(image)}><span className="albumName">{image.isFavorite&&<StarFilled/>}{name}</span>
                 {image.description&&<span className="albumCaption">{image.description}</span>}</button>
             </div>
