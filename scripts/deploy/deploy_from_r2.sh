@@ -152,11 +152,15 @@ fi
 if [ "$RESTART" = "1" ] || ! backend_ready; then
   [ "$RESTART" = "0" ] && echo "⚠️ 后端未就绪，重启一次"
   sudo systemctl restart saudade-rust
-  for _ in $(seq 1 20); do backend_ready && break; sleep 1; done
-  if backend_ready; then
+  backend_is_ready=0
+  for _ in $(seq 1 20); do
+    if backend_ready; then backend_is_ready=1; break; fi
+    sleep 1
+  done
+  if [ "$backend_is_ready" = "1" ]; then
     echo "✅ $(date '+%H:%M:%S') 后端已更新并重启（数据库就绪检查通过）"
   else
-    echo "❌ $(date '+%H:%M:%S') 后端重启后未通过就绪检查，部署失败"
+    echo "❌ $(date '+%H:%M:%S') 后端重启后 20 次就绪检查均未通过，部署失败"
     exit 1
   fi
 else
