@@ -23,6 +23,7 @@ export default function FolderNavigation({folders,selected,onSelect,onDelete}:Pr
     })
   return <nav className="albumFolderNavigation" aria-label="图库分类">
     <Tabs activeKey={selected===undefined?'all':'folder:'+selected}
+      more={{trigger:'click'}}
       onChange={key=>onSelect(key==='all'?undefined:Number(key.slice(7)))}
       items={[{key:'all',label:'全部图片'},{key:'folder:0',label:'未分类'},...children(0)]}
       tabBarExtraContent={

@@ -188,6 +188,7 @@ test('top folder tabs preserve hierarchy, sibling switching and explicit directo
 test('mobile folder tabs expose overflow categories without widening the gallery',async({page,sandboxURL})=>{
   await page.setViewportSize({width:390,height:760})
   const folders=Array.from({length:12},(_,index)=>({id:index+1,parentId:0,name:`旅行相册分类${index+1}`,imageCount:0}))
+  folders[11].name+='远行'.repeat(30)
   const visits:(string|null)[]=[]
   await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{configured:false}}}))
   await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:folders}}))
@@ -197,8 +198,11 @@ test('mobile folder tabs expose overflow categories without widening the gallery
   })
   await page.goto(sandboxURL)
   const navigation=page.getByRole('navigation',{name:'图库分类'})
-  await navigation.locator('.ant-tabs-nav-more').hover()
-  await page.getByRole('menuitem').filter({hasText:'旅行相册分类12'}).click()
+  await navigation.locator('.ant-tabs-nav-more').click()
+  const overflow=page.getByRole('listbox',{name:'expanded dropdown'})
+  await expect(overflow).toBeVisible()
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await overflow.getByRole('option').filter({hasText:'旅行相册分类12'}).click()
   await expect.poll(()=>visits.at(-1)).toBe('12')
   await expect(navigation.getByRole('tab').filter({hasText:'旅行相册分类12'})).toHaveAttribute('aria-selected','true')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
