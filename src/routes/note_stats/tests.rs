@@ -309,3 +309,42 @@ async fn postgres_metrics_refuse_nonpublic_and_shadow_articles() {
     }
     tx.rollback().await.unwrap();
 }
+
+#[tokio::test]
+async fn view_sum_preserves_database_errors_instead_of_returning_zero() {
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("offline fixture".into())])
+        .into_connection();
+    assert!(views_of(&db, 19).await.is_err());
+}
+
+#[tokio::test]
+async fn postgres_view_sum_decodes_large_totals_and_empty_counts_without_mutating_rows() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("SKIP view aggregate PostgreSQL: TEST_PG_URL not set");
+        return;
+    };
+    let db = Database::connect(url)
+        .await
+        .expect("configured test database is reachable");
+    let tx = db.begin().await.unwrap();
+    let row = tx.query_one(Statement::from_string(DatabaseBackend::Postgres,
+        "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ('view aggregate fixture','body','public',true,localtimestamp,localtimestamp) RETURNING id"
+    )).await.unwrap().unwrap();
+    let id: i32 = row.try_get("", "id").unwrap();
+    assert_eq!(views_of(&tx, id).await.unwrap(), 0);
+    tx.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note_view(note_id,view_date,cnt) VALUES ($1,'2026-01-01',2000000000),($1,'2026-01-02',2000000000)",
+        vec![id.into()])).await.unwrap();
+    assert_eq!(views_of(&tx, id).await.unwrap(), 4_000_000_000i64);
+    let rows = note_view::Entity::find()
+        .filter(note_view::Column::NoteId.eq(id))
+        .all(&tx)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.cnt == 2_000_000_000));
+    tx.rollback().await.unwrap();
+}

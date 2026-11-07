@@ -85,7 +85,7 @@ fn stats_unavailable(error: &DbErr) -> Response {
 }
 
 /// An empty SUM is NULL, represented as zero only after a successful database read.
-async fn views_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
+async fn views_of<C: ConnectionTrait>(db: &C, note_id: i32) -> Result<i64, DbErr> {
     note_view::Entity::find()
         .select_only()
         .column_as(sum_views(), "total")
@@ -104,8 +104,7 @@ async fn likes_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
         .map(|n| n as i64)
 }
 
-/// 收藏数。`COUNT(*)`（BIGINT）而非 `SUM`——**没有 `sum_views` 那个 DECIMAL 陷阱**
-/// （见 `sum_views` 的注释：只有求和要过 `CAST`）。
+/// Favorite totals count rows rather than summing a mutable counter.
 async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
     user_favorite::Entity::find()
         .filter(user_favorite::Column::NoteId.eq(note_id))
