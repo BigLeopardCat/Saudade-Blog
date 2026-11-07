@@ -1,4 +1,5 @@
 //! Public, revision-bound original text reads.
+mod metadata;
 mod sections;
 
 use crate::{
@@ -93,12 +94,18 @@ async fn document<C: ConnectionTrait>(
             let Some(metadata) = metadata.pop() else {
                 return Ok(None);
             };
+            let mut metadata =
+                serde_json::to_value(metadata).expect("serializable article metadata");
+            let extra = metadata::article(db, &row).await?;
+            if let (Value::Object(target), Value::Object(extra)) = (&mut metadata, extra) {
+                target.extend(extra);
+            }
             Document {
                 kind,
                 id,
                 title: row.title,
                 body: row.content,
-                metadata: serde_json::to_value(metadata).expect("serializable article metadata"),
+                metadata,
             }
         }
         Kind::Talk | Kind::Board => {

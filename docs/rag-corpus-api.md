@@ -25,6 +25,16 @@ The current section policy is `commonmark-top-level-source-v1`. Oversized source
 bodies above 4 MiB return 413; unavailable data, admission or deadline returns 503.
 Successful reads use `Cache-Control: no-store`.
 
+For notes, `metadata` also contains the existing public author display name/avatar,
+article description and cover/fit/focal/zoom fields. It reuses the public article
+profile projection, without exposing author IDs, email, role or credentials.
+Display names and descriptions are bounded to 80 and 2,000 Unicode code points.
+URLs above 2,048 code points become null rather than an invalid URL prefix. Each
+bounded text/URL has its corresponding `Truncated` flag. Unknown authors remain
+null; an unset description is an empty string. Nonfinite or invalid image geometry
+is unknown, not a fabricated default. Metadata-only consumers may request `limit=1`;
+no separate body/statistics or per-author HTTP request is needed.
+
 `GET /api/public/notes/{id}/stats` is independent of body reads and does not add a
 view. It shares the same public-root rule; database failures return 503 rather
 than pretending the article is missing. Public consumers should use numeric

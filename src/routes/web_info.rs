@@ -167,7 +167,7 @@ pub async fn get_web_settings(
     Json(ApiResponse::success(payload))
 }
 
-pub(crate) async fn site_author(db: &sea_orm::DatabaseConnection) -> (String, String) {
+pub(crate) async fn site_author<C: sea_orm::ConnectionTrait>(db: &C) -> (String, String) {
     let infos = web_info::Entity::find().all(db).await.unwrap_or(vec![]);
 
     let get_val = |k: &str| -> String {
