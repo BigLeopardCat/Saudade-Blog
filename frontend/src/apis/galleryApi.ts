@@ -41,7 +41,7 @@ const baseQuery:BaseQueryFn<string|FetchArgs,unknown,{status:string|number;error
 }
 
 export const galleryApi=createApi({
-  reducerPath:'galleryApi',baseQuery,tagTypes:['Images','Folders'],keepUnusedDataFor:60,
+  reducerPath:'galleryApi',baseQuery,tagTypes:['Images','Folders','GenerationJobs'],keepUnusedDataFor:60,
   endpoints:builder=>({
     images:builder.infiniteQuery<GalleryPage,GalleryFilters,number|undefined>({
       infiniteQueryOptions:{initialPageParam:undefined,getNextPageParam:page=>page.nextCursor??undefined},
@@ -58,7 +58,7 @@ export const galleryApi=createApi({
     }),
     changeImages:builder.mutation<GalleryImageActionResult,Pick<GalleryImageActionPreview,'version'|'expiresAt'|'intent'>>({
       query:body=>({url:'/api/protect/gallery/image-actions',method:'POST',body}),
-      invalidatesTags:['Images','Folders'],
+      invalidatesTags:result=>result?.action==='delete'?['Images','Folders','GenerationJobs']:['Images','Folders'],
     }),
     createFolder:builder.mutation<GalleryFolder,{parentId:number;name:string}>({
       query:body=>({url:'/api/protect/gallery/folders',method:'POST',body}),invalidatesTags:['Folders'],

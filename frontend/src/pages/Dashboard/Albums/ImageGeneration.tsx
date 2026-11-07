@@ -8,7 +8,7 @@ import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
 import {assetDisplayName} from '../../../utils/assetName'
 import GenerationHistory from './GenerationHistory'
 
-const statusNames:Record<string,string>={pending:'等待确认提示词',generating:'正在生成',saving:'正在保存',review:'等待审阅图片',accepted:'已存入图库',rejected:'已放弃',failed:'生成失败',unknown:'结果待核实',expired:'审批已过期'}
+const statusNames:Record<string,string>={pending:'等待确认提示词',generating:'正在生成',saving:'正在保存',review:'等待审阅图片',accepted:'已完成保留审批',rejected:'已放弃',failed:'生成失败',unknown:'结果待核实',expired:'审批已过期'}
 export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const dispatch=useDispatch<AppDispatch>()
   const options=api.useGenerationOptionsQuery()
@@ -80,7 +80,7 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
           {images.hasNextPage&&<Button loading={images.isFetchingNextPage} onClick={()=>void images.fetchNextPage()}>加载更多图库图片</Button>}
           <Button type="primary" loading={creating} disabled={!options.data?.configured||!prompt.trim()||loadingArticle} onClick={()=>void prepare()}>预览请求</Button>
         </Space>:job?<Space direction="vertical" style={{width:'100%'}} size="middle">
-          <Typography.Title level={5}>{statusNames[job.status]||job.status}</Typography.Title>
+          <Typography.Title level={5}>{job.imageRemoved?'图片已从图库移除':statusNames[job.status]||job.status}</Typography.Title>
           <Card size="small" title="本次请求">
             <Typography.Paragraph>{job.request.provider}</Typography.Paragraph>
             <Typography.Paragraph>{job.request.model} · {job.request.size} · {job.request.quality} · 1 张</Typography.Paragraph>
@@ -96,13 +96,14 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
             <Button disabled={busy} onClick={()=>{setPrompt(job.request.prompt);setModel(job.request.model);setSize(job.request.size);setQuality(job.request.quality);setReferences(job.request.references.map(r=>r.imageId));setActive(null)}}>返回修改</Button></Space>}
           {job.status==='generating'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在生成图片，可以关闭窗口，稍后回来审阅。请勿重复创建相同任务。"/>}
           {job.status==='saving'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在保存图片，可以关闭窗口，稍后回来核对入库结果。"/>}
-          {job.previewUrl&&<img className="generationResult" src={resolveApiAssetUrl(job.previewUrl)} alt="本次生成结果"/>}
+          {job.previewUrl&&!job.imageRemoved&&<img className="generationResult" src={resolveApiAssetUrl(job.previewUrl)} alt="本次生成结果"/>}
           {job.status==='review'&&<><Alert type="info" message="请查看实际生成结果。确认入库后才会出现在图库中；不会自动修改文章封面。"/>
             <Button type="primary" loading={accepting} disabled={busy||!job.outputHash} onClick={()=>void updated(accept({id:job.id,version:job.outputHash!}).unwrap())}>确认结果并存入图库</Button></>}
           {['pending','review'].includes(job.status)&&<Button danger disabled={busy} loading={rejecting} onClick={()=>void updated(reject(job.id).unwrap())}>放弃本次{job.status==='pending'?'请求':'结果'}</Button>}
           {job.error&&<Alert type="warning" message={job.error}/>}
           {job.status==='unknown'&&<Alert type="warning" message="请求结果尚未核实，不会自动重试扣费。请检查服务商调用记录。"/>}
-          {job.status==='accepted'&&<Alert type="success" message={`已存入图库，图片编号 ${job.imageId}。可在文章编辑页选择封面，或请助手设置。`}/>}
+          {job.status==='accepted'&&job.imageRemoved&&<Alert type="info" message="图片已从图库移除，曾保存的任务结果仍保留。"/>}
+          {job.status==='accepted'&&!job.imageRemoved&&<Alert type="success" message={`已存入图库，图片编号 ${job.imageId}。可在文章编辑页选择封面，或请助手设置。`}/>}
         </Space>:<Spin/>}
       </main>
     </div>
