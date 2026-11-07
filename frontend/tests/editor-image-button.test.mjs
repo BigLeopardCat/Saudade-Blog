@@ -12,7 +12,7 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-/** 读仓库里的文件；**读不到就是红**（不是跳过 —— 守卫看不见源码等于守卫不存在）。 */
+/** Missing contract sources fail the check. */
 const readRel = (rel) => {
     const abs = path.join(root, rel);
     if (!existsSync(abs)) { ok(false, `读得到 ${rel}`, abs); return null; }
@@ -252,7 +252,7 @@ console.log('\n③ 前提：omit `uploadImages` 会连拖拽/粘贴一起关掉 
     }
 }
 
-console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这条守卫就该跟着改）');
+console.log('\n④ Bytemd 图片工具集成契约');
 {
     const src = readRel('src/components/Editor/index.tsx');
     if (src) {
@@ -282,7 +282,7 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
             '插入用 `appendBlock(\'![](encodeAssetUrl(url))\')`（地址先编码再拼 markdown）');
         ok(/setSelection\(pos, ctx\.codemirror\.Pos\(pos\.line\)\)/.test(f), '光标落在刚插入的那一行上');
 
-        // 同一轮修掉的真缺陷：本仓失败一律 HTTP 200 + code:500
+        // HTTP success still requires a successful application envelope.
         ok(/response\.data\?\.code !== 200/.test(f), '上传判**业务码** code !== 200（不是 HTTP 状态）');
         ok(!/response\.status === 200/.test(f), '不再用 `response.status === 200` 判成功（恒真 ⇒ 假成功）');
         // bytemd 会把返回值 map/join 后 appendBlock ⇒ 空数组 = 插一个空行 + 按 `length*2-2`
