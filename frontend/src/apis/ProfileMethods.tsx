@@ -108,7 +108,6 @@ function getNotifications() {
     });
 }
 
-/** 标记已读：传 ids 或 all=true（两者都传时后端按 ids 处理） */
 function getPendingAnnouncement() {
     return http<Envelope<NotificationItem | null>>({
         url: "/api/protected/notifications/announcement", method: "GET",
@@ -127,8 +126,23 @@ function deleteMessage(id: number, folder: 'inbox' | 'outbox') {
     });
 }
 
+type NotificationReadReceipt = {
+    ownerUserId: number
+    isRead: true
+    unreadCount: number
+} & ({
+    scope: 'selected'
+    matchedIds: number[]
+    changedIds: number[]
+} | {
+    scope: 'all_unread'
+    matchedCount: number
+    changedCount: number
+})
+
+/** 标记已读：传具体 ids 或 all=true；不能混用两种范围 */
 function readNotifications(payload: { ids?: number[]; all?: boolean }) {
-    return http<Envelope<UnreadSummary>>({
+    return http<Envelope<NotificationReadReceipt>>({
         url: "/api/protected/notifications/read",
         method: "POST",
         data: { ids: payload.ids ?? [], all: payload.all ?? false },

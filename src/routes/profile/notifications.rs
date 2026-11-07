@@ -1,16 +1,10 @@
 //! Notification lists and the latest announcement share per-user deletion state.
 
 use axum::{extract::State, http::HeaderMap, Json};
-use sea_orm::{
-    sea_query::Expr, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder,
-};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 use std::sync::Arc;
 
-use super::{
-    unread::unread_response, visibility, NotificationDto, ReadRequest,
-    UnreadDto,
-};
+use super::NotificationDto;
 use crate::{entity::user_notification, routes::AppState, utils::ApiResponse};
 
 fn dto(row: user_notification::Model) -> NotificationDto {
@@ -63,32 +57,5 @@ pub async fn pending_announcement(
 mod queries;
 pub use queries::{list_notifications, notification_detail, notification_state};
 
-pub async fn read_notifications(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<ReadRequest>,
-) -> Json<ApiResponse<UnreadDto>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let mut query = user_notification::Entity::update_many()
-        .col_expr(user_notification::Column::IsRead, Expr::value(true))
-        .col_expr(
-            user_notification::Column::ReadAt,
-            Expr::value(Some(chrono::Local::now().naive_local())),
-        )
-        .filter(visibility::notifications(uid))
-        .filter(user_notification::Column::IsRead.eq(false));
-    if !payload.all {
-        if payload.ids.is_empty() {
-            return unread_response(&state.db, uid).await;
-        }
-        query = query.filter(user_notification::Column::Id.is_in(payload.ids));
-    }
-    if let Err(error) = query.exec(&state.db).await {
-        tracing::error!("read notifications uid={uid}: {error}");
-        return Json(ApiResponse::error("操作失败，请稍后再试"));
-    }
-    unread_response(&state.db, uid).await
-}
+mod read_markers;
+pub use read_markers::read_notifications;
