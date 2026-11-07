@@ -22,8 +22,7 @@ function webglAvailable(): boolean | null {
         const gl = (canvas.getContext('webgl') ||
             canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null
         webglCache = !!gl
-        // 探完主动释放：浏览器同时活着的 WebGL context 数有上限（约 16），
-        // 看板娘自己要占一个 —— 探针不该成为"看板娘注册失败"的新成因。
+        // Release the diagnostic context so it does not consume renderer capacity.
         gl?.getExtension?.('WEBGL_lose_context')?.loseContext?.()
     } catch {
         /* canvas 都建不出来 ⇒ 保持 null（unknown） */
@@ -65,17 +64,8 @@ export function reportError(payload: ReportPayload): void {
     }
 }
 
-/**
- * 资源加载失败（`<img>` / `<script>` / `<link>` / …）。
- *
- * **必须 `capture: true`**：资源加载失败的 `error` 事件在元素上派发、**不冒泡**，
- * 冒泡阶段的 window 监听器根本收不到（`boot.js` 那条就是这样漏了四年的）。
- * 捕获阶段能听到，且 `resourceFailure()` 会把运行时 JS 异常（target = window）
- * 分辨出去，不与 `boot.js` 的 `js_error` 重复。
- */
-// `typeof window` 那道判断不是装饰：本仓的沙箱会把这些模块**打包进 node** 里 import
-// （见 frontend/README 的测试一节），而 axios 是被组件广泛引用的——监听器在 import 期
-// 就注册的话，没有 window 的环境会当场 ReferenceError，炸的是别人的套件。
+/** Capture resource errors without confusing them with window runtime exceptions. */
+// Module imports also run in non-browser tests.
 if (typeof window !== 'undefined') {
     window.addEventListener(
         'error',
