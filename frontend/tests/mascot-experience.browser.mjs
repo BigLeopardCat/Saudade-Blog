@@ -110,6 +110,7 @@ try {
   assert.equal(await page.locator('.mascot-error__scene').getAttribute('data-expression'),'cry');
   assert.equal(await page.getByRole('button',{name:'再看一次'}).count(),0);
   const cold=await browser.newPage({viewport:{width:375,height:1000},deviceScaleFactor:2});
+  await cold.emulateMedia({reducedMotion:'reduce'});
   const cdp=await cold.context().newCDPSession(cold);
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled',{cacheDisabled:true});
@@ -119,12 +120,14 @@ try {
   // Wait for all resources only to measure bytes; page usability has no image barrier.
   await cold.waitForFunction(paths=>performance.getEntriesByType('resource').filter(r=>paths.includes(new URL(r.name).pathname)).length===6,[...imagePaths]);
   const coldAssets=await cold.evaluate(paths=>performance.getEntriesByType('resource').filter(r=>paths.includes(new URL(r.name).pathname)).map(r=>({url:r.name,bytes:r.encodedBodySize,start:r.startTime,end:r.responseEnd})),[...imagePaths]);
+  assert.ok(coldAssets.every(resource=>resource.bytes>0),'Cold-image measurements must contain actual response bytes');
   const mobileImageBytes=coldAssets.reduce((sum,r)=>sum+r.bytes,0);
   assert.ok(mobileImageBytes<=imageBytes*.8,`Responsive images saved less than 20%: ${mobileImageBytes}/${imageBytes}`);
   assert.ok(await cold.locator('.mascot-error__sprite').evaluateAll(images=>images.every(image=>
     image.complete&&image.naturalWidth>0&&getComputedStyle(image).objectFit==='contain'&&image.currentSrc.includes('-672-')&&
     Math.abs(image.getBoundingClientRect().width-335)<1&&Math.abs(image.getBoundingClientRect().width/image.getBoundingClientRect().height-1.5)<.01)));
   const desktop=await browser.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:2});
+  await desktop.emulateMedia({reducedMotion:'reduce'});
   await desktop.goto(origin+'/mascot');
   assert.ok(await desktop.locator('.mascot-error__sprite').evaluateAll(images=>images.every(image=>
     image.complete&&image.naturalWidth>0&&!image.currentSrc.includes('-672-')&&Math.abs(image.getBoundingClientRect().width-660)<1)));
