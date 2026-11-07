@@ -60,9 +60,7 @@ fn revision(rows: &[DigestRow]) -> String {
     ))
 }
 fn document(row: note::Model) -> CorpusDocument {
-    let revision = hex::encode(Sha256::digest(
-        serde_json::to_vec(&(&row.title, &row.content)).expect("serializable article"),
-    ));
+    let revision = super::document_visibility::content_revision(&row.title, &row.content);
     CorpusDocument {
         id: row.id,
         title: row.title,
