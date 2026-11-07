@@ -123,11 +123,15 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
         const j = rest.search(/\nasync fn |\npub async fn /);
         return j < 0 ? rest : rest.slice(0, j);
     };
-    for (const fn of ['list_public_notes', 'search_notes', 'get_top_notes', 'get_note_detail',
+    for (const fn of ['list_public_notes', 'search_notes_query', 'get_top_notes', 'get_note_detail',
         'list_all_notes', 'search_all_notes']) {
         const body = bodyOf(fn);
         ok(body !== null && /attach_authors\(/.test(body), `${fn} 挂了作者`);
     }
+
+    const guardedSearch = readFileSync(path.join(repo, 'src/routes/notes/legacy_search.rs'), 'utf8');
+    ok(/search_notes_query\(state,\s*payload,\s*terms\)\.await/.test(guardedSearch),
+        '公开搜索通过资源检查后转交保留作者信息的查询');
 
     // ★ 两个键**成对写**：前端按"键在不在场"判（见 ③），后端只写一个就会让另一个字段
     // 被读成"这一路没挂作者" ⇒ 前端拿站点级去补。这条锁住契约的后端那一半。
