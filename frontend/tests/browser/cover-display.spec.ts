@@ -5,6 +5,8 @@ test.use({entry: 'cover-display'})
 test('portrait covers retain the full image after selection and reopening', async ({page, sandboxURL}) => {
     await page.goto(sandboxURL)
     const dialog = page.getByRole('dialog')
+    await expect(dialog.locator('.reactEasyCrop_Container img')).toBeVisible()
+    await dialog.getByText('完整显示（允许留边）', {exact: true}).click()
     await expect(dialog.getByText('完整图片，不裁切', {exact: true})).toBeVisible()
     await dialog.getByRole('button', {name: /确\s*定/}).click()
     const image = page.getByAltText('保存的文章封面')
@@ -91,4 +93,22 @@ test('R2 covers load when the widget wraps window.Image with anonymous CORS', as
         images.closeAllConnections()
         await new Promise<void>(resolve => images.close(() => resolve()))
     }
+})
+
+
+test('new cover selection starts in fill mode and uses the three declared preview ratios', async ({page, sandboxURL}) => {
+    await page.goto(sandboxURL)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.locator('.reactEasyCrop_Container img')).toBeVisible()
+    const card = dialog.locator('.ccPreviewItem').filter({hasText: '文章卡片'}).locator('.ccPreviewFrame')
+    const detail = dialog.locator('.ccPreviewItem').filter({hasText: '详情横幅'}).locator('.ccPreviewFrame')
+    for (const [frame, ratio] of [[card, 16 / 9], [detail, 3.5]] as const) {
+        const box = await frame.boundingBox()
+        expect(box!.width / box!.height).toBeCloseTo(ratio, 2)
+    }
+    await dialog.getByRole('tab', {name: '首页置顶轮播'}).click()
+    const carousel = await dialog.locator('.ccPreviewItem').filter({hasText: '首页轮播'}).locator('.ccPreviewFrame').boundingBox()
+    expect(carousel!.width / carousel!.height).toBeCloseTo(1, 2)
+    await dialog.getByRole('button', {name: /确\s*定/}).click()
+    await expect(page.getByAltText('保存的文章封面')).toHaveCSS('object-fit', 'cover')
 })
