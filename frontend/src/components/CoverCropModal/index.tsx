@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useState} from 'react'
 import {Button, Modal, Segmented, Slider, Tabs} from 'antd'
 import Cropper, {type Area} from 'react-easy-crop'
 import {resolveApiAssetUrl} from '../../utils/runtimeApi'
-import {CARD_ASPECT, CAROUSEL_ASPECT, COMPLETE_COVER, DEFAULT_CROP, MAX_ZOOM,
+import {CARD_ASPECT, CAROUSEL_ASPECT, DETAIL_ASPECT, COMPLETE_COVER, DEFAULT_CROP, MAX_ZOOM,
     coverCropStyle, cropWindowInImage, type CoverCrop} from '../../utils/coverCrop'
 import './index.sass'
 
@@ -65,8 +65,8 @@ const Preview = ({src, value, aspect, label}: {
 const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCard,
     onCancel, onConfirm}) => {
     const [tab, setTab] = useState<'carousel' | 'card'>('card')
-    const [card, setCard] = useState<CoverCrop>(COMPLETE_COVER)
-    const [carousel, setCarousel] = useState<CoverCrop>(COMPLETE_COVER)
+    const [card, setCard] = useState<CoverCrop>(DEFAULT_CROP)
+    const [carousel, setCarousel] = useState<CoverCrop>(DEFAULT_CROP)
     const [dirty, setDirty] = useState({card: false, carousel: false})
     const [revision, setRevision] = useState(0)
     const [natural, setNatural] = useState<{width: number; height: number} | null>(null)
@@ -75,8 +75,8 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
     initial.current = {card: initialCard, carousel: initialCarousel}
     useEffect(() => {
         if (!open) return
-        setCard({...initial.current.card ?? COMPLETE_COVER})
-        setCarousel({...initial.current.carousel ?? COMPLETE_COVER})
+        setCard({...initial.current.card ?? DEFAULT_CROP})
+        setCarousel({...initial.current.carousel ?? DEFAULT_CROP})
         setDirty({card: false, carousel: false})
         setTab('card')
         setRevision(n => n + 1)
@@ -116,7 +116,7 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
             <div className="ccPreviews">
                 <Preview src={source} value={value} aspect={aspect}
                     label={key === 'card' ? '文章卡片' : '首页轮播'}/>
-                {key === 'card' && <Preview src={source} value={value} aspect={3.5} label="详情横幅"/>}
+                {key === 'card' && <Preview src={source} value={value} aspect={DETAIL_ASPECT} label="详情横幅"/>}
             </div>
         </div>
     </>

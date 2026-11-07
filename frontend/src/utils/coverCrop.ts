@@ -24,6 +24,7 @@ export const COMPLETE_COVER: CoverCrop = { ...DEFAULT_CROP, fit: 'contain' }
 
 export const CAROUSEL_ASPECT = 1
 export const CARD_ASPECT = 16 / 9
+export const DETAIL_ASPECT = 3.5
 
 export const MIN_ZOOM = 1
 export const MAX_ZOOM = 4
@@ -117,7 +118,7 @@ export const zoomCrop = (crop: CoverCrop, factor: number, ax: number, ay: number
     if (z === crop.z) return crop
     const w0 = cropWindowInImage(W, H, view.aspect, crop)
     const w1 = cropWindowInImage(W, H, view.aspect, { ...crop, z })
-    // 锚点换成舞台内的归一化位置（旧式 fx = ax/S 即正方舞台下的特例）
+    // Normalize the zoom anchor within the preview viewport.
     const fx = view.width > 0 ? clamp01(ax / view.width) : 0.5
     const fy = view.height > 0 ? clamp01(ay / view.height) : 0.5
     const x1 = w0.x + fx * (w0.w - w1.w)

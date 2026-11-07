@@ -766,11 +766,7 @@ pub async fn create_note(
         cover_focus_y: Set(payload.cover_focus_y.map(clamp01)),
         cover_zoom: Set(payload.cover_zoom.map(clamp_zoom)),
         cover_fit: Set(Some(
-            payload
-                .cover_fit
-                .unwrap_or(CoverFit::Contain)
-                .as_str()
-                .into(),
+            payload.cover_fit.unwrap_or(CoverFit::Cover).as_str().into(),
         )),
         carousel_focus_x: Set(payload.carousel_focus_x.map(clamp01)),
         carousel_focus_y: Set(payload.carousel_focus_y.map(clamp01)),

@@ -29,7 +29,7 @@ for (const fit of ['contain', 'cover'] as const) {
             return route.fulfill({contentType: 'image/svg+xml', body: portrait})
         })
         await page.goto(sandboxURL)
-        const image = page.locator('.readCover > .asset-image > img')
+        const image = page.locator('.readCoverMedia > .asset-image > img')
         await expect(image).toBeVisible()
         await expect(image).toHaveJSProperty('naturalHeight', 900)
         await expect(image).toHaveCSS('object-fit', fit)
@@ -65,7 +65,7 @@ for (const cover of ['', '/broken-cover.png']) {
         await page.goto(sandboxURL)
         const fallback = page.locator('.readCoverFallback')
         await expect(fallback).toBeVisible()
-        await expect(page.locator('.readCover > .asset-image > img, .readCover video')).toHaveCount(0)
+        await expect(page.locator('.readCoverMedia > .asset-image > img, .readCover video')).toHaveCount(0)
         const background = await fallback.evaluate(element => getComputedStyle(element).backgroundImage)
         expect(background).not.toBe('none')
         await page.getByRole('button', {name: '切换主题'}).click()
@@ -172,3 +172,23 @@ test('article data loading uses scoped quiet art rather than the retired global 
     await expect(status).toHaveCount(0)
     await expect(page.locator('.sweep-loading')).toHaveCount(0)
 })
+
+
+for (const width of [375, 1440]) {
+    test(`detail cover keeps a 3.5:1 image and readable metadata at ${width}px`, async ({page, sandboxURL}) => {
+        await page.setViewportSize({width, height: 900})
+        await article(page, '/ratio-cover.svg', {coverFit: 'cover'})
+        await page.route('**/ratio-cover.svg', route => route.fulfill({contentType: 'image/svg+xml', body: portrait}))
+        await page.goto(sandboxURL)
+        const frame = page.locator('.readCoverMedia')
+        await expect(frame.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
+        const media = await frame.boundingBox()
+        const info = await page.locator('.readInfo').boundingBox()
+        expect(media && info).toBeTruthy()
+        expect(Math.abs(media!.width / media!.height - 3.5)).toBeLessThan(0.02)
+        expect(info!.x).toBeGreaterThanOrEqual(0)
+        expect(info!.x + info!.width).toBeLessThanOrEqual(width + 1)
+        if (width < 768) expect(info!.y).toBeGreaterThanOrEqual(media!.y + media!.height)
+        else expect(info!.y).toBeGreaterThanOrEqual(media!.y)
+    })
+}
