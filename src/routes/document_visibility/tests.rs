@@ -5,7 +5,7 @@ use axum::{
     routing::post,
     Router,
 };
-use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+use sea_orm::{DatabaseBackend, DbErr, MockDatabase, MockExecResult};
 use tower::ServiceExt;
 
 fn input(id: i32) -> Input {
@@ -82,6 +82,7 @@ async fn one_sql_projection_returns_each_identity_once_and_never_hidden_text() {
 #[tokio::test]
 async fn public_http_contract_is_typed_and_invalid_input_never_queries_database() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([MockExecResult::default(), MockExecResult::default()])
         .append_query_results([vec![row(19, &"b".repeat(64))]])
         .into_connection();
     let response = app(db)
@@ -192,4 +193,41 @@ async fn postgres_canonical_hash_visibility_and_revocation_match_corpus_export()
         json!({"type":"note","id":ids[0],"visible":false,"contentRevision":null})
     );
     tx.rollback().await.unwrap();
+}
+
+#[test]
+fn saturation_is_unavailable_and_admission_is_released_by_its_owner() {
+    let slots = Arc::new(Semaphore::new(1));
+    let permit = reserve(&slots).unwrap();
+    let refusal = reserve(&slots).unwrap_err();
+    assert_eq!(refusal.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(slots.available_permits(), 0);
+    drop(permit);
+    assert!(reserve(&slots).is_ok());
+}
+
+#[tokio::test]
+async fn database_query_failure_returns_http_unavailable_not_empty_success() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([MockExecResult::default(), MockExecResult::default()])
+        .append_query_errors([DbErr::Custom("offline".into())])
+        .into_connection();
+    let response = app(db)
+        .oneshot(
+            HttpRequest::post("/api/public/documents/validate")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"documents":[
+            {"type":"note", "id":19, "revision":"a".repeat(64)}]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 32768).await.unwrap()).unwrap();
+    assert_eq!(value["code"], 503);
+    assert!(value["data"].is_null());
 }

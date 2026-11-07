@@ -8,14 +8,17 @@ use axum::{
 };
 use sea_orm::{
     sea_query::Expr, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
-    QuerySelect,
+    QuerySelect, TransactionTrait,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 pub(crate) const CONTENT_HASH: &str = "encode(sha256(convert_to('[' || to_json(\"title\")::text || ',' || to_json(\"content\")::text || ']', 'UTF8')), 'hex')";
@@ -114,6 +117,31 @@ pub(super) async fn current<C: ConnectionTrait>(
     )
 }
 
+fn reserve(slots: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, Response> {
+    slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "document validation busy"))
+}
+
+async fn read_current(
+    db: sea_orm::DatabaseConnection,
+    ids: Vec<i32>,
+    permit: OwnedSemaphorePermit,
+) -> Result<Value, sea_orm::DbErr> {
+    // The worker owns admission until its transaction finishes, even after HTTP disconnects.
+    let _permit = permit;
+    let tx = tokio::time::timeout(Duration::from_secs(1), db.begin())
+        .await
+        .map_err(|_| sea_orm::DbErr::Custom("document database wait timed out".into()))??;
+    tx.execute_unprepared("SET TRANSACTION READ ONLY").await?;
+    tx.execute_unprepared("SET LOCAL statement_timeout = '2000ms'")
+        .await?;
+    let data = current(&tx, &ids).await?;
+    tx.commit().await?;
+    Ok(data)
+}
+
 pub async fn validate(
     State(state): State<Arc<AppState>>,
     Json(request): Json<Request>,
@@ -122,13 +150,38 @@ pub async fn validate(
         Ok(ids) => ids,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    match current(&state.db, &ids).await {
-        Ok(value) => Json(ApiResponse::success(value)).into_response(),
-        Err(err) => {
-            tracing::warn!("document visibility failed: {err}");
+    if ids.is_empty() {
+        return Json(ApiResponse::success(json!({"schemaVersion":1,
+        "documents":[]})))
+        .into_response();
+    }
+    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    let permit = match reserve(SLOTS.get_or_init(|| Arc::new(Semaphore::new(4)))) {
+        Ok(permit) => permit,
+        Err(response) => return response,
+    };
+    let worker = tokio::spawn(read_current(state.db.clone(), ids, permit));
+    match tokio::time::timeout(Duration::from_secs(3), worker).await {
+        Ok(Ok(Ok(value))) => Json(ApiResponse::success(value)).into_response(),
+        Ok(Ok(Err(err))) => {
+            tracing::warn!(error=%err, "document visibility database unavailable");
             error(
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::SERVICE_UNAVAILABLE,
                 "document visibility unavailable",
+            )
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(error=%err, "document visibility worker failed");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "document visibility unavailable",
+            )
+        }
+        Err(_) => {
+            tracing::warn!("document validation response deadline exceeded");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "document validation timed out",
             )
         }
     }
