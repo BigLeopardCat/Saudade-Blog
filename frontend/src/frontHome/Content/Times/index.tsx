@@ -1,15 +1,17 @@
 import './index.sass'
 import { useEffect, useState } from "react";
-import {Timeline} from 'antd';
+import {Button, Timeline} from 'antd';
 import dayjs from "dayjs";
 import { motion } from 'framer-motion';
 import scrollToTop from "../../../utils/scrollToTop.tsx";
-import {getNotePage} from "../../../apis/NoteMethods.tsx";
-import {useNavigate} from "react-router-dom";
+import {useArchiveFeedInfiniteQuery} from "../../../store/publicContentApi";
+import {Link} from "react-router-dom";
 import SeoHelmet from "../../../components/SeoHelmet";
 const Times = () => {
-    const [timeList, setTimeList] = useState([]);
-    const navigate = useNavigate()
+    const {data, isLoading, isFetching, isError, isFetchNextPageError,
+        hasNextPage, fetchNextPage, refetch} = useArchiveFeedInfiniteQuery();
+    const rows = data?.pages.flatMap(page => page.items) ?? [];
+    const total = data?.pages[0]?.total;
     const [todayInfo, setTodayInfo] = useState({
         year: '',
         dayOfYear: 0,
@@ -19,19 +21,10 @@ const Times = () => {
 
     useEffect(() => {
         scrollToTop();
-        getNotePage({page:1, pageSize:999}).then((res) => {
-            setTimeList(res.data.data.map((item: { createTime: Date; noteTitle: string; noteKey:string}) => {
-                return {
-                    children:<p style={{width:'90%',display:'flex',justifyContent:'space-between'}} className='Link' onClick={() => navigate(`/article/${item.noteKey}`)}>{item.noteTitle}<span>{dayjs(String(item.createTime || '').replace(' ', 'T')).isValid() ? dayjs(String(item.createTime || '').replace(' ', 'T')).format('YYYY-MM-DD') : 'Published Date'}</span></p>
-                }
-            }))
-        })
-
         const updateTodayInfo = () => {
             const now = new Date();
             const start = new Date(now.getFullYear(), 0, 0);
-            // @ts-ignore
-            const diff = now - start;
+            const diff = now.getTime() - start.getTime();
             const oneDay = 1000 * 60 * 60 * 24;
             const dayOfYear = Math.floor(diff / oneDay);
 
@@ -60,7 +53,7 @@ const Times = () => {
             <SeoHelmet title="归档" url="/times" />
             <div className="timePass">
                 <h2>归档</h2>
-                <h3>共有 {timeList.length} 篇文章，再接再厉</h3>
+                <h3>{total === undefined ? (isError ? '文章数量暂不可用' : '正在读取文章数量…') : `共有 ${total} 篇文章，再接再厉`}</h3>
                 <hr></hr>
 
                 <motion.div
@@ -79,9 +72,24 @@ const Times = () => {
             </div>
 
                 <Timeline
-                    items={timeList}
+                    items={rows.map(item => ({
+                        key: item.noteKey,
+                        children: <Link className='Link archiveEntry' to={`/article/${item.noteKey}`}>
+                            {item.noteTitle}<span>{dayjs(item.createTime).format('YYYY-MM-DD')}</span>
+                        </Link>
+                    }))}
                     className='timeLine'
                 />
+                <div className='archiveStatus' aria-live='polite'>
+                    {isLoading && <span role='status'>正在加载归档…</span>}
+                    {isError && <div role='alert'>归档没能读取出来
+                        <Button onClick={() => isFetchNextPageError ? fetchNextPage() : refetch()}
+                                loading={isFetching}>重试</Button>
+                    </div>}
+                    {!isLoading && !isError && rows.length === 0 && <span>还没有公开文章</span>}
+                    {hasNextPage && !isError && <Button onClick={() => fetchNextPage()}
+                        loading={isFetching}>加载更多归档</Button>}
+                </div>
     </div>;
 }
 

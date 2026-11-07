@@ -38,7 +38,7 @@ SITE_DEFINES = [
 
 FAKE_AXIOS = r"""
 localStorage.setItem('tokenKey', 'x.y.z');
-const ROWS = [
+export const ROWS = [
   { noteKey: 11, noteTitle: '第一篇文章', createTime: '2026-08-01 10:00:00',
     updateTime: '2026-08-01 10:00:00', description: '简介', contents: '正文', cover: '',
     status: 'public', categories: '编程', tags: 'React', readCount: 3, starCount: 1, isTop: 1,
@@ -51,6 +51,14 @@ const ROWS = [
 const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', data } });
 const http = async (cfg: any) => env(ROWS);   // 三个页面的读接口一律给这一份
 export default http;
+"""
+
+STUB_CONTENT_QUERIES = """\
+import { ROWS } from '../apis/axios';
+const data = { pages: [{ items: ROWS, nextCursor: null, total: ROWS.length }] };
+export const useArchiveFeedInfiniteQuery = () => ({ data });
+export const useTalkFeedInfiniteQuery = () => ({ data });
+export const usePublicTalkQuery = () => ({});
 """
 
 STUB_REDUX = """\
@@ -225,6 +233,7 @@ def build_sandbox() -> pathlib.Path:
 
     (sb / "src/apis/axios.tsx").write_text(FAKE_AXIOS, encoding="utf-8")
     (sb / "stub-redux.tsx").write_text(STUB_REDUX, encoding="utf-8")
+    (sb / "src/store/publicContentApi.ts").write_text(STUB_CONTENT_QUERIES, encoding="utf-8")
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
     pages = ["Times", "Talk", "Categories", "AboutMe"]
