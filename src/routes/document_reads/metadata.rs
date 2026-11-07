@@ -38,7 +38,7 @@ pub(super) async fn article<C: ConnectionTrait>(db: &C, row: &note::Model) -> Re
         match authors::profiles(db, vec![id]).await?.remove(&id) {
             Some(author) => Some(author),
             None => {
-                let (name, avatar) = web_info::site_author(db).await;
+                let (name, avatar) = web_info::site_author_checked(db).await?;
                 Some(authors::PublicAuthor { name, avatar })
             }
         }

@@ -362,3 +362,30 @@ async fn postgres_public_read_attribution_matches_existing_public_author_project
     assert!(document(&tx, Kind::Note, id).await.unwrap().is_none());
     tx.rollback().await.unwrap();
 }
+
+#[tokio::test]
+async fn attribution_database_failures_are_not_anonymous_or_empty_metadata() {
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+    let row: note::Model = serde_json::from_value(json!({
+        "id":19,"title":"T","content":"body","is_public":true,"user_id":7,
+        "created_at":"2026-11-01T12:00:00","updated_at":"2026-11-01T12:00:00"
+    }))
+    .unwrap();
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("profile unavailable".into())])
+        .into_connection();
+    assert!(metadata::article(&db, &row).await.is_err());
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new()])
+        .append_query_errors([DbErr::Custom("fallback unavailable".into())])
+        .into_connection();
+    assert!(metadata::article(&db, &row).await.is_err());
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([
+            Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new(),
+            Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new(),
+        ])
+        .append_query_errors([DbErr::Custom("site owner unavailable".into())])
+        .into_connection();
+    assert!(metadata::article(&db, &row).await.is_err());
+}
