@@ -665,3 +665,84 @@ async fn postgres_gallery_delete_commit_before_comment_rejects_the_new_reference
     assert!(super::super::read(&f.db, f.uid, f.ids[0]).await.is_err());
     f.cleanup().await;
 }
+
+#[tokio::test]
+async fn postgres_gallery_batch_http_uses_admin_auth_and_real_transaction_routes() {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let Some(f) = Fixture::new(1).await else {
+        return;
+    };
+    f.db.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE \"user\" SET role='user' WHERE id=$1",
+        [f.other_uid.into()],
+    ))
+    .await
+    .unwrap();
+    let app = crate::routes::create_router(crate::routes::AppState {
+        db: f.db.clone(),
+        rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 60, 300),
+        post_limiter: crate::risk::PostRateLimiter::default(),
+        report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    });
+    let body = json!({"action":"favorite","imageIds":f.ids,"isFavorite":true}).to_string();
+    let token = crate::auth_jwt::create_token(f.uid, "admin", 0);
+    let request = |path: &str, token: Option<&str>, body: String| {
+        let mut builder = Request::post(path).header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body)).unwrap()
+    };
+    let url = "/api/protect/gallery/image-actions/prepare";
+    assert_eq!(
+        app.clone()
+            .oneshot(request(url, None, body.clone()))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let user = crate::auth_jwt::create_token(f.other_uid, "admin", 0);
+    assert_eq!(
+        app.clone()
+            .oneshot(request(url, Some(&user), body.clone()))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let response = app
+        .clone()
+        .oneshot(request(url, Some(&token), body))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let data: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(data["data"]["matchedIds"], json!(f.ids));
+    assert!(
+        !super::super::read(&f.db, f.uid, f.ids[0])
+            .await
+            .unwrap()
+            .is_favorite
+    );
+    let prepared = &data["data"];
+    let response = app.oneshot(request("/api/protect/gallery/image-actions", Some(&token),
+        json!({"version":prepared["version"],"expiresAt":prepared["expiresAt"],"intent":prepared["intent"]}).to_string())).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let data: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(data["data"]["changedIds"], json!(f.ids));
+    assert!(
+        super::super::read(&f.db, f.uid, f.ids[0])
+            .await
+            .unwrap()
+            .is_favorite
+    );
+    f.cleanup().await;
+}

@@ -10,8 +10,9 @@ async fn main() {
     dotenv().ok();
     saudade_blog::observability::init();
 
-    saudade_blog::auth_jwt::secret::validate(env::var("JWT_SECRET").ok().as_deref())
-        .expect("JWT_SECRET must be a private random key of at least 32 bytes, not a template value");
+    saudade_blog::auth_jwt::secret::validate(env::var("JWT_SECRET").ok().as_deref()).expect(
+        "JWT_SECRET must be a private random key of at least 32 bytes, not a template value",
+    );
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = saudade_blog::database::connect(&db_url)
@@ -55,6 +56,7 @@ async fn main() {
         report_lockout_secs,
     );
 
+    saudade_blog::routes::gallery::start_cleanup(db.clone());
     saudade_blog::checkpoint_cleanup::start(SqlxPostgresConnector::from_sqlx_postgres_pool(pool));
     let app_state = AppState {
         db,
@@ -80,6 +82,7 @@ async fn main() {
         async {
             saudade_blog::lifecycle::shutdown_signal().await;
             saudade_blog::routes::image_generation::stop_accepting();
+            saudade_blog::routes::gallery::stop_cleanup();
         },
     )
     .await

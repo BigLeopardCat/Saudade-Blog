@@ -22,7 +22,7 @@ pub async fn snapshot(
             .await
             .map_err(|_| error("参考图片不可读取"))?
     } else {
-        let storage = crate::r2::load_config(&state.db).await;
+        let storage = crate::r2::load_config(&state.db).await?;
         let url = reqwest::Url::parse(&image.image_url).map_err(|_| error("参考图片地址无效"))?;
         if storage.public_base.is_empty()
             || !image

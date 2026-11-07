@@ -4,12 +4,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use sea_orm::sea_query::extension::postgres::PgExpr;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, PaginatorTrait, Select, Condition, QueryTrait};
+use sea_orm::{
+    ColumnTrait, Condition, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, QueryTrait, Select, Set, TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::entity::{user, note, note_comment};
+use super::moderation::{page_window, ReviewStatus};
+use crate::entity::{note, note_comment, user};
 use crate::utils::{ApiResponse, ApiResponsePage};
-use super::moderation::{ReviewStatus, page_window};
 
 use super::AppState;
 
@@ -20,9 +23,7 @@ const MAX_COMMENT_CHARS: usize = 300;
 /// 后台列表一次最多回多少条（与其它后台列表同量级；讨论区量与留言板同级，不分页）。
 const ADMIN_PAGE_LIMIT: u64 = 500;
 
-/// 文章是否**公开可见**——与 `notes::list_public_notes` 的 STRICT FILTER 同一口径
-/// （`is_public = 1` 且 `status <> 'draft'`）。两条读取路径**必须**同口径：否则会出现
-/// "评论读得到、文章打不开"（或反过来）这种自相矛盾的组合。
+/// 公开可见性与文章列表保持一致。
 pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
     note::Entity::find()
         .select_only()
@@ -38,14 +39,7 @@ pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32)
         .is_some()
 }
 
-/// 正文的**形状**归一：剥掉除 `\n` 以外的全部 C0 控制字符，再去掉首尾空白。
-///
-/// 为什么留 `\n`：渲染管线的 breaks 插件拿它换行，评论里的分段是真实表达。
-/// 为什么剥其余控制字符（`\r`、`\t`、退格、NUL…）：它们对读者没有意义，却能把一行
-/// 撑得很长、或让后台列表的截断看起来莫名其妙；`\r` 尤其会在"存进去是 `\n`、
-/// 显示出来多一个空格"这类问题上骗人（留言板那条 `talk_brief` 就为它专门拍过平）。
-///
-/// **不转义**：见文件头注「XSS 防线在渲染侧」。
+/// 删除控制字符但保留换行，并去除首尾空白；HTML 安全由渲染层处理。
 fn clean_content(raw: &str) -> String {
     raw.chars()
         .filter(|c| *c == '\n' || !c.is_control())
@@ -56,11 +50,7 @@ fn clean_content(raw: &str) -> String {
 
 // DTO
 
-/// 公开读的一行（**扁平**：顶层与回复同形，由 `rootId` 区分，前端组树）。
-///
-/// 为什么回扁平数组而不是嵌套结构：讨论区只有一层嵌套，服务端组树的唯一好处是省掉
-/// 前端几行 reduce，代价是每加一个字段都要改两处（顶层/回复）。扁平之后整个讨论区
-/// 只要 **2 条查询**（顶层一次 + `root_id IN (…)` 一次），前端一次 `groupBy` 收尾。
+/// 顶层与回复使用扁平 DTO，由 rootId 分组；列表批量查询，避免逐行读取。
 #[derive(Serialize)]
 pub struct CommentDto {
     pub id: i32,
@@ -95,78 +85,34 @@ pub struct CommentDto {
     pub created_at: String,
 }
 
-
-/// 公开列表的查询参数。
-///
-/// ⚠️ `sort` **故意是 `Option<String>` 而不是枚举**：`Query` 抽取器遇到反序列化失败会
-/// **直接回 HTTP 400 + 纯文本**、**不走 `ApiResponse` 信封**，而前端判的是 `code === 200`
-/// ⇒ 一个过期的分享链接（`?sort=xxx`）就能把整段讨论区变成"读取失败，请稍后再试"。
-/// 未知值一律回落默认。
+/// 未知 sort 值回落 hot，保留可解析的列表响应。
 #[derive(Deserialize)]
 pub struct CommentListQuery {
     /// `hot`（缺省）/ `new`。**只有 `new` 会改变行为**，其余一律当 `hot`。
     pub sort: Option<String>,
 }
 
-/// 先验票：每条评论**开局自带一赞一踩**。
-///
-/// 它不是装饰——没有它，0 票的新评论算出来恒为 0，永远沉在坟底；而"按票排会让新评论
-/// 永远沉底"正是 `comment_votes.rs` 头注反对按票排序的那条理由。加上之后
-/// 0 票 0 回复 ≈ 0.095，**高于**净负票（0 赞 1 踩 ≈ 0.061），新评论落在中下游而不是最底。
-///
-/// ⚠️ 它**不**保证新评论排得过有点赞的评论——那正是"最热"的定义，「最新」页签才是逃生口。
+/// 为热度计算提供一赞一踩的先验，避免零票评论固定为零分。
 const HOT_PRIOR_VOTES: f64 = 1.0;
 
-/// Wilson 区间的置信水平（1.96 = 95%）。**取的是下界**：样本少就往低了估，于是
-/// "1 赞 0 踩"压不过"20 赞 1 踩"——整套公式存在的理由就是这一条（Reddit 的 best 排序
-/// 用的就是它，出处 Evan Miller 2009《How Not To Sort By Average Rating》）。
+/// 95% Wilson 置信下界的 z 值。
 const HOT_Z: f64 = 1.96;
 
-/// 回复项的权重：`α · log2(1 + 回复数)`。log2 压缩之后**每翻一倍才加一个 α**
-/// （1→+0.10 / 3→+0.20 / 7→+0.30 / 15→+0.40 / 31→+0.50）。
-/// Wilson 下界的实际取值域约 [0.03, 1.0]，所以 31 条回复 ≈ 8 个赞。**这个量纲是拍的**。
-///
-/// ⚠️ **它没有上界**：`log2` 只是把增长压得很慢，不是封顶。兑换率约
-/// **178 条回复 ≈ 30 个赞**（内联单测钉了 100 / 300 两侧），也就是说一个吵到三百楼的帖子
-/// 能把 30 赞的评论顶下去。这是"讨论量也算热度"必然的代价，**已知且接受**（同族的取舍
-/// 写在 `comment_votes.rs` 头注的"不做的事"里）。
-///
-/// 真要封顶，正解是换成"回复折进 Wilson 样本"那一版（见 `hot_score` 的备选形态），
-/// **不是**在这里给回复项加个 `min()`：加了 min 就等于给吵架帖一个固定天花板，而那个
-/// 天花板同样是拍出来的数，只是更难解释——"为什么第 100 条回复还算数、第 101 条不算"。
+/// 回复热度的对数权重；不设硬上限。
 const HOT_REPLY_WEIGHT: f64 = 0.1;
 
-/// 热度分 = **讨论量 + 赞踩加权**。入参都是计数，恒 ≥ 0。
-///
-/// ```text
-/// up' = up + 1, down' = down + 1          ← 先验（见 HOT_PRIOR_VOTES）
-/// p̂   = up' / (up' + down')
-/// hot = Wilson下界(p̂, n = up'+down', z = 1.96) + 0.1 · log2(1 + replies)
-/// ```
-///
-/// 读数对照（改常量时按这张表对账，内联单测钉着其中几个点）：
-/// `0票0回复 0.095 ｜ 1赞0踩 0.208 ｜ 5赞1踩 0.409 ｜ 0票15回复 0.495 ｜ 20赞1踩 0.732
-///  ｜ 0赞5踩 0.026 ｜ 30赞0踩 0.843`
-///
-/// 备选形态（**本次不做**，写在这里免得下一个人重新发明）：把回复折成伪赞成票塞进
-/// Wilson 样本（`up' = up + 1 + replies`）——单一量纲、踩能自动抵消"吵出来的热度"，
-/// 代价是断言"一条回复 ≈ 一票赞"，而这对争论帖不成立。
+/// 含先验票的 Wilson 下界加 HOT_REPLY_WEIGHT * log2(1 + replies)。
 fn hot_score(up: i64, down: i64, replies: i64) -> f64 {
     let (up_f, down_f) = (up as f64 + HOT_PRIOR_VOTES, down as f64 + HOT_PRIOR_VOTES);
     let n = up_f + down_f;
     let p = up_f / n;
     let z2 = HOT_Z * HOT_Z;
-    let lower =
-        (p + z2 / (2.0 * n) - HOT_Z * (p * (1.0 - p) / n + z2 / (4.0 * n * n)).sqrt()) / (1.0 + z2 / n);
+    let lower = (p + z2 / (2.0 * n) - HOT_Z * (p * (1.0 - p) / n + z2 / (4.0 * n * n)).sqrt())
+        / (1.0 + z2 / n);
     lower + HOT_REPLY_WEIGHT * (replies as f64 + 1.0).log2()
 }
 
-/// 排序键：热度**定点化成微单位整数**，再与 id 组成 `(i64, i32)`。
-///
-/// **为什么不直接比 `f64`**：`f64` 的比较器在 NaN 上不构成全序（`partial_cmp` 返回 None，
-/// 而 `sort_by` 对非全序**不 panic、顺序未定义**）；`i64` 天生 `Ord` ⇒ "排序稳定"由类型
-/// 保证，不靠纪律。id 进键 = 同分时按 id 降序，**排序是全序**（同一份数据每次排出同一个
-/// 顺序，无头断言与人工排查都能按"第 N 行"对账）。
+/// 热度量化为微单位整数，以评论 id 决定同分顺序。
 fn hot_key(score: f64, id: i32) -> (i64, i32) {
     ((score * 1_000_000.0).round() as i64, id)
 }
@@ -179,9 +125,7 @@ pub async fn list_comments(
     Path(note_id): Path<i32>,
     Query(q): Query<CommentListQuery>,
 ) -> Json<ApiResponse<Vec<CommentDto>>> {
-    // 读路径的身份：令牌过期/收回/冻结一律当**没登录**（模块头注第 1 条），不整条请求失败。
-    // 一次解析两个用途——`mine`（这条是不是我发的，只登录用户有）与 `myVote`
-    // （我投过没投过，**匿名访客也要有**：他刚点过的那一票必须还亮着）。
+    // 过期身份按匿名读取；登录身份决定 mine，匿名投票身份仍可决定 myVote。
     let who = super::note_stats::optional_who(&state.db, &headers).await;
     let uid = who.as_ref().and_then(|w| w.uid());
     if !note_visible(&state.db, note_id).await {
@@ -220,10 +164,7 @@ pub async fn list_comments(
             .await
             .unwrap_or_default()
     };
-    // 讨论量：按 `root_id` 分组数**整棵子树**（"回复的回复"也挂在同一个顶层下，见文件头注）
-    // ——不是直接回复数。**零新查询**：回复已经在内存里；而且它们本来就过滤了
-    // `approved = 1 AND is_deleted = 0`，所以数出来的天然只有公开可见的回复，
-    // 与列表口径一致（待审/已删的回复不算进热度）。
+    // 回复计数包含公开且未删除的整棵回复子树。
     let mut reply_counts: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
     for r in &replies {
         if let Some(root) = r.root_id {
@@ -238,16 +179,13 @@ pub async fn list_comments(
     uids.sort_unstable();
     uids.dedup();
     let peers = super::profile::peer_map(&state.db, &uids).await;
-    // 票数一次取全（**两条查询**，不是每条评论两条，见 `comment_votes` 的取舍）。
-    // 取不到就当没有票：讨论区的正文必须照常显示——投票是附属信息，
-    // 不该因为它读失败就让整页评论消失（同上面 `replies` 的 `unwrap_or_default`）。
+    // 批量读取票数；票数不可用时仍展示评论正文。
     let ids: Vec<i32> = tops.iter().chain(replies.iter()).map(|c| c.id).collect();
     let counts = super::comment_votes::vote_counts_for(&state.db, &ids)
         .await
         .unwrap_or_default();
     let mine = super::comment_votes::my_votes(&state.db, &ids, who.as_ref()).await;
-    // 热度排序：**只排顶层**，回复保持上面那条 `ORDER BY created_at ASC`（对话要读得下去）。
-    // 键是 `(定点化热度, id)` 的全序 ⇒ 同一份数据每次排出同一个顺序。
+    // 只对顶层按热度排序；回复保留时间顺序。
     let mut tops = tops;
     if sort_hot {
         let mut scored: Vec<((i64, i32), note_comment::Model)> = tops
@@ -261,8 +199,7 @@ pub async fn list_comments(
         scored.sort_by(|a, b| b.0.cmp(&a.0)); // 降序：热度高的在前；同分则 id 大的在前
         tops = scored.into_iter().map(|(_, c)| c).collect();
     }
-    // 顶层在前、回复随其后：前端只按 rootId 分组，不依赖这个顺序，
-    // 但顺序稳定让无头断言与人工排查都能按"第 N 行"对账。
+    // 顶层在前、回复在后，保持输出顺序稳定。
     let mut rows = tops;
     rows.extend(replies);
     let dtos: Vec<CommentDto> = rows
@@ -284,8 +221,7 @@ pub async fn list_comments(
     Json(ApiResponse::success(dtos))
 }
 
-/// 行 → DTO。`me` = 当前登录 uid（None = 未登录）；`vote` = 这一行的票（票数是
-/// 调用方**批量**查好的，逐行查会把两次往返放大成上百次，见 `list_comments`）。
+/// DTO 所需作者与票数由调用方批量读取。
 fn to_dto(
     c: &note_comment::Model,
     me: Option<i32>,
@@ -303,8 +239,7 @@ fn to_dto(
         parent_id: c.parent_id,
         root_id: c.root_id,
         reply_to_uid: c.reply_to_uid,
-        // 取不到人（账号已销）⇒ 回 None 让前端说「已注销用户」，
-        // **不在这里编一个名字**（同 peer_map 的纪律）
+        // 账号不可用时返回 None，由前端显示已注销状态。
         reply_to_nickname: c
             .reply_to_uid
             .and_then(|u| peers.get(&u).map(|p| p.name.clone())),
@@ -322,28 +257,54 @@ fn to_dto(
 
 /// Persist a reply notice; errors propagate to the caller's transaction.
 pub(crate) async fn notify_comment_reply_checked<C: sea_orm::ConnectionTrait>(
-    db: &C, target_uid: i32, note_id: i32, comment_id: i32,
-    replier_uid: i32, content: &str,
+    db: &C,
+    target_uid: i32,
+    note_id: i32,
+    comment_id: i32,
+    replier_uid: i32,
+    content: &str,
 ) -> Result<i32, String> {
-    let account = user::Entity::find_by_id(replier_uid).select_only()
-        .column(user::Column::Username).column(user::Column::Nickname)
-        .into_tuple::<(String, String)>().one(db).await.map_err(|error| error.to_string())?;
-    let who = account.map(|(username, nickname)|
-        if nickname.trim().is_empty() { username } else { nickname })
+    let account = user::Entity::find_by_id(replier_uid)
+        .select_only()
+        .column(user::Column::Username)
+        .column(user::Column::Nickname)
+        .into_tuple::<(String, String)>()
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let who = account
+        .map(|(username, nickname)| {
+            if nickname.trim().is_empty() {
+                username
+            } else {
+                nickname
+            }
+        })
         .unwrap_or_else(|| "有人".to_string());
     let brief = super::talks::talk_brief(content);
-    super::notice::push_notice_checked(db, target_uid, "有人回复了你的评论",
+    super::notice::push_notice_checked(
+        db,
+        target_uid,
+        "有人回复了你的评论",
         Some(format!("{who} 回复了你：{brief}")),
-        Some(format!("/article/{note_id}?cid={comment_id}"))).await
+        Some(format!("/article/{note_id}?cid={comment_id}")),
+    )
+    .await
 }
 
-/// Best-effort adapter for existing comment creation and legacy moderation.
+/// 通知失败不回滚已经保存的评论。
 async fn notify_comment_reply(
-    db: &sea_orm::DatabaseConnection, target_uid: i32, note_id: i32,
-    comment_id: i32, replier_uid: i32, content: &str,
+    db: &sea_orm::DatabaseConnection,
+    target_uid: i32,
+    note_id: i32,
+    comment_id: i32,
+    replier_uid: i32,
+    content: &str,
 ) {
-    if let Err(error) = notify_comment_reply_checked(db, target_uid, note_id, comment_id,
-                                                   replier_uid, content).await {
+    if let Err(error) =
+        notify_comment_reply_checked(db, target_uid, note_id, comment_id, replier_uid, content)
+            .await
+    {
         tracing::error!("comment reply notification failed target={target_uid}: {error}");
     }
 }
@@ -353,20 +314,12 @@ async fn notify_comment_reply(
 #[derive(Deserialize)]
 pub struct CreateComment {
     pub content: String,
-    /// **只收直接父评论 id**。`root_id` / `reply_to_uid` 由服务端从父行派生——
-    /// 客户端无从伪造"我的回复挂在哪条顶层下"（见文件头注）。
-    /// `default`：顶层评论不带这个字段。
+    /// 只接收直接父评论 id；root_id 与 reply_to_uid 从父行派生。
     #[serde(rename = "parentId", default)]
     pub parent_id: Option<i32>,
 }
 
-/// 发评论的结果。**`approved` 必须回传**：只给 id 的话前端分不出"已公开"与
-/// "还在等人工复核"——两条路的提示语完全不同（一条可以说"发布了"，另一条说"发布了"
-/// 就是撒谎，说"没通过"又是替审核下结论），前端只能含糊其辞。
-/// 这不是把审核结论"提前告诉"谁：发的人本来就会看到自己的评论是否公开。
-/// `Default` 只是 `ApiResponse::error` 的 trait 约束（`utils.rs::ApiResponse`），
-/// **没有语义**：错误信封里 `code=500`，前端只看 `message`，`data` 一律不读。
-/// 别把 `approved: 0` 的默认值当成"默认待审"——从没有哪条路会用到它。
+/// 返回评论 id 和实际审核状态，供前端区分公开与待审。
 #[derive(Serialize, Default)]
 pub struct CreateCommentResult {
     pub id: i32,
@@ -374,10 +327,7 @@ pub struct CreateCommentResult {
     pub approved: i16,
 }
 
-/// POST /api/public/notes/:id/comments —— 发一条评论/回复（强制登录）。
-///
-/// 返回 `{id, approved}`：`id` 供前端定位到刚发的那条；`approved` 供前端**据实**
-/// 提示（见 `CreateCommentResult`）。待审的评论在公开列表里找不到属正常现象。
+/// 登录后创建评论；审核在事务外完成，保存与图库引用校验在同一短事务。
 pub async fn create_comment(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -399,9 +349,7 @@ pub async fn create_comment(
     }
     let cfg = crate::risk::load_config(&state.db).await;
     let forced = match crate::risk::screen(&state, uid, &cfg).await {
-        // 变量叫 `risk_verdict` 而不是 `verdict`：这个文件里"裁决"另有其主
-        // （`decide_review` 回的 agent 裁决词），而这是风控的三档结论（Pass/RateLimited/Muted），
-        // 两件事挨着出现在同一个函数里，同名的代价是下一次有人读错。
+        // 风控拒绝独立于内容审核裁决。
         Ok(risk_verdict) => crate::risk::apply_verdict(&state, uid, &cfg, risk_verdict).await,
         Err(reject) => return Json(ApiResponse::error(&reject.message())),
     };
@@ -422,8 +370,7 @@ pub async fn create_comment(
             if p.note_id != note_id {
                 return Json(ApiResponse::error("要回复的评论不属于这篇文章"));
             }
-            // 不能回复一条**自己都看不见**的评论（待审 / 未通过 / 已删）：否则回复者
-            // 会收到一个公开侧永远找不到落点的「回复成功」。
+            // 拒绝回复待审、未通过或已删除的评论。
             if p.approved != 1 || p.is_deleted != 0 {
                 return Json(ApiResponse::error("这条评论当前不可见，回复不了"));
             }
@@ -437,26 +384,60 @@ pub async fn create_comment(
     };
     // 审核：与留言板**同一份裁决实现**，开关是评论自己那对键
     let (ai_key, manual_key) = super::web_info::COMMENT_REVIEW_KEYS;
-    let (ai_on, manual_on) = match
-        super::web_info::review_switches_of(&state.db, ai_key, manual_key).await {
+    let (ai_on, manual_on) =
+        match super::web_info::review_switches_of(&state.db, ai_key, manual_key).await {
             Ok(switches) => switches,
             Err(e) => return super::db_error("读取评论审核设置", &e),
         };
     let (approved, ai_result, ai_reason, reject_reason) =
         super::talks::decide_review("comment", uid, &content, ai_on, manual_on).await;
-    // 风控档位只在"本来会直接公开"时改判成待审：**只把 1 压成 0，绝不把 2 松成 0**
-    // ——AI 已经判过驳回的内容，不该因为"这个人发得太快"退回成"没人裁过"。
-    // 放在通知判定之前：压成 0 之后 `reply_target` 自然是 None（待审的回复不该惊动被回复者，
-    // 否则对方点进去看不见任何东西）。前端拿到 `approved=0` 会据实提示"待人工复核"。
+    // 风控只将原本通过的评论改为待审，不撤销已作出的拒绝。
     let approved = if forced && approved == 1 { 0 } else { approved };
-    // 回复通知的两个入参要在 `content` 被 move 进 ActiveModel 之前留一手。
-    // **只有真要发的时候才克隆**：顶层评论占绝大多数，为它们克隆一份正文是白花。
-    // （发不发的判据与 `notify_comment_reply` 头注一一对应：已公开 + 是回复 + 不是回自己）
+    // 仅公开且不是回复自己的评论需要通知正文。
     let reply_target = match (approved, reply_to_uid) {
         (1, Some(t)) if t != uid => Some(t),
         _ => None,
     };
     let notice_src = reply_target.map(|_| content.clone());
+    // External moderation is complete before taking the gallery reference fence.
+    let transaction = match state.db.begin().await {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            tracing::error!("comment transaction failed uid={uid} note={note_id}: {error}");
+            return Json(ApiResponse::error("评论失败，请稍后再试"));
+        }
+    };
+    // Match article writers' note -> reference fence -> image lock order.
+    let visible = note::Entity::find_by_id(note_id)
+        .select_only()
+        .column(note::Column::Id)
+        .filter(note::Column::IsPublic.eq(true))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+        .lock(sea_orm::sea_query::LockType::KeyShare)
+        .into_tuple::<i32>()
+        .one(&transaction)
+        .await;
+    match visible {
+        Ok(Some(_)) => {}
+        Ok(None) => return Json(ApiResponse::error("文章不存在或不可见")),
+        Err(error) => {
+            tracing::error!("comment article lock failed uid={uid} note={note_id}: {error}");
+            return Json(ApiResponse::error("评论失败，请稍后再试"));
+        }
+    }
+    if let Err(error) = super::gallery::references::guard_texts(&transaction, &[&content]).await {
+        return match error {
+            DbErr::Custom(_) => Json(ApiResponse::error(
+                "评论使用了已删除的图片，请移除相关链接后重试",
+            )),
+            error => {
+                tracing::error!(
+                    "comment image reference check failed uid={uid} note={note_id}: {error}"
+                );
+                Json(ApiResponse::error("评论失败，请稍后再试"))
+            }
+        };
+    }
     let now = chrono::Local::now().naive_local();
     let row = note_comment::ActiveModel {
         note_id: Set(note_id),
@@ -474,8 +455,12 @@ pub async fn create_comment(
         // is_deleted 不进模型：交给库里的 DEFAULT 0（新行当然没删）
         ..Default::default()
     };
-    match note_comment::Entity::insert(row).exec(&state.db).await {
+    match note_comment::Entity::insert(row).exec(&transaction).await {
         Ok(r) => {
+            if let Err(error) = transaction.commit().await {
+                tracing::error!("comment commit failed uid={uid} note={note_id}: {error}");
+                return Json(ApiResponse::error("评论失败，请稍后再试"));
+            }
             let id = r.last_insert_id as i32;
             if let (Some(target), Some(src)) = (reply_target, notice_src.as_deref()) {
                 notify_comment_reply(&state.db, target, note_id, id, uid, src).await;
@@ -489,11 +474,7 @@ pub async fn create_comment(
     }
 }
 
-/// DELETE /api/public/comments/:id —— 删自己的评论（**软删**）。
-///
-/// 只能删自己的（判据是库里的 `user_id`，不是请求里的任何东西）。顶层评论被软删后
-/// 它名下的回复会一起从公开侧消失（组树时找不到顶层）——这是**想要**的行为：
-/// 留着回复会变成一串没有上下文的孤儿。
+/// 按作者身份软删除评论；公开列表同时隐藏其回复。
 pub async fn delete_my_comment(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -556,18 +537,15 @@ pub struct CommentAdminDto {
     /// 驳回理由；null = 未驳回或没人写过理由（后台显示「未填写」）
     #[serde(rename = "rejectReason")]
     pub reject_reason: Option<String>,
-    /// AI 审核说明：**与裁决无关**，pass/flag/reject 都可能有。管理员先看得到 AI 的
-    /// 判断才写得出具体理由，所以后台带它、公开侧不带（内部注记不该发给全体访客）
+    /// AI 审核说明仅供后台展示，与最终审核状态独立。
     #[serde(rename = "aiReason")]
     pub ai_reason: Option<String>,
-    /// 是否已软删（作者自删或管理员删除）。**这个字段只有后台有**：公开侧按
-    /// `is_deleted = 0` 过滤，删掉的评论在那边**不存在**。后台保留这一行是为了溯源
-    /// （谁删了什么），并且明确标出来——已删的行**不可再审**（见 `audit_comment`）。
+    /// 软删除状态仅供后台展示；已删除评论不可再次审核。
     #[serde(rename = "isDeleted")]
     pub is_deleted: i16,
 }
 
-/// Comment review filters; pagination is opt-in and legacy reads retain their cap.
+/// 后台分页为显式选项，未分页读取保留上限。
 #[derive(Deserialize)]
 pub struct CommentAdminQuery {
     pub id: Option<i32>,
@@ -580,28 +558,38 @@ pub struct CommentAdminQuery {
 
 pub(super) fn comment_admin_filter(q: &CommentAdminQuery) -> Select<note_comment::Entity> {
     let mut finder = note_comment::Entity::find();
-    if let Some(id) = q.id { finder = finder.filter(note_comment::Column::Id.eq(id)); }
+    if let Some(id) = q.id {
+        finder = finder.filter(note_comment::Column::Id.eq(id));
+    }
     if let Some(status) = q.status {
         finder = finder.filter(note_comment::Column::Approved.eq(status.approved()));
     }
-    if let Some(id) = q.note_id { finder = finder.filter(note_comment::Column::NoteId.eq(id)); }
+    if let Some(id) = q.note_id {
+        finder = finder.filter(note_comment::Column::NoteId.eq(id));
+    }
     if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", crate::search_core::like_escape(kw));
-        let authors = user::Entity::find().select_only().column(user::Column::Id)
-            .filter(Condition::any().add(user::Column::Username.into_expr().ilike(&pat))
-                .add(user::Column::Nickname.into_expr().ilike(&pat))).into_query();
-        finder = finder.filter(Condition::any()
-            .add(note_comment::Column::Content.into_expr().ilike(&pat))
-            .add(note_comment::Column::UserId.in_subquery(authors)));
+        let authors = user::Entity::find()
+            .select_only()
+            .column(user::Column::Id)
+            .filter(
+                Condition::any()
+                    .add(user::Column::Username.into_expr().ilike(&pat))
+                    .add(user::Column::Nickname.into_expr().ilike(&pat)),
+            )
+            .into_query();
+        finder = finder.filter(
+            Condition::any()
+                .add(note_comment::Column::Content.into_expr().ilike(&pat))
+                .add(note_comment::Column::UserId.in_subquery(authors)),
+        );
     }
-    finder.order_by_desc(note_comment::Column::CreatedAt).order_by_desc(note_comment::Column::Id)
+    finder
+        .order_by_desc(note_comment::Column::CreatedAt)
+        .order_by_desc(note_comment::Column::Id)
 }
 
-/// GET /api/protect/comments —— 评论管理列表（倒序；可按状态 / 关键词收窄）。
-///
-/// ⚠️ **筛选项收窄的是"看到哪些"，不是"哪些能被审"**：`audit_comment` 按主键认行，
-/// 与这里传了什么筛选无关。所以 `status=pending` 只是给"待审队列"用的一个视图，
-/// 它不是权限边界。
+/// 后台评论列表；筛选影响视图，不改变审核权限。
 pub async fn list_comments_admin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -611,7 +599,8 @@ pub async fn list_comments_admin(
         return Json(ApiResponsePage::error("请先登录"));
     };
     let window = match page_window(q.page, q.page_size) {
-        Ok(value) => value, Err(message) => return Json(ApiResponsePage::error(message)),
+        Ok(value) => value,
+        Err(message) => return Json(ApiResponsePage::error(message)),
     };
     let total = if window.is_some() {
         match comment_admin_filter(&q).count(&state.db).await {
@@ -621,14 +610,16 @@ pub async fn list_comments_admin(
                 return Json(ApiResponsePage::error("查询失败，请稍后再试"));
             }
         }
-    } else { None };
+    } else {
+        None
+    };
     let mut finder = comment_admin_filter(&q);
-    if let Some((size, offset)) = window { finder = finder.limit(size).offset(offset); }
-    else { finder = finder.limit(ADMIN_PAGE_LIMIT); }
-    let rows = match finder
-        .all(&state.db)
-        .await
-    {
+    if let Some((size, offset)) = window {
+        finder = finder.limit(size).offset(offset);
+    } else {
+        finder = finder.limit(ADMIN_PAGE_LIMIT);
+    }
+    let rows = match finder.all(&state.db).await {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("[comment] list_comments_admin 查询失败: {e}");
@@ -673,8 +664,7 @@ pub async fn list_comments_admin(
                 note_title: titles.get(&c.note_id).cloned().unwrap_or_default(),
                 content: c.content,
                 user_id: c.user_id,
-                // 后台要能按账号找到人（用户管理页是按账号列的），所以两个都给；
-                // 公开侧只给 nickname（展示名），不发账号
+                // 后台同时返回账号与展示名，公开侧仅返回展示名。
                 username,
                 nickname,
                 reply_to_nickname: c
@@ -694,11 +684,9 @@ pub async fn list_comments_admin(
 
 #[derive(Deserialize)]
 pub struct AuditCommentBody {
-    /// 1=通过（放行展示）；0=驳回——写 `approved = 2`「未通过」，与待审(0) 区分
-    /// （同留言板的 `AuditBody`：本人那一侧按 0 显示待审、2 显示未通过）
+    /// 请求 1=通过、0=驳回；驳回写入 approved=2，与待审区分。
     approved: i16,
-    /// 驳回理由，可空。**通过时请求里带什么都不生效**（改判即清空该列）。
-    /// `serde(default)` 保证只发 approved 的调用方照常工作。
+    /// 驳回理由可空；通过时清空理由。
     #[serde(default)]
     reason: Option<String>,
 }
@@ -732,8 +720,7 @@ pub async fn audit_comment(
     let reject = payload.approved == 0;
     let saved_reason = c.reject_reason.clone();
     let saved_ai_reason = c.ai_reason.clone();
-    // 回复通知要用的四样，转 ActiveModel 之前先各留一份（`c` 随后被 move）。
-    // 这里是低频的管理动作，不做"要不要才克隆"那套（那是写入热路径的优化）
+    // 转换 ActiveModel 前保留通知所需字段。
     let owner = c.user_id;
     let was_approved = c.approved;
     let note_id = c.note_id;
@@ -754,10 +741,7 @@ pub async fn audit_comment(
     am.updated_at = Set(chrono::Local::now().naive_local());
     match note_comment::Entity::update(am).exec(&state.db).await {
         Ok(_) => {
-            // 回复通知的**第二条到达路径**：这条回复创建时进了待审，此刻被人工放行。
-            // 判据是"本次真的从'未公开'变成'公开'"（`was_approved != 1 && new == 1`）：
-            // 后台重复点同一个按钮不该又发一条（同 `audit_board` 那条 `was_approved != new_approved`）。
-            // 创建即通过那条路径在 `create_comment` 里已经发过，两条路**不会同时命中**。
+            // 仅从未公开变为公开时通知，避免重复审核再次通知。
             let new_approved = if reject { 2 } else { 1 };
             if was_approved != 1 && new_approved == 1 {
                 if let Some(t) = reply_target {
@@ -775,10 +759,7 @@ pub async fn audit_comment(
     }
 }
 
-/// DELETE /api/protect/comments/:id —— 后台删除（同样**软删**）。
-///
-/// 后台的删除与作者自删走同一个软删位：公开侧的行为必须一致（都是"连带回复一起消失"），
-/// 否则同一个动作在两条路径下效果不同，排查时对不上账。
+/// 后台软删除与作者删除使用同一可见性规则。
 pub async fn delete_comment_admin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -813,12 +794,7 @@ pub async fn delete_comment_admin(
 mod tests {
     use super::*;
 
-    /// 正文归一：控制字符全剥、**`\n` 留着**、首尾空白去掉。
-    ///
-    /// `\n` 不能跟着一起剥：渲染管线的 breaks 插件拿它换行，分段是评论里的真实表达。
-    /// `\r`/`\t`/NUL 则一律剥掉——它们对读者没有意义，却能让后台列表的截断看起来
-    /// 莫名其妙（`\r\n` 不剥的话正文里会多出一个空格，留言板那条 `talk_brief`
-    /// 就为它专门拍过平）。
+    /// 正文清理保留换行并移除其余控制字符。
     #[test]
     fn 正文归一_剥控制字符但留换行() {
         assert_eq!(clean_content("  你好  "), "你好");
@@ -833,16 +809,19 @@ mod tests {
         assert!(clean_content("   \n\t  ").is_empty());
     }
 
-    /// 上限按**字符**算不按字节：300 个汉字是 900 字节，按字节判会把中文评论的
-    /// 上限压到 100 字（留言板那条 `clip_reject_reason` 的注释记过同一个坑）。
+    /// 长度上限按字符计算，避免压缩中文可用长度。
     #[test]
     fn 长度上限按字符算() {
-        assert_eq!(clean_content(&"啊".repeat(MAX_COMMENT_CHARS)).chars().count(), MAX_COMMENT_CHARS);
+        assert_eq!(
+            clean_content(&"啊".repeat(MAX_COMMENT_CHARS))
+                .chars()
+                .count(),
+            MAX_COMMENT_CHARS
+        );
         assert!("啊".repeat(MAX_COMMENT_CHARS + 1).chars().count() > MAX_COMMENT_CHARS);
     }
 
-
-    /// 单调性：赞越多分越高、踩越多分越低、回复越多分越高。三条各挖一个反控。
+    /// 验证赞、踩和回复对热度的单调性。
     #[test]
     fn 热度分对三个信号都单调() {
         assert!(hot_score(3, 0, 0) > hot_score(2, 0, 0), "赞多 ⇒ 分高");
@@ -850,13 +829,17 @@ mod tests {
         assert!(hot_score(1, 0, 5) > hot_score(1, 0, 4), "回复多 ⇒ 分高");
     }
 
-    /// ★ 先验的存在理由：**0 票 0 回复不许垫底**。
-    /// 没有先验时 Wilson(0,0) 恒等于 0，新评论永远沉在坟底——这正是反对按票排序的
-    /// 理由（见 `HOT_PRIOR_VOTES` 的注释）。这一条钉住它。
+    /// 先验使零票新评论的得分高于净负票评论。
     #[test]
     fn 零票评论高于净负票评论_低于有一条赞的() {
-        assert!(hot_score(0, 0, 0) > hot_score(0, 1, 0), "0 票要高于净负票（先验的作用）");
-        assert!(hot_score(0, 0, 0) < hot_score(1, 0, 0), "但压不过真有一条赞的");
+        assert!(
+            hot_score(0, 0, 0) > hot_score(0, 1, 0),
+            "0 票要高于净负票（先验的作用）"
+        );
+        assert!(
+            hot_score(0, 0, 0) < hot_score(1, 0, 0),
+            "但压不过真有一条赞的"
+        );
     }
 
     #[test]
@@ -871,11 +854,13 @@ mod tests {
             );
         }
         assert!(d(100) < hot_score(30, 0, 0), "一百条回复还压不过 30 个赞");
-        assert!(d(300) > hot_score(30, 0, 0), "但三百条就压过了 —— 回复项**没有上界**");
+        assert!(
+            d(300) > hot_score(30, 0, 0),
+            "但三百条就压过了 —— 回复项**没有上界**"
+        );
     }
 
-    /// 排序键是**全序**：同分不同 id 必须分得出先后（id 降序），且**同一份数据每次排出
-    /// 同一个顺序**——否则无头断言与人工排查都没法按"第 N 行"对账。
+    /// 热度量化为微单位整数，以评论 id 决定同分顺序。
     #[test]
     fn 排序键是全序_同分按id降序() {
         let a = hot_key(hot_score(2, 0, 0), 7);
@@ -885,8 +870,7 @@ mod tests {
         assert_eq!(a, hot_key(hot_score(2, 0, 0), 7), "同一份输入 ⇒ 同一个键");
     }
 
-    /// 两个交叉点（产品口径，不是数学性质）：**读代码注释里那张表的人应该能在这里看到
-    /// 同样的结论**。改常量会让这两条红——那正是"要改先想清楚"的意思。
+    /// 固定回复权重与赞踩分数的产品取舍。
     #[test]
     fn 交叉点_回复数与赞数的兑换率() {
         // 15 条回复（+0.40）能越过 5 赞 1 踩（0.409）——讨论量是强信号。
@@ -895,7 +879,7 @@ mod tests {
         assert!(hot_score(0, 0, 3) < hot_score(5, 1, 0));
     }
 
-    /// 读数对照表：注释里写的那几个数就是这几个数（改公式时这张表要么跟着改、要么红）。
+    /// 验证热度公式的代表性数值。
     #[test]
     fn 读数对照表() {
         let round = |v: f64| (v * 1000.0).round() / 1000.0;

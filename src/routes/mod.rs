@@ -246,7 +246,6 @@ pub fn create_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         // Images
         .route("/api/protect/upload", upload::route())
-        .route("/api/protect/images", get(upload::list_images))
         .route("/api/protect/image-generation/articles/{id}", get(image_generation::article_context))
         .route("/api/protect/image-generation/options", get(image_generation::options))
         .route("/api/protect/image-generation/jobs", get(image_generation::list).post(image_generation::create))
@@ -261,7 +260,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/gallery/folders", get(gallery::folders::list).post(gallery::folders::create))
         .route("/api/protect/gallery/folders/{id}", delete(gallery::folders::remove))
         .route("/api/protect/gallery/articles/{id}/cover", get(gallery::covers::target).put(gallery::covers::change))
-        .route("/api/protect/delImg", delete(upload::delete_images))
         .route("/api/protect/images/r2", get(upload::r2_usage))
 
         // Notes Protected
@@ -289,6 +287,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/article-deletions", post(article_deletions::change))
         .route("/api/protected/talk-actions/prepare", post(talk_actions::prepare))
         .route("/api/protected/talk-actions", get(talk_actions::list).post(talk_actions::change))
+        .route("/api/protect/gallery/image-actions/prepare", post(gallery::actions::prepare).layer(DefaultBodyLimit::max(gallery::actions::MAX_BODY_BYTES)))
+        .route("/api/protect/gallery/image-actions", post(gallery::actions::change).layer(DefaultBodyLimit::max(gallery::actions::MAX_BODY_BYTES)))
         .route("/api/protect/gallery/folder-actions/prepare", post(gallery::folder_actions::prepare))
         .route("/api/protect/gallery/folder-actions", post(gallery::folder_actions::change))
         .route("/api/protected/article-actions/batch/prepare", post(article_actions::batch::prepare))

@@ -161,6 +161,8 @@ const POSTS: &[&str] = &[
     "/api/protected/talk-actions/prepare",
     "/api/protected/notification-deletions",
     "/api/protected/notification-deletions/prepare",
+    "/api/protect/gallery/image-actions",
+    "/api/protect/gallery/image-actions/prepare",
     "/api/protect/gallery/folder-actions",
     "/api/protect/gallery/folder-actions/prepare",
     "/api/protect/image-generation/jobs",

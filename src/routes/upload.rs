@@ -32,7 +32,7 @@ fn object_name(prefix: &str, ext: &str) -> String {
     format!("{prefix}{}.{}", uuid::Uuid::new_v4().simple(), ext)
 }
 
-fn generation_prefix(name: &str, data: &[u8]) -> String {
+pub(crate) fn generation_prefix(name: &str, data: &[u8]) -> String {
     let identity = serde_json::to_vec(&(name, sha256_hex(data))).expect("string tuple serializes");
     format!("generated-{}-", sha256_hex(&identity))
 }

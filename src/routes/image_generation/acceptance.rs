@@ -100,9 +100,10 @@ async fn complete(
         "generated image storage ready"
     );
     let txn = state.db.begin().await?;
+    crate::routes::gallery::references::guard_texts(&txn, &[&url]).await?;
     let image = txn
         .query_one(stmt(
-            "SELECT image_key FROM images WHERE image_url=$1",
+            "SELECT image_key FROM images WHERE image_url=$1 FOR UPDATE",
             vec![url.into()],
         ))
         .await?

@@ -23,7 +23,7 @@ impl Fixture {
         assert!(!std::env::var("JWT_SECRET").unwrap_or_default().is_empty());
         let db = Database::connect(url).await.unwrap();
         assert!(
-            !crate::r2::load_config(&db).await.active(),
+            !crate::r2::load_config(&db).await.unwrap().active(),
             "Use a disposable CI database with R2 disabled"
         );
         let uid = db.query_one(stmt(
@@ -149,6 +149,70 @@ fn request(references: Vec<Reference>) -> Request {
     }
 }
 
+#[tokio::test]
+async fn accepted_history_reports_removed_images_without_losing_generation_facts() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let id = fixture.seed("accepted", "agent", &request(vec![])).await;
+    let old = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+    assert_eq!(old.status, "accepted");
+    assert!(old.image_removed && old.image_id.is_none() && old.preview_url.is_none());
+    let url = format!(
+        "/api/protect/download/removed-history-{}.png",
+        uuid::Uuid::new_v4().simple()
+    );
+    let image_id: i32 = fixture
+        .state
+        .db
+        .query_one(stmt(
+            "INSERT INTO images(image_url) VALUES($1) RETURNING image_key",
+            vec![url.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "image_key")
+        .unwrap();
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "UPDATE image_generation SET image_id=$2 WHERE id::text=$1",
+            vec![id.clone().into(), image_id.into()],
+        ))
+        .await
+        .unwrap();
+    let saved = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+    assert!(!saved.image_removed);
+    assert_eq!(saved.image_id, Some(image_id));
+    assert_eq!(saved.preview_url.as_deref(), Some(url.as_str()));
+    fixture.state.db.execute(stmt("INSERT INTO image_deletion(image_id,image_url,decoded_url,requested_by,storage_kind,storage_scope,storage_key) VALUES($1,$2,$2,$3,'local','/fixture','fixture.png')", vec![image_id.into(), url.into(), fixture.uid.into()])).await.unwrap();
+    let removed = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+    assert_eq!(removed.status, "accepted");
+    assert_eq!(removed.image_id, Some(image_id));
+    assert!(removed.image_removed && removed.preview_url.is_none());
+    fixture.cleanup().await;
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "DELETE FROM image_deletion WHERE image_id=$1",
+            vec![image_id.into()],
+        ))
+        .await
+        .unwrap();
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "DELETE FROM images WHERE image_key=$1",
+            vec![image_id.into()],
+        ))
+        .await
+        .unwrap();
+}
+
 async fn storage_waiters(state: &AppState, key: i64) -> i64 {
     state
         .db
@@ -174,6 +238,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
     let version = digest(&bytes);
     let frozen = request(vec![]);
     let id = fixture.seed("review", "agent", &frozen).await;
+    let storage_prefix = crate::routes::upload::generation_prefix(&format!("ai-{id}.png"), &bytes);
     state
         .db
         .execute(stmt(
@@ -204,7 +269,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
     let key = (uuid::Uuid::new_v4().as_u128() as i64) & 0x7fff_ffff;
     state.db.execute(stmt(format!(
         "CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
-         IF position('{id}' in NEW.image_url)>0 THEN PERFORM pg_advisory_xact_lock({key}::bigint); END IF; \
+         IF position('{storage_prefix}' in NEW.image_url)>0 THEN PERFORM pg_advisory_xact_lock({key}::bigint); END IF; \
          RETURN NEW; END $$"), vec![])).await.unwrap();
     state.db.execute(stmt(format!(
         "CREATE TRIGGER {trigger} BEFORE INSERT ON images FOR EACH ROW EXECUTE FUNCTION {trigger}()"),
@@ -374,7 +439,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
         .db
         .query_one(stmt(
             "SELECT count(*)::bigint AS n FROM images WHERE image_url LIKE $1",
-            vec![format!("%{id}%").into()],
+            vec![format!("%/{storage_prefix}%").into()],
         ))
         .await
         .unwrap()
@@ -396,7 +461,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
         "Deleting generation history must retain the accepted gallery image"
     );
     let filename = url.strip_prefix("/api/protect/download/").unwrap();
-    assert!(filename.contains(&id) && !filename.contains('/'));
+    assert!(filename.starts_with(&storage_prefix) && !filename.contains('/'));
     let path = crate::utils::upload_dir().join(filename);
     assert_eq!(tokio::fs::read(&path).await.unwrap(), bytes);
     state

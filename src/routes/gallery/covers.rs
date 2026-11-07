@@ -60,6 +60,7 @@ pub(super) async fn apply(
     if before.article_id != id || before.version != input.version {
         return Err(DbErr::Custom("article changed".into()));
     }
+    super::references::fence(db, false).await?;
     db.query_one(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT image_key FROM images WHERE image_key=$1 FOR UPDATE",
