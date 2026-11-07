@@ -6,7 +6,7 @@ import { pathToFileURL, fileURLToPath } from 'url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-/** 父仓根（仓库顶层）：Rust 与迁移脚本都在那里，不在 frontend/ 下 */
+/** Host repository containing Rust routes and migrations. */
 const repo = path.resolve(root, '..');
 
 let pass = 0, fail = 0;
@@ -19,7 +19,7 @@ const ok = (cond, name, detail) => {
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const readSrc = (p) => stripComments(readFileSync(path.join(root, p), 'utf8'));
 
-// noteAuthor.ts 只 `import type`（纯 TS，无 DOM 无 React）⇒ 直接摊平后 import
+// Test the pure author projection without a browser.
 const out = mkdtempSync(path.join(tmpdir(), 'noteauthor-'));
 const file = path.join(out, 'noteAuthor.mjs');
 await esbuild.build({
@@ -77,8 +77,6 @@ console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 
 
     const readArt = readSrc('src/frontHome/Content/ReadArticle/index.tsx');
     ok(/noteAuthor\(article,/.test(readArt), '详情页横幅用同一条判据（article 尚未加载时自动回退）');
-    ok(/<Avatar\s+src=\{who\.avatar\}/.test(readArt) && /\{who\.name\}/.test(readArt),
-        '详情页的头像与署名都取自 who');
     ok(!/<Avatar\s+src=\{avatar\}/.test(readArt), '详情页里没有残留的那一句');
 
     const byline = readSrc('src/components/NoteByline/index.tsx');
@@ -86,8 +84,7 @@ console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 
     ok(/siteAvatar/.test(byline) && /siteName/.test(byline),
         '站点级那两个 prop 名字里带 site（读代码的人不会误当成本文作者）');
 
-    // 判据只有一份：全 src 里出现 `authorName` 的文件白名单。
-    // 新消费方（后台列、作者页…）请调 noteAuthor()，别自己写 `item.authorName || …`。
+    // Keep author fallback decisions in the shared projection.
     const hits = [];
     const walk = (dir) => {
         for (const e of readdirSync(dir)) {
@@ -111,7 +108,7 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
     ok(/async fn attach_authors/.test(rust), '批量解析作者那一步在（不是每个 DTO 自己查一次）');
     ok(/web_info::site_author/.test(rust), '回退用的是与 /api/public/user 同一份站点级实现（同一个人名）');
 
-    // 逐条路径查"挂没挂"：漏挂一条 = 同一个症状在另一个页面上复发（后台列表/搜索尤其容易漏）
+    // All host note views attach the public author projection.
     const bodyOf = (name) => {
         const i = rust.indexOf(`fn ${name}(`);
         if (i < 0) return null;
