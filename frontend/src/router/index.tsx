@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
+import { routePage } from "./RoutePage";
 import { AuthRouter } from "../components/AuthRouter.tsx";
 import NotFound from "../components/NotFound";
 import { registerSpaNavigate } from "./spaNavigate.ts";
@@ -28,15 +29,7 @@ const Talk = lazy(() => import("../frontHome/Content/Talk"));
 const Times = lazy(() => import("../frontHome/Content/Times"));
 const ReadArticle = lazy(() => import("../frontHome/Content/ReadArticle"));
 
-const routePage = (page: ReactNode) => (
-    <Suspense fallback={<div role="status" style={{ minHeight: "40vh", padding: 32 }}>正在加载页面…</div>}>{page}</Suspense>
-);
-
-/**
- * 编辑器路由包装：`newnote/:id?` 换 id（编辑 30 → 点侧栏「编辑文章」变新建）时 React 不会重挂载，
- * 只是 param 变了——编辑器里上一篇的标题/正文/封面/裁剪参数会留着，自动保存再把它写进新建的草稿行，
- * 等于把上一篇复制一遍。key 强制换实例：旧实例卸载时正常补发/清理自己的草稿，新实例从零开始。
- */
+// Reset editor state when its article coordinate changes.
 const NewNotesRoute = () => {
     const { id } = useParams();
     return <NewNotes key={id ?? 'new'} />;
@@ -82,7 +75,6 @@ const router = createBrowserRouter([
         path: 'login',
         element: routePage(<Login />)
     },
-    // 留言板（河灯）：主页导航"留言板"入口
     {
         path: 'guestbook',
         element: <Suspense fallback={<div style={{ minHeight: "100dvh", background: "#081723" }} />}><RiverBoard /></Suspense>
@@ -104,7 +96,7 @@ const router = createBrowserRouter([
                         element: routePage(<AllNotes />)
                     },
                     {
-                        path: 'newnote/:id?', // 在:id后面加上问号?表示id参数可选
+                        path: 'newnote/:id?',
                         element: routePage(<NewNotesRoute />),
                     },
                     {
@@ -150,8 +142,7 @@ const router = createBrowserRouter([
     }
 ])
 
-// 站内跳转桥：把 `window.__spaNavigate(url)` 挂上，让对话面板里的站内跳转走路由换页而不是整页重载
-// （面板在 #root 之外，整页重载会把它整个重建）。判据/白名单见 src/router/spaNavigate.ts。
+// SPA navigation keeps the persistent chat widget mounted.
 registerSpaNavigate(router)
 
 export default router

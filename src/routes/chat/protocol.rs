@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 pub(super) enum Frame {
     Text(String),
     TextReset(#[serde(deserialize_with = "empty_object")] Empty),
-    Progress(String),
+    Progress(Progress),
     TaskInput(Map<String, Value>),
     Confirmation(Map<String, Value>),
     Command(Map<String, Value>),
@@ -17,6 +17,60 @@ pub(super) enum Frame {
     Receipts(Vec<Value>),
     Done(Empty),
     Error(String),
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub(super) enum Progress {
+    Text(String),
+    Work(WorkProgress),
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkProgress {
+    text: String,
+    work: Work,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct Work {
+    #[serde(deserialize_with = "work_id")]
+    id: String,
+    #[serde(deserialize_with = "work_stage")]
+    stage: String,
+    status: WorkStatus,
+}
+
+fn bounded_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    max: usize,
+) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty() || value.chars().count() > max {
+        return Err(serde::de::Error::custom(
+            "invalid work progress field length",
+        ));
+    }
+    Ok(value)
+}
+fn work_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    bounded_string(deserializer, 128)
+}
+fn work_stage<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    bounded_string(deserializer, 64)
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum WorkStatus {
+    Running,
+    Waiting,
+    Completed,
+    Failed,
+    Cancelled,
+    Unknown,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -113,6 +167,38 @@ mod tests {
                 ..Default::default()
             })
             .is_ok());
+        }
+    }
+
+    #[test]
+    fn work_progress_is_typed_presentation_and_round_trips_without_becoming_control() {
+        let value = json!({"text":"图片生成中", "work":{
+            "id":"image-generation:fixture", "stage":"generating", "status":"running"}});
+        let frame = decode(&Incoming {
+            event: "progress".into(),
+            data: value.to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(frame, Frame::Progress(Progress::Work(_))));
+        assert_eq!(
+            serde_json::to_value(frame).unwrap(),
+            json!({"event":"progress","data":value})
+        );
+        for data in [
+            json!({"text":"x","work":{"id":"a","stage":"generating","status":"approve"}}),
+            json!({"text":"x","work":{"id":"","stage":"generating","status":"running"}}),
+            json!({"text":"x","work":{"id":"a".repeat(129),"stage":"generating","status":"running"}}),
+            json!({"text":"x","work":{"id":"a","stage":"s".repeat(65),"status":"running"}}),
+            json!({"text":"x","work":{"id":"a","stage":"generating"}}),
+            json!({"text":"x","work":{},"command":"execute"}),
+        ] {
+            assert!(decode(&Incoming {
+                event: "progress".into(),
+                data: data.to_string(),
+                ..Default::default()
+            })
+            .is_err());
         }
     }
 }

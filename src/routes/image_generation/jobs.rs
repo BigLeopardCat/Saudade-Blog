@@ -15,31 +15,34 @@ struct Row {
     error: Option<String>,
     usage: Option<JsonValue>,
     created_at: String,
+    retry_of: Option<String>,
+    retry_source_status: Option<String>,
 }
-const SELECT:&str="SELECT id::text AS id,request,request_hash,CASE WHEN status='generating' AND approved_at < now()-interval '5 minutes' THEN 'unknown' WHEN status='pending' AND created_at < now()-interval '1 hour' THEN 'expired' ELSE status END AS status,output_hash,image_id,error,usage,created_at::text AS created_at FROM image_generation WHERE id::text=$1 AND owner_id=$2";
+pub(super) const STATUS: &str = "CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN 'review' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END";
 
 pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
-    let row = Row::find_by_statement(stmt(SELECT, vec![id.into(), uid.into()]))
+    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status FROM image_generation WHERE id::text=$1 AND owner_id=$2"), vec![id.into(), uid.into()]))
         .one(&state.db)
         .await?
-        .ok_or_else(|| error("job missing"))?;
+        .ok_or_else(|| DbErr::RecordNotFound("image job missing".into()))?;
     let mut request: Request =
         serde_json::from_value(row.request).map_err(|_| error("invalid job request"))?;
     for (slot, reference) in request.references.iter_mut().enumerate() {
-        if ["pending", "generating", "review"].contains(&row.status.as_str()) {
+        if ["pending", "generating", "review", "saving"].contains(&row.status.as_str()) {
             reference.preview_url = preview_url(uid, id, slot as i16, &reference.digest)?;
         }
     }
-    let preview = if row.status == "review" {
+    let preview = if matches!(row.status.as_str(), "review" | "saving") {
         row.output_hash
             .as_ref()
             .map(|hash| preview_url(uid, id, -1, hash))
             .transpose()?
     } else if let Some(image_id) = row.image_id {
-        crate::routes::gallery::read(&state.db, uid, image_id)
-            .await
-            .ok()
-            .map(|image| image.image_url)
+        match crate::routes::gallery::read(&state.db, uid, image_id).await {
+            Ok(image) => Some(image.image_url),
+            Err(DbErr::RecordNotFound(_)) => None,
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
@@ -54,15 +57,17 @@ pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
         usage: row.usage,
         preview_url: preview,
         created_at: row.created_at,
+        retry_of: row.retry_of,
+        retry_source_status: row.retry_source_status,
     })
 }
 
-pub async fn create(state: &AppState, uid: i32, input: Draft) -> Result<Job, DbErr> {
+pub async fn create(state: &AppState, uid: i32, input: Draft, origin: &str) -> Result<Job, DbErr> {
     let settings = settings::Settings::load().map_err(error)?;
     input.validate(&settings.models)?;
     // Retain pending previews for seven days; approval facts and hashes remain durable.
-    state.db.execute(stmt("DELETE FROM image_generation_reference WHERE job_id IN (SELECT id FROM image_generation WHERE owner_id=$1 AND created_at<now()-interval '7 days')",vec![uid.into()])).await?;
-    state.db.execute(stmt("UPDATE image_generation SET output=NULL,status=CASE WHEN status='review' THEN 'rejected' ELSE status END WHERE owner_id=$1 AND created_at<now()-interval '7 days' AND output IS NOT NULL",vec![uid.into()])).await?;
+    state.db.execute(stmt("DELETE FROM image_generation_reference WHERE job_id IN (SELECT id FROM image_generation WHERE owner_id=$1 AND created_at<now()-interval '7 days' AND status NOT IN ('generating','saving'))",vec![uid.into()])).await?;
+    state.db.execute(stmt("UPDATE image_generation SET output=NULL,status=CASE WHEN status='review' THEN 'rejected' ELSE status END WHERE owner_id=$1 AND created_at<now()-interval '7 days' AND output IS NOT NULL AND status NOT IN ('generating','saving')",vec![uid.into()])).await?;
     let mut references = Vec::new();
     let mut snapshots = Vec::new();
     for id in input.reference_ids {
@@ -83,8 +88,8 @@ pub async fn create(state: &AppState, uid: i32, input: Draft) -> Result<Job, DbE
     let id = uuid::Uuid::new_v4().to_string();
     let txn = state.db.begin().await?;
     txn.execute(stmt(
-        "INSERT INTO image_generation(id,owner_id,request,request_hash) VALUES($1::uuid,$2,$3,$4)",
-        vec![id.clone().into(), uid.into(), json.into(), hash.into()],
+        "INSERT INTO image_generation(id,owner_id,request,request_hash,origin) VALUES($1::uuid,$2,$3,$4,$5)",
+        vec![id.clone().into(), uid.into(), json.into(), hash.into(), origin.into()],
     ))
     .await?;
     for (ordinal, (mime, bytes)) in snapshots.into_iter().enumerate() {
@@ -184,58 +189,11 @@ pub async fn approve(
     read(&state, uid, id).await
 }
 
-pub async fn accept(
-    state: &Arc<AppState>,
-    uid: i32,
-    id: &str,
-    input: Approval,
-) -> Result<Job, DbErr> {
-    let txn = state.db.begin().await?;
-    let row=txn.query_one(stmt("SELECT status,output,output_hash,request FROM image_generation WHERE id::text=$1 AND owner_id=$2 FOR UPDATE",vec![id.into(),uid.into()])).await?.ok_or_else(||error("job missing"))?;
-    let status: String = row.try_get("", "status")?;
-    if row.try_get::<Option<String>>("", "output_hash")?.as_deref() != Some(input.version.as_str())
-    {
-        return Err(error("result approval mismatch"));
-    }
-    if status == "accepted" {
-        txn.commit().await?;
-        return read(state, uid, id).await;
-    }
-    if status != "review" {
-        return Err(error("job has no reviewable result"));
-    }
-    let bytes: Vec<u8> = row.try_get("", "output")?;
-    if digest(&bytes) != input.version {
-        return Err(error("result bytes changed after approval"));
-    }
-    let request: Request = serde_json::from_value(row.try_get("", "request")?)
-        .map_err(|_| error("request invalid"))?;
-    let name = format!("ai-{id}.png");
-    let url = crate::routes::upload::persist_generated(state, &name, &bytes).await?;
-    let image = txn
-        .query_one(stmt(
-            "SELECT image_key FROM images WHERE image_url=$1",
-            vec![url.into()],
-        ))
-        .await?
-        .ok_or_else(|| error("gallery registration failed"))?;
-    let image_id: i32 = image.try_get("", "image_key")?;
-    let description: String = request.prompt.chars().take(2000).collect();
-    txn.execute(stmt("INSERT INTO image_metadata(image_id,display_name,description) VALUES($1,$2,$3) ON CONFLICT(image_id) DO NOTHING",vec![image_id.into(),name.into(),description.into()])).await?;
-    txn.execute(stmt("UPDATE image_generation SET status='accepted',image_id=$2,output=NULL,reviewed_at=now() WHERE id::text=$1",vec![id.into(),image_id.into()])).await?;
-    txn.execute(stmt(
-        "DELETE FROM image_generation_reference WHERE job_id::text=$1",
-        vec![id.into()],
-    ))
-    .await?;
-    txn.commit().await?;
-    read(state, uid, id).await
-}
+pub(super) use super::acceptance::accept;
 
 pub async fn reject(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
     let txn = state.db.begin().await?;
     txn.execute(stmt("UPDATE image_generation SET status='rejected',output=NULL,reviewed_at=now() WHERE id::text=$1 AND owner_id=$2 AND status IN ('pending','review')",vec![id.into(),uid.into()])).await?;
-    txn.execute(stmt("DELETE FROM image_generation_reference WHERE job_id::text=$1 AND EXISTS(SELECT 1 FROM image_generation WHERE id::text=$1 AND owner_id=$2 AND status='rejected')",vec![id.into(),uid.into()])).await?;
     txn.commit().await?;
     read(state, uid, id).await
 }

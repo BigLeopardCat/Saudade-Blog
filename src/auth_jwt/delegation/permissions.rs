@@ -89,6 +89,7 @@ const READS: &[&str] = &[
     "/api/protect/image-generation/options",
     "/api/protect/image-generation/articles/:id",
     "/api/protect/image-generation/jobs/:job",
+    "/api/protect/image-generation/jobs/:job/events",
     "/api/protected/articles",
     "/api/protected/accounts",
     "/api/protected/notes/list",
