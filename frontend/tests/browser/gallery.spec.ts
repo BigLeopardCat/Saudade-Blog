@@ -72,3 +72,29 @@ test('gallery opens details, selects explicitly, uses two list columns and updat
   await expect.poll(()=>page.locator('.albumList').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(1)
   expect(rows[0].imageUrl).toBe('/fixture/image-1.svg')
 })
+
+
+test('mobile gallery separates failed-image retry from viewing and deletion', async ({page,sandboxURL})=>{
+  await page.setViewportSize({width:390,height:900})
+  let reads=0
+  const image:GalleryImage={imageKey:1,imageUrl:'/fixture/retry.svg',displayName:'重试图片',description:'',folderId:0,isFavorite:false,version:'a'.repeat(64)}
+  await page.route('**/api/monitor/log',route=>route.fulfill({json:{code:200}}))
+  await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{enabled:false,configured:false,credentials:false,usedBytes:0,limitBytes:100,publicBase:''}}}))
+  await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:[]}}))
+  await page.route('**/api/protect/gallery/images**',route=>route.fulfill({json:{code:200,data:{items:[image],nextCursor:null}}}))
+  await page.route('**/fixture/retry.svg',route=>{
+    reads++
+    return reads===1?route.fulfill({status:403,body:'denied'}):route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="3000"><rect width="300" height="3000" fill="pink"/></svg>'})
+  })
+  await page.goto(sandboxURL)
+  await expect(page.getByText('图片加载失败',{exact:true})).toBeVisible()
+  expect(await page.locator('button button').count()).toBe(0)
+  await page.getByRole('button',{name:'重新加载图片：重试图片'}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(()=>reads).toBe(2)
+  await expect(page.getByRole('img',{name:'重试图片'})).toBeVisible()
+  await expect(page.getByRole('checkbox',{name:'选择图片 重试图片'})).not.toBeChecked()
+  await page.getByRole('button',{name:'查看图片 重试图片'}).click()
+  await expect(page.getByRole('dialog',{name:'重试图片',exact:true})).toBeVisible()
+  await expect(page.locator('.albumDetailImage img')).toBeVisible()
+})

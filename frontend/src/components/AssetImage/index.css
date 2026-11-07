@@ -1,0 +1,51 @@
+.asset-image {
+    position: relative;
+    display: inline-grid;
+    width: 100%;
+    height: 100%;
+    isolation: isolate;
+    vertical-align: middle;
+}
+.asset-image > img {
+    display: block;
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
+    max-height: inherit;
+    object-fit: contain;
+}
+.asset-image-pending {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+}
+.asset-image-failure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
+    min-height: 72px;
+    box-sizing: border-box;
+    color: var(--washi-ink, #614a68);
+    background: var(--washi-paper-2, #fbf3f9);
+    font-size: 12px;
+    text-align: center;
+}
+.asset-image-failure button {
+    border: 1px solid var(--washi-lav, #c9b3e8);
+    border-radius: 8px;
+    padding: 3px 10px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+}
+.asset-image-failure button:focus-visible {
+    outline: 2px solid var(--washi-accent, #9b689d);
+    outline-offset: 2px;
+}

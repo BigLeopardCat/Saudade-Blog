@@ -212,3 +212,21 @@
     padding: 4px
     border-radius: 6px
     background: var(--washi-paper, #fffdfa)
+
+.albumTextOpen
+  flex: 1
+  padding: 0
+  border: 0
+  background: none
+  color: inherit
+  text-align: left
+  cursor: zoom-in
+  &:focus-visible
+    outline: 2px solid var(--washi-lav, #b9a7f5)
+    outline-offset: 3px
+
+.albumThumb.asset-image-failure
+  cursor: default
+
+.albumDetailImage.asset-image-failure
+  min-height: 180px
