@@ -1,9 +1,9 @@
 use axum::{
-    Json,
     body::Body,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -26,17 +26,21 @@ pub struct ReportPayload {
     pub url: Option<String>,
     /// WebGL 可用性标记（前端探测后随载荷上报）。
     ///
-    /// 类型故意是 `Value` 而不是 `Option<bool>`：这个端点**匿名可写**，`webgl: "yes"`
-    /// 之类的坏值若让 serde 在整条载荷上失败，一条真实错误就被 400 吞掉了——局部
-    /// 字段的脏值不该有能力毁掉整条记录。缺席（老客户端）与脏值一律记 `unknown`，
-    /// **不猜成 `no`**（与「缺键绝不编 0」同一条纪律：unknown 与 no 是两件事）。
+    /// This anonymous endpoint retains valid report fields when webgl is malformed.
+    /// Missing and invalid values remain unknown rather than claiming WebGL is absent.
     #[serde(default)]
     pub webgl: Option<serde_json::Value>,
 }
 
 fn clean(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_control() || is_invisible_format(c) { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || is_invisible_format(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -198,12 +202,13 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
     // 去重 key：只由**已清洗截断**的三个字段拼成（原始载荷进不来）⇒ 访客没法用超长
     // msg 掏空表，也没法把 uid/ua 拼进去制造互相干扰的 key。
     // `msg` 只取前 80 字：同一类错误的正文尾部常带变址（id/时间），全串相同才是少数。
-    let dup = dedupe_count(&format!(
-        "{kind}|{}|{url}",
-        truncate(msg.as_str(), 80)
-    ));
+    let dup = dedupe_count(&format!("{kind}|{}|{url}", truncate(msg.as_str(), 80)));
 
-    let level = if kind == "http_status" { "WARN" } else { "ERROR" };
+    let level = if kind == "http_status" {
+        "WARN"
+    } else {
+        "ERROR"
+    };
     let webgl = normalize_webgl(payload.webgl.as_ref());
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     // 字段顺序是对账契约：`type=`/`uid=` 后面**只能追加**，见文件头注。
@@ -211,7 +216,8 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
         "{ts} {level} [monitor] type={kind} uid={uid} url={url} msg={msg} stack={stack} ua={ua} webgl={webgl} dup={dup}\n"
     );
 
-    let path = std::env::var("SAUDADE_MONITOR_LOG").unwrap_or_else(|_| "logs/frontend/monitor.log".to_string());
+    let path = std::env::var("SAUDADE_MONITOR_LOG")
+        .unwrap_or_else(|_| "logs/frontend/monitor.log".to_string());
     append_line(&path, &line).await;
 
     Json(serde_json::json!({"ok": true})).into_response()
@@ -220,7 +226,22 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
 async fn append_line(path: &str, line: &str) {
     use tokio::io::AsyncWriteExt;
 
-    match tokio::fs::OpenOptions::new().create(true).append(true).open(path).await {
+    if let Some(parent) = std::path::Path::new(path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+    {
+        if let Err(error) = tokio::fs::create_dir_all(parent).await {
+            warn_write_failed(path, &error);
+            return;
+        }
+    }
+
+    match tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+    {
         Ok(mut f) => {
             if let Err(e) = f.write_all(line.as_bytes()).await {
                 warn_write_failed(path, &e);
@@ -239,8 +260,11 @@ const WRITE_WARN_WINDOW: Duration = Duration::from_secs(60);
 
 /// 限频决策（纯函数，`now` 注入 ⇒ 窗口行为可测，不用 sleep）。
 /// 返回 `(这次记不记, 新的 last, 新的被压条数)`。
-fn warn_decision(last: Option<Instant>, suppressed: u32, now: Instant)
-    -> (bool, Option<Instant>, u32) {
+fn warn_decision(
+    last: Option<Instant>,
+    suppressed: u32,
+    now: Instant,
+) -> (bool, Option<Instant>, u32) {
     match last {
         Some(t) if now.duration_since(t) < WRITE_WARN_WINDOW => (false, last, suppressed + 1),
         _ => (true, Some(now), 0),
@@ -256,7 +280,7 @@ fn warn_write_failed(path: &str, err: &std::io::Error) {
         return;
     };
     let (report, new_last, suppressed) = warn_decision(g.0, g.1, Instant::now());
-    let carried = if report { g.1 } else { 0 };   // 上一窗口被压掉的条数
+    let carried = if report { g.1 } else { 0 }; // 上一窗口被压掉的条数
     *g = (new_last, suppressed);
     drop(g);
     if report {
@@ -285,6 +309,36 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn monitor_creates_its_parent_directory_and_appends_without_truncating() {
+        let root = std::env::temp_dir().join(format!("saudade-monitor-{}", uuid::Uuid::new_v4()));
+        let path = root.join("logs/frontend/monitor.log");
+        assert!(!path.parent().unwrap().exists());
+        append_line(path.to_str().unwrap(), "synthetic first\n").await;
+        append_line(path.to_str().unwrap(), "synthetic second\n").await;
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap(),
+            "synthetic first\nsynthetic second\n"
+        );
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_parent_path_does_not_panic_or_overwrite_an_existing_file() {
+        let root = std::env::temp_dir().join(format!("saudade-monitor-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir(&root).await.unwrap();
+        let parent = root.join("not-a-directory");
+        tokio::fs::write(&parent, "existing fixture").await.unwrap();
+        let path = parent.join("monitor.log");
+        append_line(path.to_str().unwrap(), "must not be written").await;
+        assert!(!path.exists());
+        assert_eq!(
+            tokio::fs::read_to_string(parent).await.unwrap(),
+            "existing fixture"
+        );
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
     /// 两种边界输入：ASCII 落在边界（对照）与多字节落在字符中间（回归点）。
     /// 判据是"任何时候不出现 `&str[..n]` 的裸切片"——这个用例是它的回归锁。
     #[test]
@@ -303,18 +357,18 @@ mod tests {
         assert_eq!(truncate("", 10), "");
     }
 
-    /// 审计 SAU-013：`clean` 必须把**控制字符**换成空格，而不只是换行。
-    ///
-    /// 三种输入对应三件事：ANSI 转义（清屏/伪造红字）、TAB 与 DEL（同族 Cc）、
-    /// 零宽/双向字符（`is_control()` 够不着，但同样能重排终端观感）。
-    /// 反控在最后两条：正常文本一个字符都不许动，且**长度不变**（换空格不删字符）。
+    /// Controls and bidirectional formatting cannot forge terminal output;
+    /// ordinary text and the character count remain unchanged.
     #[test]
     fn clean_strips_control_and_bidi() {
         let ansi = "\x1b[31mERROR\x1b[0m 伪造的红字";
         let cleaned = clean(ansi);
         assert!(!cleaned.chars().any(|c| c.is_control()), "{cleaned:?}");
         assert!(cleaned.contains("伪造的红字"));
-        assert!(cleaned.contains("[31m"), "只换控制字符，正文照旧：{cleaned:?}");
+        assert!(
+            cleaned.contains("[31m"),
+            "只换控制字符，正文照旧：{cleaned:?}"
+        );
 
         assert_eq!(clean("a\tb\x7fc"), "a b c");
         assert_eq!(clean("a\u{202e}b\u{200b}c\u{feff}d"), "a b c d");
@@ -353,12 +407,16 @@ mod tests {
 
     /// 审计 A2：`type` 是匿名可写字段，原样插值可被整行伪造。
     #[test]
-    fn kind_is_a_closed_enum() {        assert_eq!(normalize_kind(Some("js_error")), "js_error");
+    fn kind_is_a_closed_enum() {
+        assert_eq!(normalize_kind(Some("js_error")), "js_error");
         assert_eq!(normalize_kind(Some("http_status")), "http_status");
         assert_eq!(normalize_kind(None), "other");
         assert_eq!(normalize_kind(Some("SECAUDIT_FORGED")), "other");
         // 换行与空格都不许把值撑出白名单（审计那条伪造行就是靠 \n 撑进来的）
-        assert_eq!(normalize_kind(Some("js_error\n2026-01-01 ERROR x")), "other");
+        assert_eq!(
+            normalize_kind(Some("js_error\n2026-01-01 ERROR x")),
+            "other"
+        );
         assert_eq!(normalize_kind(Some("js_error x")), "other");
         assert_eq!(normalize_kind(Some("JS_ERROR")), "other");
     }
@@ -404,9 +462,15 @@ mod tests {
     /// `ua` 是请求头来的、一样是客户端可控 ⇒ 清洗截断一条不能少（头里塞 `\n` 能整行伪造）。
     #[test]
     fn ua_is_cleaned_and_truncated() {
-        assert_eq!(normalize_ua(Some("Mozilla/5.0 (X11; Linux)")), "Mozilla/5.0 (X11; Linux)");
+        assert_eq!(
+            normalize_ua(Some("Mozilla/5.0 (X11; Linux)")),
+            "Mozilla/5.0 (X11; Linux)"
+        );
         assert_eq!(normalize_ua(None), "");
-        assert_eq!(normalize_ua(Some("curl/8.5.0\r\nX-Forged: 1")), "curl/8.5.0  X-Forged: 1");
+        assert_eq!(
+            normalize_ua(Some("curl/8.5.0\r\nX-Forged: 1")),
+            "curl/8.5.0  X-Forged: 1"
+        );
         assert_eq!(normalize_ua(Some(&"u".repeat(500))).len(), 300);
         // 多字节也要落在字符边界上（复用 truncate 的那条回归锁）
         assert_eq!(normalize_ua(Some(&"猫".repeat(200))).len(), 300);
@@ -428,10 +492,9 @@ mod tests {
     /// 局部脏值不许毁掉整条载荷：`webgl` 是 Value 而不是 bool 就是为了这个。
     #[test]
     fn bad_webgl_value_does_not_fail_the_whole_payload() {
-        let p: ReportPayload = serde_json::from_str(
-            r#"{"type":"js_error","message":"boom","webgl":"maybe"}"#,
-        )
-        .expect("脏 webgl 不该让整条载荷反序列化失败");
+        let p: ReportPayload =
+            serde_json::from_str(r#"{"type":"js_error","message":"boom","webgl":"maybe"}"#)
+                .expect("脏 webgl 不该让整条载荷反序列化失败");
         assert_eq!(normalize_kind(p.kind.as_deref()), "js_error");
         assert_eq!(normalize_webgl(p.webgl.as_ref()), "unknown");
     }
