@@ -26,7 +26,7 @@ setupListeners(store.dispatch);
 window.addEventListener(AGENT_TURN_DONE_EVENT, event => {
     if (!isConfirmationAttempt(event)) return;
     store.dispatch(catalogApi.util.invalidateTags(['Search']));
-    store.dispatch(galleryApi.util.invalidateTags(['Images','Folders']));
+    store.dispatch(galleryApi.util.invalidateTags(['Images','Folders','Transfers']));
     store.dispatch(privateApi.util.invalidateTags(['Favorites','FavoriteState','Unread']));
 });
 

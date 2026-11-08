@@ -2,22 +2,34 @@ import {useEffect,useRef,useState} from 'react'
 import {Alert} from 'antd'
 import {useDispatch} from 'react-redux'
 import {galleryApi} from '../../../apis/galleryApi'
+import {catalogApi} from '../../../store/catalogApi'
+import {adminNotesApi} from '../../../apis/adminNotesApi'
 import type {AppDispatch} from '../../../store'
 
 export default function TransferJobs(){
   const [poll,setPoll]=useState(false)
   const {data}=galleryApi.useTransfersQuery(undefined,{pollingInterval:poll?2000:0,skipPollingIfUnfocused:true})
   const previous=useRef(new Map<string,string>())
+  const observed=useRef(false)
   const dispatch=useDispatch<AppDispatch>()
   const active=data?.filter(job=>['queued','copying','published'].includes(job.status))??[]
   useEffect(()=>{
     setPoll(!!data?.some(job=>['queued','copying','published'].includes(job.status)))
     let changed=false
+    let moved=false
     for(const job of data??[]){
-      if(['published','complete'].includes(job.status)&&previous.current.get(job.id)!==job.status)changed=true
+      if(observed.current&&['published','complete'].includes(job.status)&&previous.current.get(job.id)!==job.status){
+        changed=true
+        moved ||= job.result?.mode==='move'
+      }
       previous.current.set(job.id,job.status)
     }
+    observed.current=true
     if(changed)dispatch(galleryApi.util.invalidateTags(['Images','Folders','GenerationJobs']))
+    if(moved){
+      dispatch(catalogApi.util.invalidateTags(['Search']))
+      dispatch(adminNotesApi.util.invalidateTags(['AdminNotes']))
+    }
   },[data,dispatch])
   const failures=data?.filter(job=>job.status==='failed').slice(0,2)??[]
   if(!active.length&&!failures.length)return null

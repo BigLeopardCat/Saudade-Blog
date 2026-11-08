@@ -44,7 +44,12 @@ async fn rewrite(db: &DatabaseTransaction, from: &str, to: &str) -> Result<(), D
             ("user_message", "content"),
             ("user_message_draft", "content"),
         ] {
-            db.execute(sql(&format!("UPDATE \"{table}\" SET \"{column}\"=replace(\"{column}\",$1,$2) WHERE position($1 in \"{column}\")>0"),vec![old.clone().into(),to.into()])).await?;
+            let revision = if table == "note" {
+                ",updated_at=localtimestamp"
+            } else {
+                ""
+            };
+            db.execute(sql(&format!("UPDATE \"{table}\" SET \"{column}\"=replace(\"{column}\",$1,$2){revision} WHERE position($1 in \"{column}\")>0"),vec![old.clone().into(),to.into()])).await?;
         }
     }
     Ok(())
