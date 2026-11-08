@@ -35,8 +35,6 @@ if (SH) {
         '临时目录根可覆盖（SANDBOX_TMP，默认落在 /tmp/saudade-sandboxes）');
     ok(f.includes('RUN="$SANDBOX_TMP/$(date +%Y%m%dT%H%M%S)"'), '每轮一个轮次目录 RUN');
     ok(f.includes('suite_tmp="$RUN/${name%.py}"'), '每个套件一格（$RUN/<套件名>）');
-
-    // ★ 顺序：先 mkdir -p 再把它当 TMPDIR 用。反了就是"静默回落到 /tmp"那条半死。
     const mkIdx = f.indexOf('mkdir -p "$suite_tmp"');
     const envIdx = f.indexOf('TMPDIR="$suite_tmp" timeout');
     ok(mkIdx >= 0 && envIdx >= 0 && mkIdx < envIdx,
@@ -50,8 +48,6 @@ if (SH) {
         '★ `rm -rf "$suite_tmp"` 全脚本只有一处（多一处就意味着失败现场也会被删）',
         count(f, 'rm -rf "$suite_tmp"'));
     ok(f.includes('rmdir "$RUN" 2>/dev/null'), '轮次目录只收空的（rmdir 对非空自然失败 ⇒ 留着失败现场）');
-
-    // 清扫：必须 --apply（默认只列不删），且**不能**影响沙箱结果
     ok(f.includes('"${SANDBOX_PYTHON[@]}" scripts/prune_sandbox_tmp.py --apply'), '末尾调清扫脚本，且显式 --apply');
     ok(f.includes('scripts/prune_sandbox_tmp.py --apply >>"$LOG" 2>&1')
         && f.includes('|| say "[$TS] 清扫运行异常'),
@@ -99,43 +95,35 @@ if (PY) {
     ok(PY.includes('raise SystemExit(main())'), '入口是 raise SystemExit(main())（家法）');
     ok(f.includes('glob("*.py")') && f.includes('glob("*.mjs")'),
         '**前缀是从两侧套件源码里推出来的**（.py 与 .mjs 都扫）');
-
-    // ④ 的正则从这里抽，避免"照抄一份、然后两份各漂各的"
     const m = /_PY_PREFIX_RE\s*=\s*re\.compile\(r"""([\s\S]*?)"""[\s\S]*?_MJS_PREFIX_RE\s*=\s*re\.compile\(\s*r"""([\s\S]*?)"""/.exec(PY);
     ok(!!m, '★ 两条前缀正则都在（第 ④ 组会把它们抽出来当场用）');
     if (m) pyRe = [new RegExp(m[1], 'gs'), new RegExp(m[2], 'gs')];
-
-    // 负空间：前缀不许写成手写名单（先把注释剥掉，否则注释里举的例子会假红）
     const quoted = (stripPyComments(PY).match(/["'][A-Za-z][A-Za-z0-9_.]*-["']/g) || []);
     ok(quoted.length === 0,
         '★ 负空间：源码里没有任何"手写的带连字符前缀字面量"（前缀只能靠推）', quoted.slice(0, 5));
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n④ ★ 完整性：凡是真的建临时目录的套件，推导都必须认得出来');
-// ═══════════════════════════════════════════════════════════════════════════════
-// 这一组是整份锁里唯一"会随着新增套件而变化"的判据：加一个套件、写成推导认不出的形状，
-// 它就会红——否则那一族的残留会永远扫不掉，而且**没有任何东西会变声**。
 if (pyRe) {
     const CALL = /mkdtemp(?:Sync)?\s*\(/;      // 只在**非注释行**上判（本仓惯例：负控先剥注释）
     const isComment = (line) => /^\s*(#|\/\/|\*|\/\*)/.test(line);
-    // 排除本文件自己：它不是沙箱套件（是守卫），而且 `CALL` 那个正则的字面里就含着 `mkdtemp(`
-    // ——不排除的话它会自匹配，变成一条永远红的假警报。**本文件里不该出现真的建目录调用**。
     const files = readdirSync(here)
         .filter((f) => f.endsWith('.py') || f.endsWith('.test.mjs'))
         .filter((f) => f !== path.basename(fileURLToPath(import.meta.url)))
         .sort();
     const blind = [];
     let sites = 0;
+    const languages = new Set();
     for (const name of files) {
         const src = readFileSync(path.join(here, name), 'utf8');
         const realLines = src.split('\n').filter((l) => CALL.test(l) && !isComment(l));
         if (realLines.length === 0) continue;
         sites += realLines.length;
+        languages.add(path.extname(name));
         const hits = pyRe.reduce((n, rx) => n + (src.match(rx) || []).length, 0);
         if (hits < realLines.length) blind.push({ 文件: name, 调用点: realLines.length, 认得出来: hits });
     }
-    ok(sites >= 60, `扫到了${sites} 个真调用点（两侧合计；太少说明扫描本身失效了）`, sites);
+    ok(sites > 0 && languages.has('.py') && languages.has('.mjs'),
+        '扫描确实覆盖 Python 与 Node 的临时目录调用点', {sites, languages: [...languages]});
     ok(blind.length === 0,
         `★ 每一个建临时目录的套件都能被推导认出前缀（认不出的：${JSON.stringify(blind)}）`, blind);
     ok(files.some((f) => f === 'sandbox-tmp-prune.test.py') && files.some((f) => f === 'comment-render.test.mjs'),

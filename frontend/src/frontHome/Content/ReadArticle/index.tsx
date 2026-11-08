@@ -23,7 +23,7 @@ import type {NoteStats} from "../../../interface/NoteStatsType";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
 import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
-import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
+import { applyLocalFavorite, useFavoriteState } from "../../../components/UserCenter/favorites.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import CommentSection from "../../../components/CommentSection";
 import {createRequestScope} from "../../../utils/requestScope";
@@ -107,9 +107,7 @@ const ArticleResource = ({id}: {id: string}) => {
     const [article, setArticle] = useState<NoteType|null>(null)
     const [notFound, setNotFound] = useState(false)
     const [favBusy, setFavBusy] = useState(false)
-    const loggedIn = !!getToken()
-    const { has: hasFaved } = useFavorites(loggedIn)
-    const faved = loggedIn && hasFaved(id)
+    const faved = useFavoriteState(Number(id))
 
     const who = noteAuthor(article, { name, avatar })
 
@@ -243,7 +241,7 @@ const ArticleResource = ({id}: {id: string}) => {
             if (!token.current() || getToken() !== accountToken) return
             if (ok(res)) {
                 // Favorites are shared with the personal center, not duplicated locally.
-                applyLocalFavorite(Number(id), !faved)
+                if (!await applyLocalFavorite(res.data.data)) return
                 message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
             } else {
                 message.error(errMsg(res))

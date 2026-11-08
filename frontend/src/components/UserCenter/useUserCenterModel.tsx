@@ -312,7 +312,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             const res = await removeFavorite(noteId)
             if (ok(res)) {
                 // 写入成功 ⇒ 交给共享状态（列表当场摘掉那一行 + 详情页那颗★同时变）
-                applyLocalFavorite(noteId, false)
+                if (!await applyLocalFavorite(res.data.data)) return
                 message.success('已取消收藏')
             } else {
                 message.error(errMsg(res))
