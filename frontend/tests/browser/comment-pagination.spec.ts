@@ -175,13 +175,16 @@ test('failed review keeps its draft and does not invalidate the confirmed page',
   const reason=modal.getByPlaceholder('例如：与文章主题无关的广告（也可以点上面的常见类型，再改成更贴这条的说法）')
   await reason.fill('具体理由')
   const before=state.reads.length
-  await modal.getByRole('button',{name:'确认驳回',exact:true}).click()
+  const confirm=modal.locator('button.cm-reject-ok')
+  await expect(confirm).toContainText('确认驳回')
+  await confirm.click()
   await expect(page.locator('.ant-message-error')).toContainText('写入失败')
   await expect(modal).toBeVisible()
   await expect(reason).toHaveValue('具体理由')
   expect(state.reads).toHaveLength(before)
   state.failWrites=false
-  await modal.getByRole('button',{name:'确认驳回',exact:true}).click()
+  await expect(confirm).toBeEnabled()
+  await confirm.click()
   await expect(modal).toBeHidden()
   await expect(bodyRows(page)).toContainText('未通过')
 })
