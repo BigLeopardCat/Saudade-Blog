@@ -44,6 +44,58 @@ python3 scripts/migration/pg/ci_schema_files.py --self-test
 
 该脚本打印公共 CI 使用的有序结构迁移；被排除的向量扩展、角色所有权与破坏性切换须按实际部署单独评估。执行 SQL 使用 `psql -v ON_ERROR_STOP=1`，先备份并核对当前版本。
 
+### 索引契约与维护
+
+CI 在空的独立 PostgreSQL 16 中执行有序迁移，再导出 `database-indexes.json`，记录
+提交号、数据库主版本、表及 PostgreSQL 规范化索引定义。该文件随同一提交的发布包分发。
+部署工具在解压候选包、覆盖静态文件或安装二进制之前，使用只读事务核对生产目录。
+缺表、缺索引、索引定义/唯一性/主键属性不符、无效索引或未验证约束均中止部署；
+允许可选服务或兼容回滚留下的额外有效索引。契约不替代完整 schema 迁移检查或容量压测。
+
+安装部署控制脚本时，同步安装 `scripts/deploy/database_indexes.py`。检查连接可使用
+`PGSERVICE` 等 libpq 配置和 `PSQL_BIN`；不要把数据库连接串放入命令行、R2 发布配置或发布包。
+非交互部署可配置 `~/.config/saudade/database-check.json`（目录 0700、文件 0600、归部署账号所有）：
+
+```json
+{"database":"saudade_blog","psql":["sudo","-n","-u","postgres","psql"]}
+```
+
+这适用于部署账号已有本机 PostgreSQL 运维权限的安装；其他部署使用只读连接的 libpq service。
+可用 `SAUDADE_DATABASE_CHECK_CONFIG` 指定绝对路径。显式环境/命令参数优先；配置只允许
+`database` 和 `psql` 两项，不读取博客运行配置或开发 `.env`。检查强制只读、5 秒语句超时和
+1 秒锁等待。旧发布包缺少契约时拒绝发布；回滚应使用针对该提交在隔离库生成契约的完整产物。
+
+核查与维护示例（`PSQL_BIN` 配置为相应的检查/运维连接）：
+
+```sh
+python3 scripts/deploy/database_indexes.py check --contract database-indexes.json --source-commit FULL_COMMIT_SHA
+# 已存在数据库补索引，不能放在事务里；失败后先查 invalid 索引，再决定清理/重建。
+psql -X -v ON_ERROR_STOP=1 -d saudade_blog -f scripts/migration/pg/maintenance/reconcile_indexes.sql
+# 迁移或批量导入后刷新 public 业务表统计，逐表限制锁等待及执行时间。
+psql -X -v ON_ERROR_STOP=1 -d saudade_blog -f scripts/migration/pg/maintenance/analyze.sql
+```
+
+`reconcile_indexes.sql` 是 `0010` 与 `0033` 的在线并发建索引版本；`IF NOT EXISTS` 不证明
+已有定义正确，执行后必须用 CI 契约复核。普通新建库仍执行编号迁移，不在应用请求中执行 DDL。
+
+### SQL 耗时观测
+
+无需重启数据库的基线方案：对博客登录角色在指定数据库中的慢语句做采样，250 ms 起、
+采样率 10%，关闭成功及错误路径的绑定参数记录：
+
+```sh
+psql -X -v ON_ERROR_STOP=1 -d saudade_blog \
+  -v app_role=saudade_app -v app_database=saudade_blog \
+  -f scripts/migration/pg/maintenance/slow_query_sampling.sql
+```
+
+此操作需要数据库管理员；先保存该角色/数据库的原有四项设置。只影响后续登录连接；
+连接池自然轮换后生效，不主动终止连接。采样仍记录 SQL 文本，业务内容须参数绑定；
+日志保持私有并由系统轮转，不能经公开 API 返回。回退时恢复保存的设置；原本未设置的项
+逐项 `ALTER ROLE ... IN DATABASE ... RESET`，不能 `RESET ALL` 清掉其他角色策略。
+采样用于发现慢查询，不代表完整请求延迟分布；需要完整语句聚合时，在维护窗口评估
+`pg_stat_statements` 的预加载与重启，不在发布时隐式重启 PostgreSQL。
+
 Agent 的 `CHECKPOINT_DSN` 指向独立数据库；不要把框架 schema 建到博客业务库。核心博客不依赖 checkpoint 数据库。
 
 ## 服务与发布

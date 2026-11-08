@@ -43,3 +43,6 @@ frontend/public/cubism5/
 # Machine-local assistant notes and permissions; shared entry points are tracked.
 /CLAUDE.local.md
 /.claude/settings.local.json
+
+# CI-generated database contract is carried inside release artifacts.
+/database-indexes.json

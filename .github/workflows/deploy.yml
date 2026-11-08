@@ -21,6 +21,7 @@ env:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   check-changes:
@@ -156,6 +157,20 @@ jobs:
           echo "✓ 结构就绪：$(docker exec ${{ job.services.postgres.id }} \
             psql -U postgres -d saudade_blog -X -q -t -A \
             -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'") 张表"
+      - name: Export and verify database index contract
+        env:
+          PSQL_BIN: docker exec -i ${{ job.services.postgres.id }} psql -U postgres
+        run: |
+          python3 scripts/deploy/database_indexes.py export --output database-indexes.json --source-commit "$GITHUB_SHA"
+          python3 scripts/deploy/database_indexes.py check --contract database-indexes.json --source-commit "$GITHUB_SHA"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: database-indexes-${{ github.sha }}
+          path: database-indexes.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: 迁移清单自检（磁盘上每个编号迁移都归过类）
         run: python3 scripts/migration/pg/ci_schema_files.py --self-test
 
@@ -182,7 +197,8 @@ jobs:
       - name: Operations regression tests
         run: |
           python3 -m pip install -r scripts/deploy/requirements.txt
-          python3 -m unittest discover -s tests/ops -v
+          DATABASE_INDEX_TEST_PG=1 PSQL_BIN="docker exec -i ${{ job.services.postgres.id }} psql -U postgres" \
+            python3 -m unittest discover -s tests/ops -v
 
       - name: Install frontend deps
         run: npm ci
@@ -424,12 +440,21 @@ jobs:
           test -f dist/live2d_model/agent_2.model3.json
         working-directory: ./frontend
 
+      - name: Download verified database index contract
+        if: needs.check-changes.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "database-indexes-$GITHUB_SHA" --dir "$RUNNER_TEMP/db-index-contract"
+
       - name: Package & Upload to R2
 
         if: needs.check-changes.outputs.deploy == 'true'
 
         env:
           DEPLOY_SHA: ${{ github.sha }}
+          DATABASE_INDEX_CONTRACT: ${{ runner.temp }}/db-index-contract/database-indexes.json
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
           R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
