@@ -32,13 +32,14 @@ async fn claim(db: &DatabaseConnection) -> Result<Option<Job>, DbErr> {
     .transpose()
 }
 async fn renew(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
-    if db.execute(sql("UPDATE image_transfer SET next_attempt_at=now()+interval '120 seconds' WHERE id=$1 AND lease::text=$2 AND status NOT IN ('complete','failed')",vec![job.id.clone().into(),job.lease.clone().into()])).await?.rows_affected()!=1 {return Err(storage::error());}
+    if db.execute(sql("UPDATE image_transfer SET next_attempt_at=now()+interval '120 seconds' WHERE id=$1 AND lease::text=$2 AND status<>'complete' AND finished_at IS NULL",vec![job.id.clone().into(),job.lease.clone().into()])).await?.rows_affected()!=1 {return Err(storage::error());}
     Ok(())
 }
 async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
     let spec = &job.spec;
     if job.status == "failed" {
         for loc in &spec.destinations {
+            renew(db, job).await?;
             tokio::time::timeout(Duration::from_secs(40), storage::remove(db, loc))
                 .await
                 .map_err(|_| storage::error())??;

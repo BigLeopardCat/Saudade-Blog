@@ -281,7 +281,7 @@ async fn register(
     let current=read(&txn,0,id).await?;
     if current.image_url!=storage::media_url(id) {
         let location=storage::resolve(&txn,&current).await?;
-        transfers::publish::bind(&txn,id,&current.image_url,&location).await?;
+        transfers::publish::bind(&txn,id,&current.image_url,&location,true).await?;
     }
     txn.commit().await?;
     Ok(id)

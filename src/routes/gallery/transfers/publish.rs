@@ -7,18 +7,19 @@ pub(crate) async fn bind(
     id: i32,
     source_url: &str,
     location: &storage::Location,
+    rewrite_references: bool,
 ) -> Result<String, DbErr> {
     let url = storage::media_url(id);
     db.execute(sql("INSERT INTO image_location(image_id,location,source_url) VALUES($1,$2,$3) ON CONFLICT(image_id) DO UPDATE SET location=EXCLUDED.location",
-        vec![id.into(),serde_json::to_value(location).map_err(|_|storage::error())?.into(),source_url.into()])).await?;
-    if source_url != url {
+        vec![id.into(),serde_json::to_value(location).map_err(|_|storage::error())?.into(),Some(source_url).filter(|_|rewrite_references && source_url!=url).into()])).await?;
+    if rewrite_references && source_url != url {
         rewrite(db, source_url, &url).await?;
-        db.execute(sql(
-            "UPDATE images SET image_url=$2 WHERE image_key=$1",
-            vec![id.into(), url.clone().into()],
-        ))
-        .await?;
     }
+    db.execute(sql(
+        "UPDATE images SET image_url=$2 WHERE image_key=$1",
+        vec![id.into(), url.clone().into()],
+    ))
+    .await?;
     Ok(url)
 }
 async fn rewrite(db: &DatabaseTransaction, from: &str, to: &str) -> Result<(), DbErr> {
@@ -60,6 +61,18 @@ pub(super) async fn publish(
         .await?
         .ok_or_else(storage::error)?;
     if row.try_get::<String>("", "status")? != "copying" {
+        return Err(storage::error());
+    }
+    let actor = tx
+        .query_one(sql(
+            "SELECT role,status FROM \"user\" WHERE id=$1 FOR SHARE",
+            vec![spec.owner.into()],
+        ))
+        .await?
+        .ok_or_else(storage::error)?;
+    if !crate::authz::can_access_console(&actor.try_get::<String>("", "role")?)
+        || actor.try_get::<i16>("", "status")? != crate::authz::STATUS_ACTIVE
+    {
         return Err(storage::error());
     }
     gallery::references::fence(&tx, true).await?;
@@ -114,7 +127,7 @@ pub(super) async fn publish(
         } else {
             before.image_url.clone()
         };
-        bind(&tx, image_id, &old, dest).await?;
+        bind(&tx, image_id, &old, dest, spec.intent.mode == Mode::Move).await?;
         tx.execute(sql("INSERT INTO image_metadata(image_id,display_name,description,folder_id) VALUES($1,$2,$3,NULLIF($4,0)) ON CONFLICT(image_id) DO UPDATE SET folder_id=EXCLUDED.folder_id",
             vec![image_id.into(),before.display_name.clone().into(),before.description.clone().into(),spec.intent.folder_id.into()])).await?;
         if spec.intent.mode == Mode::Copy && before.is_favorite {

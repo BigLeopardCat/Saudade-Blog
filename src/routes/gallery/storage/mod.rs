@@ -193,6 +193,17 @@ pub(crate) async fn put<C: ConnectionTrait>(
         .map_err(|_| error())?;
     Ok(())
 }
+pub(crate) async fn size<C: ConnectionTrait>(db: &C, loc: &Location) -> Result<u64, DbErr> {
+    let store = store(db, loc).await?;
+    match store
+        .head(&Path::parse(&loc.key).map_err(|_| error())?)
+        .await
+    {
+        Ok(meta) => Ok(meta.size),
+        Err(object_store::Error::NotFound { .. }) => Ok(0),
+        Err(_) => Err(error()),
+    }
+}
 pub(crate) async fn remove<C: ConnectionTrait>(db: &C, loc: &Location) -> Result<(), DbErr> {
     let store = store(db, loc).await?;
     match store

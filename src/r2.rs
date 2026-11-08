@@ -235,6 +235,7 @@ pub(crate) fn store(creds: &Creds, bucket: &str) -> Result<Arc<dyn ObjectStore>,
         .with_access_key_id(&creds.access_key)
         .with_secret_access_key(&creds.secret_key)
         .with_virtual_hosted_style_request(false)
+        .with_disable_bulk_delete(true)
         .with_client_options(options)
         .with_allow_http(creds.endpoint.starts_with("http://"))
         .with_retry(RetryConfig {
