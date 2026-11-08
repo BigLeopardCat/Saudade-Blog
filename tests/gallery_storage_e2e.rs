@@ -393,24 +393,48 @@ impl Fixture {
             .await
             .unwrap();
         assert_eq!(content.status(), StatusCode::OK);
+        assert_eq!(content.headers()["cache-control"], "private,no-store");
         assert_eq!(&content.bytes().await.unwrap()[..], IMAGE);
-        self.read_url(image["imageUrl"].as_str().unwrap()).await;
+        let (status, location) = self.read_url(image["imageUrl"].as_str().unwrap()).await;
+        if image["storage"] == "r2" {
+            assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+            assert_eq!(
+                location,
+                Some(format!(
+                    "{}/public/{}",
+                    self.provider.url,
+                    image["storagePath"].as_str().unwrap()
+                ))
+            );
+        } else {
+            assert_eq!(status, StatusCode::OK);
+            assert!(location.is_none());
+        }
         image
     }
-    async fn read_url(&self, url: &str) {
+    async fn read_url(&self, url: &str) -> (StatusCode, Option<String>) {
         let mut response = self
             .client
             .get(format!("{}{url}", self.app.url))
             .send()
             .await
             .unwrap();
-        if response.status() == StatusCode::TEMPORARY_REDIRECT {
-            let target = response.headers()["location"].to_str().unwrap();
+        let status = response.status();
+        let location = response
+            .headers()
+            .get("location")
+            .map(|value| value.to_str().unwrap().to_owned());
+        if status == StatusCode::TEMPORARY_REDIRECT {
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let target = location.as_deref().unwrap();
             assert!(target.starts_with(&format!("{}/public/gallery/", self.provider.url)));
             response = self.client.get(target).send().await.unwrap();
+        } else if url.starts_with("/api/public/media/") {
+            assert_eq!(response.headers()["cache-control"], "public,max-age=300");
         }
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(&response.bytes().await.unwrap()[..], IMAGE);
+        (status, location)
     }
     async fn references(&self, note: i32, url: &str) {
         let saved = row(
@@ -424,7 +448,7 @@ impl Fixture {
             saved.try_get::<String>("", "content").unwrap(),
             format!("![cover]({url})")
         );
-        self.read_url(url).await;
+        let _ = self.read_url(url).await;
     }
     async fn close(self) {
         transfers::stop();

@@ -278,7 +278,7 @@ async fn serve(
                 .map_err(|_| error())?;
             return Ok::<_, DbErr>(
                 (
-                    [("cache-control", "public,max-age=300")],
+                    [("cache-control", "no-store")],
                     axum::response::Redirect::temporary(url.as_str()),
                 )
                     .into_response(),
@@ -296,7 +296,15 @@ async fn serve(
                 [
                     ("content-type", ct),
                     ("x-content-type-options", "nosniff".into()),
-                    ("cache-control", "public,max-age=300".into()),
+                    (
+                        "cache-control",
+                        if redirect {
+                            "public,max-age=300"
+                        } else {
+                            "private,no-store"
+                        }
+                        .into(),
+                    ),
                 ],
                 bytes,
             )
