@@ -14,8 +14,8 @@ export function folderOptions(folders:GalleryFolder[]) {
   return [{value:0,title:'未分类'},...children(0)]
 }
 
-export default function ImageDetail({image,onClose,onDelete,onCopy,onMove}:{
-  image:GalleryImage;folders:GalleryFolder[];onClose:()=>void;onDelete:(image:GalleryImage)=>void;onCopy:(image:GalleryImage)=>void;onMove:(image:GalleryImage)=>void
+export default function ImageDetail({image,open=true,onClose,onDelete,onCopy,onMove}:{
+  image:GalleryImage;open?:boolean;folders:GalleryFolder[];onClose:()=>void;onDelete:(image:GalleryImage)=>void;onCopy:(image:GalleryImage)=>void;onMove:(image:GalleryImage)=>void
 }) {
   const [current,setCurrent]=useState(image)
   const [mode,setMode]=useState<'name'|null>(null)
@@ -29,7 +29,7 @@ export default function ImageDetail({image,onClose,onDelete,onCopy,onMove}:{
       void message.success('图片信息已保存')
     } catch(error) {void message.error(galleryError(error))}
   }
-  return <Modal open title={current.displayName||assetDisplayName(current.imageUrl)} onCancel={onClose}
+  return <Modal open={open} title={current.displayName||assetDisplayName(current.imageUrl)} onCancel={onClose}
     width={960} footer={<Space wrap>
       <Button icon={current.isFavorite?<StarFilled/>:<StarOutlined/>} loading={isLoading}
         onClick={()=>void save({isFavorite:!current.isFavorite})}>{current.isFavorite?'取消收藏':'收藏'}</Button>

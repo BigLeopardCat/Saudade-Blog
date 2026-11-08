@@ -198,7 +198,7 @@ export default function Albums() {
       </>}
     </div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
-    {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])} onCopy={image=>setCopyItems([image])} onMove={image=>setMoveItems([image])}/>}
+    {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} open={!deleteItems.length&&!moveItems.length&&!copyItems.length} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])} onCopy={image=>setCopyItems([image])} onMove={image=>setMoveItems([image])}/>}
     {!!deleteItems.length&&<ImageActionConfirmation action="delete" items={deleteItems} folders={folders}
       onClose={()=>setDeleteItems([])} onComplete={()=>{
         if(deleteItems.some(item=>item.imageKey===detail?.imageKey))setDetail(null)
