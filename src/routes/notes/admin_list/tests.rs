@@ -91,7 +91,7 @@ async fn postgres_pages_filter_the_full_selection_and_retain_draft_semantics() {
         .unwrap();
     let oldest: i32 = root.try_get("", "id").unwrap();
     tx.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-        "INSERT INTO note (title,content,category_id,status,is_public,draft_of) VALUES ('editor shadow','shadow',$1,'draft',false,$2)",
+        "INSERT INTO note (title,content,category_id,status,is_public,draft_of,created_at,updated_at) VALUES ('editor shadow','shadow',$1,'draft',false,$2,NOW(),NOW())",
         vec![category_id.into(),oldest.into()])).await.unwrap();
     let tag = tx
         .query_one(Statement::from_sql_and_values(
