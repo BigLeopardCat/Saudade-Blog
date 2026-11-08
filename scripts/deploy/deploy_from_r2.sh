@@ -26,6 +26,7 @@ import os, re, sys
 import boto3, tarfile
 sys.path.insert(0, "scripts/deploy")
 from deployment_config import read_deployment_config
+from database_indexes import extract_checked_archive
 sys.path.insert(0, "scripts")
 from check_disk_capacity import require_capacity
 from botocore.config import Config
@@ -61,7 +62,8 @@ with tarfile.open('/tmp/deploy.tar.gz') as tar:
     members = [m.name for m in tar.getmembers()
                if m.name.startswith('frontend/dist/') and not m.isdir()]
     require_capacity('.', extra_bytes=sum(m.size for m in tar.getmembers() if m.isfile()))
-    tar.extractall(filter='data')
+    # Gate the candidate before changing served files or installing a binary.
+    extract_checked_archive(tar, sha)
 os.remove('/tmp/deploy.tar.gz')
 with open('logs/.deploy_manifest.txt', 'w', encoding='utf-8') as fh:
     fh.write('\n'.join(members) + '\n')
