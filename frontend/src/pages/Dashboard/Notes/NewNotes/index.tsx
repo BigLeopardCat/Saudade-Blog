@@ -14,7 +14,6 @@ import React, {useEffect,  useState, useRef} from "react";
 import dayjs from "dayjs";
 import {useDispatch, useSelector} from "react-redux";
 import {useNavigate, useParams} from "react-router-dom";
-import {fetchNoteList} from "../../../../store/components/note.tsx";
 import {updateNote, delNote, autosaveDraft, getNoteForEdit, type AutosaveDraftPayload} from "../../../../apis/NoteMethods.tsx";
 import getToken from "../../../../apis/getToken.tsx";
 import {ok, errMsg} from "../../../../apis/ProfileMethods.tsx";
@@ -26,6 +25,7 @@ import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi
 import {useGalleryPager} from "../../../../utils/galleryPager.ts";
 import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
+import {adminNotesApi} from "../../../../apis/adminNotesApi";
 import {readListReturn} from '../AllNotes/listState';
 import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
 
@@ -37,7 +37,6 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
-    // 两个展示位分别保存显示方式与裁切参数。
     const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
     const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
@@ -51,13 +50,7 @@ const NewNotes = () => {
     const navigate = useNavigate()
     const { id } = useParams();
     const [form] = Form.useForm();
-
-    // Autosave updates a draft or revision; published content changes only on publication.
     const AUTOSAVE_DELAY = 2000;
-
-    // 实际在编辑的文章 id：编辑页 = 路由 id；新建页首次自动保存建出草稿行后就地采纳它的 id。
-    // 采纳后**不改 URL**——路由参数一变，下面 [id] 的 effect 会重跑 initNote，把编辑器内容整片
-    // 覆盖成服务端值，正在敲的字会当场消失。
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle');
     const [savedAt, setSavedAt] = useState('');
     const [isRevision, setIsRevision] = useState(false); // 正在编辑的是原文章的修改稿
@@ -80,12 +73,8 @@ const NewNotes = () => {
     const versionRef = useRef<string | undefined>(undefined);
     const conflictedRef = useRef(false);
     const editorRef = useRef<EditorHandle>(null);
-
-    // 空内容判定：编辑器空态是 <p></p> 这类空标签，去标签去空白后为空才算空
     const isBlank = (s: string) =>
         (s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() === '';
-
-    // 自动保存载荷：每次 render 重建（同 draftLatest 的手法），卸载/隐藏时也取得到最新值
     const buildPayload = (): AutosaveDraftPayload => {
         const cat = form.getFieldValue('noteCategory');
         const top = form.getFieldValue('isTop');
@@ -98,7 +87,6 @@ const NewNotes = () => {
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
             coverFit: coverImg ? (coverCrop.fit ?? 'cover') : null,
-            // 轮播那套与提交时同规则：动过才回传（三列同进同出），否则保持 NULL 走回退链
             carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
             carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
             carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
@@ -111,15 +99,12 @@ const NewNotes = () => {
     };
     const buildPayloadRef = useRef(buildPayload);
     buildPayloadRef.current = buildPayload;
-
-    // 页面离开后的尾随保存使用卸载时的快照；不能再读取已卸载 Form 的值。
     const latestPayload = (): AutosaveDraftPayload => ({
         ...(detachedPayloadRef.current ?? buildPayloadRef.current()),
         id: savedIdRef.current ? Number(savedIdRef.current) : null,
     });
 
     const onAutosaveFail = () => {
-        // 不碰 lastSavedRef（只有成功才认账）：失败后内容仍与基准不同，重试时自然重发
         if (mountedRef.current) setSaveState('error');
         if (mountedRef.current && retryRef.current < 3) { // 断网/接口抖动：5s 后重试，最多 3 次
             retryRef.current += 1;
@@ -138,12 +123,9 @@ const NewNotes = () => {
         if (!payload.id && blank) return;         // 新建且还没写进任何东西 → 不建空行
         const ser = JSON.stringify(payload);
         if (ser === lastSavedRef.current) return; // 没真变化 → 不发请求
-
-        // Serialize saves and retain the latest queued snapshot to avoid duplicate drafts.
         if (inFlightRef.current) { queuedRef.current = ser; return; }
 
         if (mountedRef.current) setSaveState('saving');
-        // keepalive 与常规保存共用单飞和确认逻辑。pagehide 不再绕过在途的首次创建。
         const requestPayload = {...payload, expectedVersion: versionRef.current};
         const request = beacon
             ? postDraftKeepalive(requestPayload, runtimeBaseURL, sessionTokenRef.current)
@@ -159,7 +141,6 @@ const NewNotes = () => {
             }
             if (ok(res) && Number.isInteger(d?.id) && d.id > 0 && typeof d.version === 'string') {
                 versionRef.current = d.version;
-                // 新建成功后 id 也属于已确认快照，否则恢复页面会把同一内容再写一遍。
                 lastSavedRef.current = JSON.stringify({...payload, id: d.id});
                 if (!savedIdRef.current) createdHereRef.current = true;
                 savedIdRef.current = String(d.id);
@@ -183,25 +164,18 @@ const NewNotes = () => {
             if (queuedRef.current) { queuedRef.current = null; flushAutosave(false); }
         });
     };
-
-    // 停止输入 2s 后落盘
     const scheduleAutosave = () => {
         if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current || conflictedRef.current
             || getToken() !== sessionTokenRef.current) return;
         if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
         autosaveTimer.current = setTimeout(() => flushAutosave(false), AUTOSAVE_DELAY);
     };
-
-    // 回填完毕后把当前内容记为「已保存」，否则刚打开页面就会把服务端内容原样回写一遍。
-    // 必须在 hydrated 翻转后的那一次 render 才跑——此时 buildPayload 才读到回填后的值。
     useEffect(() => {
         if (!hydrated || seededRef.current) return;
         seededRef.current = true;
         lastSavedRef.current = JSON.stringify(buildPayload());
         hydratedRef.current = true;
     }, [hydrated, noteTitle, noteContent, coverImg, aiContent, noteTag, coverCrop, coverCropCarousel, cropDirty]);
-
-    // 编辑内容一变就排一次自动保存（表单里的分类/置顶/描述另由 Form 的 onValuesChange 触发）
     useEffect(() => {
         scheduleAutosave();
     }, [noteTitle, noteContent, coverImg, aiContent, noteTag, coverCrop, coverCropCarousel, cropDirty]);
@@ -211,8 +185,6 @@ const NewNotes = () => {
         detachedPayloadRef.current = null;
         return () => { mountedRef.current = false; };
     }, []);
-
-    // Flush on navigation; discard an empty draft created in this editor session.
     useEffect(() => () => {
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         if (stopAutosaveRef.current || getToken() !== sessionTokenRef.current) return;
@@ -226,8 +198,6 @@ const NewNotes = () => {
         }
         flushAutosave(false);
     }, []);
-
-    // bfcache 恢复/切回前台后重试未确认的快照，超出 keepalive 字节预算的正文走普通请求。
     useEffect(() => {
         const onHide = () => { if (!stopAutosaveRef.current) flushAutosave(true); };
         const onResume = () => {
@@ -259,8 +229,6 @@ const NewNotes = () => {
             sm: { span: 14 },
         },
     };
-
-    // Each article route mounts a new editor; reset saving state before hydration.
     useEffect(() => {
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         savedIdRef.current = id;
@@ -283,7 +251,6 @@ const NewNotes = () => {
     async function initNote(){
         if(id){
             try {
-                // The authorized editor endpoint returns the latest unpublished revision.
                 const res = await getNoteForEdit(id)
                 const data = res.data.data
                 if (!ok(res) || typeof data?.version !== 'string') throw new Error('无效草稿版本')
@@ -315,7 +282,6 @@ const NewNotes = () => {
                 if(row.cover) {
                     setCoverImg(row.cover);
                     setCoverCrop(cropFromRow(row) ?? {...DEFAULT_CROP});
-                    // Unset carousel parameters inherit the article-card crop.
                     setCoverCropCarousel(carouselCropFromRow(row) ?? cropFromRow(row) ?? {...DEFAULT_CROP});
                     setCropDirty({carousel: false, card: false});
                     setFileList([{
@@ -334,7 +300,6 @@ const NewNotes = () => {
                 setHydrated(true) // 回填完毕，此后才允许自动保存
             }catch{
                 message.error("获取文章信息出错")
-                // 故意不置 hydrated：读失败时宁可关掉自动保存，也不能把空内容写进文章
             }
         }
     }
@@ -404,13 +369,11 @@ const NewNotes = () => {
 
     const handleChange: UploadProps['onChange'] = ({ fileList: newFileList }) => {
         setFileList(newFileList);
-        // Only trigger form change if it's empty, otherwise upload handles it
         if (newFileList.length === 0) {
              form.setFieldValue('cover', []);
              setCoverImg('');
              setCoverCrop({...DEFAULT_CROP});
              setCoverCropCarousel({...DEFAULT_CROP});
-             // Reset both crop targets when the cover is removed.
              setCropDirty({carousel: true, card: true});
         }
     };
@@ -463,7 +426,6 @@ const NewNotes = () => {
             noteTitle: formValues.noteTitle,
             noteContent: editorRef.current?.read() ?? noteContent,
             cover: coverImg,
-            // 有封面就总是回传数值参数（没调过即默认），保证线上渲染与裁剪预览一致
             coverFocusX: coverImg ? coverCrop.x : null,
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
@@ -483,8 +445,6 @@ const NewNotes = () => {
 
         const submittedPayload = {...buildPayload(), noteCategory: Number(formValues.noteCategory),
             noteTags: tagsString, isTop: Number(formValues.isTop)};
-
-        // 先冻结并等待现有首次创建，再决定目标 id。否则提交会与 id=null 的自动保存各建一行。
         publishingRef.current = true;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         if (inFlightRef.current) { try { await inFlightRef.current; } catch { /* 在途错误已记录 */ } }
@@ -510,7 +470,6 @@ const NewNotes = () => {
                     savedIdRef.current = targetId;
                 } else throw new Error(errMsg(r, "草稿创建失败"));
             } catch (error) {
-                // Reuse the acknowledged draft after a potentially lost create response.
                 publishingRef.current = false;
                 scheduleAutosave();
                 message.error("草稿尚未确认保存，请稍后重试：" + error);
@@ -524,7 +483,7 @@ const NewNotes = () => {
             if (targetId) {
                 const res = await updateNote(targetId, {...data, expectedVersion: versionRef.current})
                 if (ok(res)) {
-                    dispatch<any>(fetchNoteList(true))
+                    dispatch(adminNotesApi.util.invalidateTags(['AdminNotes', 'AdminNoteCount']));
                     const stayInEditor = data.status === 'draft';
                     message.success(stayInEditor ? "已保存到草稿箱" : "文章更新成功")
                     setOpen(false);
@@ -561,7 +520,6 @@ const NewNotes = () => {
             message.error("文章保存失败：" + error)
         }
     }
-    /** Restore the list query, then browser history, otherwise the list root. */
     const goBackToList = () => {
         const ticket = readListReturn();
         if (ticket !== null) {

@@ -93,7 +93,6 @@ const READS: &[&str] = &[
     "/api/protected/articles",
     "/api/protected/accounts",
     "/api/protected/account-actions/eligibility",
-    "/api/protected/notes/list",
     "/api/protected/talk-actions",
     "/api/protected/todos",
     "/api/protected/todos/item/:id",
@@ -124,7 +123,6 @@ const READS: &[&str] = &[
     "/api/protected/automation-actor",
 ];
 const POSTS: &[&str] = &[
-    "/api/protected/notes/search",
     "/api/protected/catalog/search",
     "/api/protected/favorites",
     "/api/protected/messages/read",

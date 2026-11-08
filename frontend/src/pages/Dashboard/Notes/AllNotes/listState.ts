@@ -1,55 +1,25 @@
-// 后台文章列表的状态：**URL query 是唯一真源**
-//
-// 两条会回退到第一页的路径，都要堵：
-//   ① 组件挂载时机 —— 编辑器 `navigate('/dashboard/notes')` 会把列表整棵重挂，
-//      分页组件的 useState 回到初始值（这条靠"从编辑器回列表时带上票据"解决，见
-//      `readListReturn`）；
-//   ② antd 分页的内部钳制 —— 任何一次整表重拉只要让 total 变小（例如改完配置后
-//      过滤掉了不匹配当前 tab 的行），当前页就可能 > 最大页而被弹回第 1 页。
-//      对策是**渲染期派生钳制**（`clampPage`），绝不把钳制结果写回 URL。
-//
-// 三条铁律（违反任何一条都会踩成无限请求/无限重渲染）：
-//   1. 取数 effect **只读** URL，绝不回写 URL（"发现越界就 setSearchParams"= 死循环）；
-//   2. effect 的 deps 只放**原始字符串**（tab/kw/title/cat/top/from/to），
-//      绝不能放 `searchParams` 对象 —— `useSearchParams` 每次 set 都产生新实例，
-//      对象做 deps 会无限重渲染 + 无限请求；
-//   3. 空值在 URL 里必须**删除**而不是 `set('')`（否则 URL 噪声、deps 误判为变化）。
-//
-// 这个文件单独存在（而不是写在组件里）是为了能在本机不 build 的前提下直接单测：
-// `frontend/tests/unit/notes-list-state.test.ts` 直接导入真实模块，以 Vitest 验证状态与请求契约。
-
 import { parseNoteTags } from '../../../../utils/noteTags';
-import type { NoteType } from '../../../../interface/NoteType';
+import type {AdminNoteQuery} from '../../../../apis/adminNotesApi';
 
 export type ListTab = '1' | '2' | '3' | '4';
 
 export interface ListQuery {
-    /** '1' 全部文章 / '2' 私密文章 / '3' 草稿箱 / '4' 公开文章 */
     tab: ListTab;
-    /** 页码，从 1 开始 */
     page: number;
     size: number;
-    /** 关键词（命中标题/正文/标签名），对应后端 `keyword` */
     kw: string;
-    /** 仅标题筛选，对应后端 `title` */
     title: string;
-    /** 分类名，对应后端 `categories` */
     cat: string;
-    /** 置顶筛选：'' | '1' | '0' */
     top: string;
-    /** 起止日期（YYYY-MM-DD），对应后端 start_date/end_date */
     from: string;
     to: string;
-    /** 标签筛选（**前端过滤**，不进 URL 请求体） */
     tags: number[];
 }
 
 export const LIST_PAGE_SIZE = 10;
 
-/** 每页条数的可选项（URL 里 `size=` 只认这几个值，别的一律回落到默认） */
 export const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
-/** 从编辑器返回列表时放的"返回票据"（sessionStorage），键名全局唯一 */
 export const LIST_RETURN_KEY = 'notes:listReturn';
 
 export const DEFAULT_LIST_QUERY: ListQuery = {
@@ -71,12 +41,6 @@ function asString(value: unknown): string {
     return typeof value === 'string' ? value : '';
 }
 
-/**
- * 读 URL。容忍缺参、脏值、以及旧深链：
- * - `keyword` 是 `kw` 的**旧别名**（`Dashboard/index.tsx` 的搜索框会直接跳 `?keyword=`），
- *   两者同时存在时以 `kw` 为准 —— 已存在的 bookmark 不能失效；
- * - `page` 非正整数 → 1；`tab` 非 1/2/3/4 → '1'；日期不合法 → 丢弃。
- */
 export function parseListQuery(search: string | URLSearchParams): ListQuery {
     const params =
         typeof search === 'string'
@@ -89,9 +53,6 @@ export function parseListQuery(search: string | URLSearchParams): ListQuery {
 
     const rawPage = Number(params.get('page'));
     const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
-
-    // 每页条数只认白名单：它要直接喂给 slice/clampPage，放任何数字进来都可能让列表
-    // 一页都装不满（size=0 已被 clampPage 兜住，但没有理由让它走到那里）
     const rawSize = Number(params.get('size'));
     const size = PAGE_SIZE_OPTIONS.includes(rawSize) ? rawSize : LIST_PAGE_SIZE;
 
@@ -114,10 +75,6 @@ export function parseListQuery(search: string | URLSearchParams): ListQuery {
     };
 }
 
-/**
- * 写 URL：**默认值不落 URL**（tab=1 / page=1 / 各项为空），返回不带 `?` 的 query 串，
- * 可直接喂 `setSearchParams(...)`。空值走 `delete` 而不是 `set('')` —— 见文件头铁律 3。
- */
 export function buildListQuery(query: ListQuery): string {
     const params = new URLSearchParams();
     if (query.tab !== '1') params.set('tab', query.tab);
@@ -133,101 +90,34 @@ export function buildListQuery(query: ListQuery): string {
     return params.toString();
 }
 
-/** 合并补丁（`setParam` 的纯逻辑部分）：`page` 由调用方显式给，不在这里猜"要不要回第一页" */
 export function mergeListQuery(base: ListQuery, patch: Partial<ListQuery>): ListQuery {
     return { ...base, ...patch };
 }
 
-/**
- * 渲染期钳制：当前页超出最大页时**只用于显示/切片**，不写回 URL。
- * `total=0` 时回 1（而不是 0）—— antd 分页的 current 不接受 0。
- */
-export function clampPage(page: number, total: number, pageSize: number = LIST_PAGE_SIZE): number {
-    const size = pageSize > 0 ? pageSize : LIST_PAGE_SIZE;
-    const maxPage = Math.max(1, Math.ceil(total / size));
-    const want = Number.isInteger(page) && page > 0 ? page : 1;
-    return Math.min(Math.max(1, want), maxPage);
+export function listRequest(query: ListQuery): AdminNoteQuery {
+    const states: Record<ListTab, AdminNoteQuery['status']> = {'1': undefined, '2': 'private', '3': 'draft', '4': 'public'};
+    return {
+        page: query.page,
+        page_size: query.size,
+        ...(query.kw ? { keyword: query.kw } : {}),
+        ...(query.title ? { title: query.title } : {}),
+        ...(query.cat ? { categories: query.cat } : {}),
+        ...(query.top !== '' ? { is_top: Number(query.top) } : {}),
+        ...(query.from ? { start_date: query.from } : {}),
+        ...(query.to ? { end_date: query.to } : {}),
+        ...(query.tags.length ? { tags: query.tags.join(',') } : {}),
+        ...(states[query.tab] ? {status: states[query.tab]!} : {}),
+    };
 }
 
-/** 本地分页切片（与 clampPage 用同一个钳制结果，保证"显示第几页"和"切出哪几行"永不脱节） */
-export function pageSlice<T>(rows: T[], page: number, pageSize: number = LIST_PAGE_SIZE): T[] {
-    const current = clampPage(page, rows.length, pageSize);
-    const start = (current - 1) * pageSize;
-    return rows.slice(start, start + pageSize);
-}
-
-export function normalizeNoteRows(raw: unknown): NoteType[] {
-    if (!Array.isArray(raw)) return [];
-    return raw.map((item: any) => ({
-        ...item,
-        key: item?.noteKey,
-        noteTags: parseNoteTags(item?.noteTags),
-    })) as NoteType[];
-}
-
-/** 就地打补丁：只换目标行，其余行保持**同一对象引用**（减少无谓重渲染） */
-export function patchRow<T extends { key?: unknown }>(
-    rows: T[],
-    key: unknown,
-    patch: Partial<T>,
-): T[] {
-    let changed = false;
-    const next = rows.map((row) => {
-        if (row.key !== key) return row;
-        changed = true;
-        return { ...row, ...patch };
-    });
-    return changed ? next : rows;
-}
-
-/** 标签筛选（选中任一即命中）；空选择 = 不过滤 */
-export function filterRowsByTags(rows: NoteType[], tagIds: number[]): NoteType[] {
-    if (tagIds.length === 0) return rows;
-    return rows.filter((row) => {
-        const own = Array.isArray(row.noteTags) ? row.noteTags : [];
-        return tagIds.some((id) => own.includes(id));
-    });
-}
-
-export type ListRequest =
-    | { mode: 'list' }
-    | { mode: 'search'; body: Record<string, unknown> };
-
-export function listRequest(query: ListQuery): ListRequest {
-    const hasFilter =
-        query.kw !== '' ||
-        query.title !== '' ||
-        query.cat !== '' ||
-        query.top !== '' ||
-        query.from !== '' ||
-        query.to !== '';
-
-    if (query.tab === '1' && !hasFilter) return { mode: 'list' };
-
-    const body: Record<string, unknown> = {};
-    if (query.kw) body.keyword = query.kw;
-    if (query.title) body.title = query.title;
-    if (query.cat) body.categories = query.cat;
-    if (query.top !== '') body.is_top = Number(query.top);
-    if (query.from) body.start_date = query.from;
-    if (query.to) body.end_date = query.to;
-    if (query.tab === '2') body.status = 'private';
-    if (query.tab === '3') body.status = 'draft';
-    if (query.tab === '4') body.only_public = true;
-
-    return { mode: 'search', body };
-}
-
-/** 写"返回票据"：每次 location.search 变化都存一份，供编辑器返回时还原 */
 export function saveListReturn(search: string): void {
     try {
         window.sessionStorage.setItem(LIST_RETURN_KEY, search);
     } catch {
-        // 隐私模式 / 存储配额满：返回时退回"回列表首页"，不影响主流程
+        // Storage failure must not prevent navigation.
     }
 }
 
-/** 读"返回票据"：只接受 query 串形状（'' | '?...' | 'a=b'），别的一律当没有 */
 export function readListReturn(): string | null {
     try {
         const raw = window.sessionStorage.getItem(LIST_RETURN_KEY);

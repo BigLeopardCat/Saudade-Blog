@@ -270,11 +270,11 @@ pub fn create_router(state: AppState) -> Router {
         // Notes Protected
         .route("/api/protected/articles", get(catalog::articles::list))
         .route("/api/protected/accounts", get(catalog::accounts::list))
-        .route("/api/protected/notes/list", get(notes::list_all_notes))
-        .route("/api/protected/notes/search", post(notes::search_all_notes))
+        .route("/api/protected/notes/count", get(notes::admin_list::count))
         
         .route("/api/protected/notes", 
-            post(notes::create_note)
+            get(notes::admin_list::list)
+            .post(notes::create_note)
             .delete(notes::delete_note)
         )
         .route("/api/protected/moderation/{resource}/{id}/target", get(moderation_actions::target))

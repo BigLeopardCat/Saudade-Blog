@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'comment-manage' | 'sweep-loading' | 'asset-image' | 'article-cover' | 'weather' | 'seo' | 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
+type Entry = 'admin-notes' | 'comment-manage' | 'sweep-loading' | 'asset-image' | 'article-cover' | 'weather' | 'seo' | 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 

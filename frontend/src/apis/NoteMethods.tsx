@@ -4,7 +4,6 @@ interface status{
     isTop: number
     status: string
     updateTime: string
-    /** 逗号分隔的标签 id 串（`joinNoteTags` 的产物）。后端"传了就写"，所以空串 = 清空标签 */
     noteTags?: string
 }
 
@@ -13,12 +12,10 @@ interface updateNote{
     noteTitle: any;
     noteContent: string;
     cover: string;
-    // 封面裁剪参数（焦点归一化坐标 + 额外缩放倍数），null = 不改动
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
     coverFit?: 'cover' | 'contain' | null;
-    // 置顶轮播那套（与 cover_* 分立，三列同进同出）
     carouselFocusX?: number | null;
     carouselFocusY?: number | null;
     carouselZoom?: number | null;
@@ -51,9 +48,6 @@ interface newNote{
     createTime: string;
     updateTime: string;
 }
-
-// 自动保存（草稿）：只带编辑器里有的字段，后端按 id 决定写到哪一行
-// （新建→建一行草稿；编辑草稿→原地更新；编辑已发布/私密→落到它的「修改稿」行）
 export interface AutosaveDraftPayload{
     expectedVersion?: string;
     id?: number | null;
@@ -163,8 +157,6 @@ function getAllNotes(){
         method: 'GET',
     })
 }
-
-// 自动保存草稿（编辑中的文章落到草稿箱）
 function autosaveDraft(data: AutosaveDraftPayload){
     return http({
         url: '/api/protected/draft/autosave',
@@ -172,9 +164,6 @@ function autosaveDraft(data: AutosaveDraftPayload){
         data: data
     })
 }
-
-// 编辑器专用读入口：公开的 /api/public/notes/:id 会挡掉草稿/私密文章（A4 过滤），
-// 草稿箱点进去会 404。返回 { note, draft }（draft = 待继续编辑的修改稿或 null）
 function getNoteForEdit(id: string){
     return http({
         url: `/api/protected/draft/editor/${id}`,
@@ -182,20 +171,4 @@ function getNoteForEdit(id: string){
     })
 }
 
-// NEW ADMIN METHODS
-function getAdminNotes(){
-    return http({
-        url: '/api/protected/notes/list',
-        method: 'GET'
-    })
-}
-
-function searchAdminNotes(data:any){
-    return http({
-        url: '/api/protected/notes/search',
-        method: 'POST',
-        data: data
-    })
-}
-
-export {getNotes,delNote,delAllNotes,updateNoteStatus,getNoteById,updateNote,createNote,searchNotes,getNotePage,getTopNotes,getAllNotes,getAdminNotes,searchAdminNotes,autosaveDraft,getNoteForEdit}
+export {getNotes,delNote,delAllNotes,updateNoteStatus,getNoteById,updateNote,createNote,searchNotes,getNotePage,getTopNotes,getAllNotes,autosaveDraft,getNoteForEdit}
