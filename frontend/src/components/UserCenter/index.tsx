@@ -14,6 +14,8 @@ import { DEFAULT_AVATAR_URL } from './identity'
 import './index.sass'
 import {fmtMinute, TALK_STATUS, snippet} from "./format";
 import {useUserCenterModel} from './useUserCenterModel';
+import {useAuthToken} from '../../utils/useAuthToken';
+import {getTokenClaims} from '../../utils/auth';
 import type {MessageItem, NotificationItem} from '../../interface/ProfileType';
 
 interface UserCenterProps {
@@ -21,7 +23,7 @@ interface UserCenterProps {
     onClose: () => void
 }
 
-const UserCenter = ({open,onClose}: UserCenterProps) => {
+const UserCenterContent = ({open,onClose}: UserCenterProps) => {
     const {
         isDark, navigate, loggedIn, admin,
         uid, counts, tab, profile,
@@ -177,7 +179,6 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                 dataSource={favorites || []}
                 locale={{
                     emptyText: favFailed && favorites === null
-                        // 读不到 ≠ 没有收藏（同一族谎，见 favorites.ts 的 failed）
                         ? <Empty description="收藏列表没读到（网络或登录状态问题），过一会儿再打开看看" />
                         : <Empty description="还没有收藏的文章（文章页点「收藏」）" />,
                 }}
@@ -246,13 +247,7 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
         </div>
     )
 
-    /** 点开的那条通知：**现从 `notices` 里按 id 取**，不存整条快照。
-     *
-     *  与信箱那边（`opened`，刻意存快照）**不同**，是为了点完底部那颗「标记为已读」
-     *  当场就是已读态——`markNoticesRead` 改的是列表那一份，取快照的话这里会停在
-     *  "未读"上、按钮永远亮着。副作用是 agent-turn-done 重拉列表时这里也跟着更新
-     *  （好事：那正是"窗口开着时 agent 刚发来一条"的场景）；万一这条在重拉后没了
-     *  （比如被删），`find` 落空 ⇒ 自动退回列表，不会渲染一封幽灵信。 */
+    /** Resolve the selected notification from refreshed data by ID. */
     const openedNotice =
         noticeOpenId == null ? null : (notices || []).find((n) => n.id === noticeOpenId) || null
 
@@ -369,9 +364,7 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
         </div>
     )
 
-    /** 提交重置申请。**回包只有一句中文**（新申请的行 id 不在响应里，也不该在前端
-     *  自己编一条 pending 状态出来）：成功后**重读一次额度**，界面上的"待处理"那一块
-     *  是从后端读来的事实，不是本地推断。 */
+    /** Submit the request, then reread authoritative quota state. */
     const doApplyQuota = async () => {
         if (applying) return
         setApplying(true)
@@ -384,7 +377,6 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
             message.success(res.data.data || '已提交对话额度重置申请')
             setApplyOpen(false)
             setApplyReason('')
-            // 写后重读：拿不到就保留旧读数（不本地拼一条"已提交"）
             const after = await getMyQuota()
             if (ok(after)) setQuota(after.data.data)
         } catch {
@@ -451,12 +443,7 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
         </div>
     )
 
-    /** 对方的头像：**没上传过就落到站点默认头像**。两个要点：
-     *  ① 用 `|| DEFAULT_AVATAR_URL` 而不是 `??`——Rust 侧 `peer_avatar` 的真形状是
-     *     `Option<String>`，没设过头像时给的是**空串**；`resolveApiAssetUrl('')` 也返回 ''
-     *     （falsy 直通），于是 antd 的 Avatar 拿到 `src=""` 会渲染一个坏 `<img>`：
-     *     既不显示默认头像、也不会退回文字兜底 —— 用户看到的就是"显示的不是默认头像"。
-     *  ② 传的是**根相对路径**（/default-avatar.png），线上/沙箱都由 HTTP 取到该文件。 */
+    /** Sender avatars never fall back to the current viewer. */
     const peerAvatar = (m: MessageItem) =>
         <Avatar className="ucMailAvatar" size={40}
                 src={resolveApiAssetUrl(m.peerAvatar || '') || DEFAULT_AVATAR_URL} />
@@ -607,8 +594,6 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                                     locale={{ emptyText: <Empty description="没有草稿" /> }}
                                     renderItem={(d) => (
                                         <List.Item
-                                            // 草稿行**不是**可点开的信（没有详情），单独一个类名
-                                            // 既是排版钩子也是测试钩子（别复用 .ucMailRow 的 pointer）
                                             className="ucDraftRow"
                                             actions={[
                                                 <Button type="link" key="edit" onClick={() => continueDraft(d)}>
@@ -657,19 +642,9 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                 width={860}
                 centered
                 title={title}
-                // 个人中心要盖住看板娘面板（agent 仓 widget.css 的 #waifu，同阶梯的
-                // `--z-agent`），但要在公告弹窗之下。antd 默认的 zIndexPopupBase 是 1000，
-                // 与看板娘同值、胜负由 DOM 顺序决定 —— 那是巧合不是设计。
                 zIndex={Z.panel}
-                // 弹窗挂在 body 下，拿不到 .frontDark 祖先 ⇒ 由 rootClassName 自带主题类。
-                // 两个深色类名分工不同、都要挂：`.ucDark` 是本组件自己的夜间补偿
-                // （见 index.sass 尾段），`.washiDark` 是那套手账令牌的名字
-                // （值在 src/index.css，只是深色档多认这一个类名）。
                 rootClassName={`ucRoot${isDark ? ' ucDark washiDark' : ''}`}
-                // 标题栏底下现在有一条分割线（见 index.sass），正文别再贴着它
                 styles={{ body: { paddingTop: 12 } }}
-                // 关窗后**保留**挂载状态：五个页签的数据缓存还在，再打开不必重拉
-                // （数据陈旧由"每次打开重拉 profile"+ 各页签的显式刷新兜底）
                 destroyOnClose={false}
                 forceRender
             >
@@ -723,12 +698,7 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                 confirmLoading={applying}
                 onOk={doApplyQuota}
                 onCancel={() => setApplyOpen(false)}
-                // 叠在个人中心**之上**一档。理由与下面那个头像裁剪弹窗完全一样：本 Modal
-                // 是个人中心那个 Modal 的**兄弟节点**，antd 的 `useZIndex` 只在同一 React
-                // 子树里继承父级 ⇒ 不给值就落回默认的 1000、被 1200 的父亲压住。
-                // 顺带也解决了遮罩打架（同值的话后一块只是把前一块再压暗一层，像"页面变黑"）。
                 zIndex={Z.panel + 1}
-                // 同上：`ucDark` 管本组件的夜间补偿、`washiDark` 管手账令牌
                 rootClassName={`ucRoot${isDark ? ' ucDark washiDark' : ''}`}
                 width={520}
             >
@@ -738,9 +708,6 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                         <Input.TextArea
                             value={applyReason}
                             rows={3}
-                            // 上限与后端 REASON_MAX 一致。后端超限是**拒绝**而不是截断
-                            // （截断会让主人核对的是这一句、库里存的是另一句），
-                            // 这里的 maxLength 只是不让主人撞上那句拒绝。
                             maxLength={500}
                             showCount
                             placeholder="例如：想接着问那篇架构文档的问题"
@@ -758,10 +725,6 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
                 file={cropFile}
                 uploading={uploading}
                 dark={isDark}
-                // 与上面申请额度那个弹窗同一档：都是从个人中心窗口里开出来的第二层。
-                // **本组件是那个 Modal 的兄弟节点，不是它的子节点** ⇒ antd 的 zIndex
-                // 继承链够不着它（`useZIndex` 只认同一 React 子树里的 `zIndexContext`），
-                // 不写这一行它就落回默认的 1000、被 1200 的父亲压在下面（看着在、点不动）。
                 zIndex={Z.panel + 1}
                 onPickFile={handlePickFile}
                 onConfirm={handleCropConfirm}
@@ -775,4 +738,9 @@ const UserCenter = ({open,onClose}: UserCenterProps) => {
 
 }
 
-export default UserCenter
+export default function UserCenter(props: UserCenterProps) {
+    const claims = getTokenClaims(useAuthToken())
+    // Account changes remount private views and forms without placing credentials in React keys.
+    const scope = claims ? `${claims.sub}:${claims.role}` : 'anonymous'
+    return <UserCenterContent key={scope} {...props}/>
+}
