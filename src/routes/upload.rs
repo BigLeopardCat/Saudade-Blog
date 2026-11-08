@@ -175,7 +175,7 @@ async fn try_r2_upload(
         return required.then(|| ApiResponse::error("R2 图库尚未完整配置，请检查存储设置"));
     }
     let Some(creds) = r2::load_creds() else {
-        return Some(ApiResponse::error("R2 图库缺少服务端凭据，请检查存储配置"));
+        return required.then(|| ApiResponse::error("R2 图库缺少服务端凭据，请检查存储配置"));
     };
     let key = format!("{}/{}", cfg.prefix, object);
     let url = r2::public_url(&cfg.public_base, &key);
