@@ -23,13 +23,13 @@ test('switching accounts discards personal views and late responses from the pre
     body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}))
   await page.goto(sandboxURL)
   await page.getByRole('tab',{name:/公告和通知/}).click()
-  await expect(page.getByText('仅账号4的通知',{exact:true})).toBeVisible()
+  await expect(page.locator('.ucNoticeRow').filter({hasText:'仅账号4的通知'})).toBeVisible()
   await page.evaluate(()=>{
     const claims=btoa(JSON.stringify({sub:5,role:'user',exp:Date.now()/1000+600}))
     localStorage.setItem('tokenKey',`fixture.${claims}.fixture`)
     window.dispatchEvent(new Event('auth-change'))
   })
-  await expect(page.getByText('仅账号4的通知',{exact:true})).toHaveCount(0)
+  await expect(page.locator('.ucNoticeRow').filter({hasText:'仅账号4的通知'})).toHaveCount(0)
   await expect(page.locator('.ucAvatarName')).toContainText('账号5')
   const returned=page.waitForResponse(response=>{
     if(!new URL(response.url()).pathname.endsWith('/profile'))return false
@@ -41,6 +41,6 @@ test('switching accounts discards personal views and late responses from the pre
   await returned
   await expect(page.locator('.ucAvatarName')).toContainText('账号5')
   await page.getByRole('tab',{name:/公告和通知/}).click()
-  await expect(page.getByText('仅账号5的通知',{exact:true})).toBeVisible()
-  await expect(page.getByText('仅账号4的通知',{exact:true})).toHaveCount(0)
+  await expect(page.locator('.ucNoticeRow').filter({hasText:'仅账号5的通知'})).toBeVisible()
+  await expect(page.locator('.ucNoticeRow').filter({hasText:'仅账号4的通知'})).toHaveCount(0)
 })
