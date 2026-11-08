@@ -40,6 +40,7 @@ pub enum View {
     #[default]
     Body,
     Outline,
+    Metadata,
 }
 
 #[derive(Default, Deserialize)]
@@ -160,6 +161,13 @@ fn validate_range(query: &ReadQuery) -> Result<(), (StatusCode, &'static str)> {
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(12000);
     let section = query.section.as_deref().unwrap_or("");
+    if query.view == View::Metadata && (offset != 0 || !section.is_empty() || query.limit.is_some())
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "metadata does not select body ranges",
+        ));
+    }
     if query.view == View::Outline && !section.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -220,6 +228,15 @@ fn frame(doc: Document, query: ReadQuery) -> Result<Value, (StatusCode, &'static
     }
     if doc.body.len() > 4 * 1024 * 1024 {
         return Err((StatusCode::PAYLOAD_TOO_LARGE, "document exceeds read limit"));
+    }
+    if query.view == View::Metadata {
+        return Ok(
+            json!({"view":"metadata","type":doc.kind,"id":doc.id,"title":doc.title,
+            "content":"","metadata":doc.metadata,"contentRevision":revision,
+            "sectionSchema":sections::SCHEMA,"readOffset":0,"nextOffset":null,
+            "totalChars":0,"readComplete":false,"sections":[],"sectionCount":0,
+            "sectionsOffset":0,"nextSectionsOffset":null,"source":null}),
+        );
     }
     let rows = sections::outline(&doc.body, &doc.title);
     let section_count = rows.iter().filter(|s| s.level > 0).count();
