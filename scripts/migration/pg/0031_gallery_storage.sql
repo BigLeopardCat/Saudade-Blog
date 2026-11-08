@@ -17,5 +17,5 @@ CREATE TABLE IF NOT EXISTS image_transfer (
     created_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz
 );
-CREATE INDEX IF NOT EXISTS image_transfer_due ON image_transfer(next_attempt_at) WHERE status NOT IN ('complete','failed');
+CREATE INDEX IF NOT EXISTS image_transfer_due ON image_transfer(next_attempt_at) WHERE finished_at IS NULL;
 COMMIT;

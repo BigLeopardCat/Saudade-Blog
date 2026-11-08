@@ -18,7 +18,7 @@ struct Job {
 }
 async fn claim(db: &DatabaseConnection) -> Result<Option<Job>, DbErr> {
     let lease = uuid::Uuid::new_v4().to_string();
-    let row=db.query_one(sql("WITH due AS (SELECT id FROM image_transfer WHERE status IN ('queued','copying','published') AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED) \
+    let row=db.query_one(sql("WITH due AS (SELECT id FROM image_transfer WHERE (status IN ('queued','copying','published') OR (status='failed' AND finished_at IS NULL)) AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 1 FOR UPDATE SKIP LOCKED) \
         UPDATE image_transfer j SET lease=$1::uuid,attempts=attempts+1,status=CASE WHEN status='queued' THEN 'copying' ELSE status END,next_attempt_at=now()+interval '120 seconds' FROM due WHERE j.id=due.id RETURNING j.id,j.status,j.spec,j.attempts",vec![lease.clone().into()])).await?;
     row.map(|row| {
         Ok(Job {
@@ -37,20 +37,30 @@ async fn renew(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
 }
 async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
     let spec = &job.spec;
-    let actor = db
-        .query_one(sql(
-            "SELECT role,status FROM \"user\" WHERE id=$1",
-            vec![spec.owner.into()],
-        ))
-        .await?
-        .ok_or_else(storage::error)?;
-    if !crate::authz::can_access_console(&actor.try_get::<String>("", "role")?)
-        || actor.try_get::<i16>("", "status")? != crate::authz::STATUS_ACTIVE
-    {
-        return Err(storage::error());
+    if job.status == "failed" {
+        for loc in &spec.destinations {
+            tokio::time::timeout(Duration::from_secs(40), storage::remove(db, loc))
+                .await
+                .map_err(|_| storage::error())??;
+        }
+        db.execute(sql("UPDATE image_transfer SET finished_at=now() WHERE id=$1 AND lease::text=$2 AND status='failed'",vec![job.id.clone().into(),job.lease.clone().into()])).await?;
+        return Ok(());
     }
 
     if job.status == "copying" {
+        let actor = db
+            .query_one(sql(
+                "SELECT role,status FROM \"user\" WHERE id=$1",
+                vec![spec.owner.into()],
+            ))
+            .await?
+            .ok_or_else(storage::error)?;
+        if !crate::authz::can_access_console(&actor.try_get::<String>("", "role")?)
+            || actor.try_get::<i16>("", "status")? != crate::authz::STATUS_ACTIVE
+        {
+            return Err(storage::error());
+        }
+
         for (source, dest) in spec.sources.iter().zip(&spec.destinations) {
             renew(db, job).await?;
             let body = tokio::time::timeout(Duration::from_secs(40), storage::read(db, source))
@@ -94,12 +104,6 @@ async fn deliver(db: &DatabaseConnection) -> Result<bool, DbErr> {
         if let Some(row) = current {
             let status: String = row.try_get("", "status")?;
             let failed = job.attempts >= 5 && status == "copying";
-            if failed {
-                for loc in &job.spec.destinations {
-                    let _ = tokio::time::timeout(Duration::from_secs(40), storage::remove(db, loc))
-                        .await;
-                }
-            }
             db.execute(sql("UPDATE image_transfer SET status=CASE WHEN $3 THEN 'failed' ELSE status END,last_error=$4,next_attempt_at=now()+interval '30 seconds' WHERE id=$1 AND lease::text=$2",
                 vec![job.id.clone().into(),job.lease.clone().into(),failed.into(),"存储操作暂未完成，源文件保持不变；后台将重试".into()])).await?;
             tracing::warn!(event="gallery_transfer_retry",job_id=%job.id,attempt=job.attempts,status,"gallery transfer remains recorded");
