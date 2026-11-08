@@ -510,10 +510,11 @@ fn metadata_is_not_a_body_read_and_rejects_body_ranges() {
     .unwrap();
     assert_eq!(page["metadata"]["description"], "existing summary");
     assert!(page["metadata"]["authorName"].is_null());
-    assert_eq!(page["content"], "");
+    assert!(page.get("content").is_none());
     assert_eq!(page["readComplete"], false);
     assert!(page["source"].is_null());
-    assert_eq!(page["sections"], json!([]));
+    assert!(page.get("sections").is_none());
+    assert!(page.get("totalChars").is_none());
     for input in [
         json!({"view":"metadata","offset":1}),
         json!({"view":"metadata","section":"title"}),
