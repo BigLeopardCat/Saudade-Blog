@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as S from '../../src/pages/Dashboard/Notes/AllNotes/listState';
+import {normalizeNoteRows} from '../../src/utils/noteRows';
 
 const defaults = S.DEFAULT_LIST_QUERY;
 
@@ -30,11 +31,11 @@ describe('article list URL state', () => {
     });
 
     it('normalizes actual page rows and rejects failed response shapes', () => {
-        const rows = S.normalizeNoteRows([{noteKey: 1, noteTags: '1,2'}, {noteKey: 2, noteTags: null}]);
+        const rows = normalizeNoteRows([{noteKey: 1, noteTags: '1,2'}, {noteKey: 2, noteTags: null}]);
         expect(rows.map(row => row.key)).toEqual([1, 2]);
         expect(rows.map(row => row.noteTags)).toEqual([[1, 2], []]);
-        expect(() => S.normalizeNoteRows(null)).toThrow();
-        expect(() => S.normalizeNoteRows({})).toThrow();
+        expect(() => normalizeNoteRows(null)).toThrow();
+        expect(() => normalizeNoteRows({})).toThrow();
     });
 
     it('sends paging and every filter to the backend instead of filtering a partial page', () => {

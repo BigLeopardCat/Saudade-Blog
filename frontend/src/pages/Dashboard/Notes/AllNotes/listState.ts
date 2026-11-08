@@ -1,5 +1,5 @@
 import { parseNoteTags } from '../../../../utils/noteTags';
-import type { NoteType } from '../../../../interface/NoteType';
+import type {AdminNoteQuery} from '../../../../apis/adminNotesApi';
 
 export type ListTab = '1' | '2' | '3' | '4';
 
@@ -94,17 +94,8 @@ export function mergeListQuery(base: ListQuery, patch: Partial<ListQuery>): List
     return { ...base, ...patch };
 }
 
-export function normalizeNoteRows(raw: unknown): NoteType[] {
-    if (!Array.isArray(raw)) throw new Error("Invalid article rows");
-    return raw.map((item: any) => ({
-        ...item,
-        key: item?.noteKey,
-        noteTags: parseNoteTags(item?.noteTags),
-    })) as NoteType[];
-}
-
-export function listRequest(query: ListQuery): Record<string, string | number> {
-    const states: Record<ListTab, string | undefined> = {'1': undefined, '2': 'private', '3': 'draft', '4': 'public'};
+export function listRequest(query: ListQuery): AdminNoteQuery {
+    const states: Record<ListTab, AdminNoteQuery['status']> = {'1': undefined, '2': 'private', '3': 'draft', '4': 'public'};
     return {
         page: query.page,
         page_size: query.size,

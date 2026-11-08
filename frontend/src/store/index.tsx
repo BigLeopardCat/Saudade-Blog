@@ -3,7 +3,6 @@ import userReducer from "./components/user.tsx";
 import talksReducer from "./components/talks.tsx";
 import categoriesReducer from "./components/categories.tsx";
 import tagReducer from "./components/tags.tsx";
-import NoteReducer from "./components/note.tsx";
 import { setupListeners } from '@reduxjs/toolkit/query';
 import { AGENT_TURN_DONE_EVENT } from '../components/UserCenter/agentTurn';
 import { catalogApi } from './catalogApi';
@@ -16,7 +15,6 @@ const store = configureStore({
         talks: talksReducer,
         categories: categoriesReducer,
         tags: tagReducer,
-        notes: NoteReducer,
         [catalogApi.reducerPath]: catalogApi.reducer,
         [galleryApi.reducerPath]: galleryApi.reducer,
         [privateApi.reducerPath]: privateApi.reducer,

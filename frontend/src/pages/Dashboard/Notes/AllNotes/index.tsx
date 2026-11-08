@@ -47,6 +47,7 @@ import {
     ListQuery,
     ListTab,
     buildListQuery,
+    listRequest,
     mergeListQuery,
     parseListQuery,
     saveListReturn,
@@ -169,7 +170,7 @@ const AllNotes = () => {
         saveListReturn(location.search);
     }, [location.search]);
 
-    const result = adminNotesApi.useAdminNotesQuery(query);
+    const result = adminNotesApi.useAdminNotesQuery(listRequest(query));
     const page = result.currentData;
     const rows = page?.items ?? [];
     const loading = result.isFetching;

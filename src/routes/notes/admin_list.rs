@@ -9,6 +9,7 @@ use crate::{
 };
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     Json,
 };
 use sea_orm::{
@@ -255,35 +256,31 @@ pub(super) async fn read<C: ConnectionTrait>(
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListQuery>,
-) -> Json<ApiResponse<Page>> {
-    let (limit, _) = match pagination::bounded_window(params.page, params.page_size) {
-        Ok(value) => value,
-        Err(error) => return Json(ApiResponse::error(error)),
-    };
-    if let Err(error) = selection(&params) {
-        return Json(ApiResponse::error(error));
-    }
-    match read(&state.db, &params, limit).await {
-        Ok(page) => Json(ApiResponse::success(page)),
-        Err(error) => {
+) -> Result<Json<ApiResponse<Page>>, StatusCode> {
+    let (limit, _) = pagination::bounded_window(params.page, params.page_size)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    selection(&params).map_err(|_| StatusCode::BAD_REQUEST)?;
+    read(&state.db, &params, limit)
+        .await
+        .map(|page| Json(ApiResponse::success(page)))
+        .map_err(|error| {
             tracing::error!("Administrator article page failed: {error}");
-            Json(ApiResponse::error("文章列表读取失败，请稍后重试"))
-        }
-    }
+            StatusCode::SERVICE_UNAVAILABLE
+        })
 }
 
-pub async fn count(State(state): State<Arc<AppState>>) -> Json<ApiResponse<u64>> {
-    match note::Entity::find()
+pub async fn count(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ApiResponse<u64>>, StatusCode> {
+    note::Entity::find()
         .filter(note::Column::DraftOf.is_null())
         .count(&state.db)
         .await
-    {
-        Ok(total) => Json(ApiResponse::success(total)),
-        Err(error) => {
+        .map(|total| Json(ApiResponse::success(total)))
+        .map_err(|error| {
             tracing::error!("Administrator article count failed: {error}");
-            Json(ApiResponse::error("文章数量读取失败，请稍后重试"))
-        }
-    }
+            StatusCode::SERVICE_UNAVAILABLE
+        })
 }
 
 #[cfg(test)]
