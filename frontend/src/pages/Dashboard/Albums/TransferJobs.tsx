@@ -19,6 +19,9 @@ export default function TransferJobs(){
     }
     if(changed)dispatch(galleryApi.util.invalidateTags(['Images','Folders','GenerationJobs']))
   },[data,dispatch])
-  if(!active.length)return null
-  return <Alert showIcon type="info" message={`正在处理 ${active.length} 项图片传输`} description="可以离开页面；文件保存完成后更新图库，再清理移动操作的源文件。"/>
+  const failures=data?.filter(job=>job.status==='failed').slice(0,2)??[]
+  if(!active.length&&!failures.length)return null
+  return <>{!!active.length&&<Alert showIcon type="info" message={`正在处理 ${active.length} 项图片传输`} description="可以离开页面；文件保存完成后更新图库，再清理移动操作的源文件。"/>}
+    {failures.map(job=><Alert key={job.id} closable showIcon type="error" message="图片传输未完成" description={job.error||'源文件保留，请检查存储设置后重新准备。'}/>)}
+  </>
 }

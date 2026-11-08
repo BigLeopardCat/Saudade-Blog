@@ -22,19 +22,17 @@ pub const DEFAULT_QUOTA_GB: f64 = 9.5;
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-// 配置
-
 /// 图库 R2 的配置面（不含凭据）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct R2Config {
-    /// 面板上的总开关。**只有它是 `true` 且三样都填全了才会走 R2**（见 [`Self::active`]）
+    /// Enables R2 for new uploads when the remaining settings are valid.
     pub enabled: bool,
     pub bucket: String,
     /// 对象键命名空间，归一后两端无斜杠；空值视为未配置。
     pub prefix: String,
     /// 公开访问域名（归一后无尾 `/`，必须 `http(s)://`）。
     pub public_base: String,
-    /// 配额（字节）。上限定在这里、判据在 [`quota_exceeded`]，**都不要在别处再写一份**。
+    /// Upload quota in bytes.
     pub quota_bytes: u64,
 }
 
@@ -73,7 +71,7 @@ pub fn parse_config(get: impl Fn(&str) -> Option<String>) -> R2Config {
     }
 }
 
-/// 配额那一格（GB，可以是小数）。**非正数 / 非数字 / NaN / 无穷 ⇒ 回落默认值**。
+/// Invalid or non-positive quota values use the configured default.
 fn parse_quota_bytes(raw: &str, fallback: u64) -> u64 {
     match raw.trim().parse::<f64>() {
         Ok(v) if v.is_finite() && v > 0.0 => (v * GIB) as u64,
@@ -136,7 +134,7 @@ pub fn sanitize_file_name(raw: &str) -> String {
     }
 }
 
-/// 对象键 ⇒ 存进库的公开地址（**原样、不编码**，编码发生在请求那一层）。
+/// Provider URL for a storage key; gallery identities use the media route.
 pub fn public_url(base: &str, key: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), key)
 }
@@ -237,9 +235,8 @@ pub(crate) fn store(creds: &Creds, bucket: &str) -> Result<Arc<dyn ObjectStore>,
         .with_access_key_id(&creds.access_key)
         .with_secret_access_key(&creds.secret_key)
         .with_virtual_hosted_style_request(false)
-        .with_allow_http(creds.endpoint.starts_with("http://"))
-        .with_allow_http(creds.endpoint.starts_with("http://"))
         .with_client_options(options)
+        .with_allow_http(creds.endpoint.starts_with("http://"))
         .with_retry(RetryConfig {
             max_retries: 2,
             retry_timeout: Duration::from_secs(40),

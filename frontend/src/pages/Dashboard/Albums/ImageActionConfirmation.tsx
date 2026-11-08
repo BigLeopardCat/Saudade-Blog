@@ -55,7 +55,7 @@ export default function ImageActionConfirmation({action,items,folders,r2Availabl
         <TreeSelect aria-label="目标文件夹" placeholder="选择目标文件夹" value={target} disabled={busy||prepared}
           treeData={folderOptions(folders)} treeDefaultExpandAll onChange={setTarget} style={{width:'100%'}}/>
       </>}
-      {prepared&&<section aria-label={label+'预览'}>
+      {prepared&&<section role="region" aria-label={label+'预览'}>
         <p>目标：<strong>{transfer?.destinationName||preview?.destination?.name||'未分类'}</strong> · 共 {items.length} 张</p>
         <ul>{items.slice(0,10).map(item=><li key={item.imageKey}>{item.displayName||`图片 #${item.imageKey}`}</li>)}</ul>
         {items.length>10&&<p>另有 {items.length-10} 张图片。</p>}

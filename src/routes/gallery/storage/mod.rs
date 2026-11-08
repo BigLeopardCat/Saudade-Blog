@@ -177,7 +177,9 @@ pub(crate) async fn put<C: ConnectionTrait>(
         format!("image/{ext}")
     };
     let mut attributes = object_store::Attributes::new();
-    attributes.insert(object_store::Attribute::ContentType, content_type.into());
+    if loc.storage == Kind::R2 {
+        attributes.insert(object_store::Attribute::ContentType, content_type.into());
+    }
     store
         .put_opts(
             &Path::parse(&loc.key).map_err(|_| error())?,
