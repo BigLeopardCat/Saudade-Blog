@@ -181,8 +181,8 @@ const AllNotes = () => {
     const selectionScope = buildListQuery({...query, page: 1, size: 10});
     useEffect(() => { setSelectedRowKeys([]); }, [selectionScope]);
 
-    const reloadList = (_background: boolean) => result.refetch().then(() => {});
-    useLiveRefresh(() => reloadList(true), { skip: () => isModalOpen || !!editRow, agentEvent: isConfirmationAttempt });
+    const reloadList = () => result.refetch().then(() => {});
+    useLiveRefresh(() => reloadList(), { skip: () => isModalOpen || !!editRow, agentEvent: isConfirmationAttempt });
     const refreshNotes = () => dispatch(adminNotesApi.util.invalidateTags(['AdminNotes', 'AdminNoteCount']));
 
     const tableBoxRef = useRef<HTMLDivElement>(null);
@@ -447,7 +447,7 @@ const AllNotes = () => {
             </Fab>}
 
             {result.isError && <Alert type="error" showIcon message="文章列表加载失败，请重试"
-                action={<Button onClick={() => void reloadList(false).catch(() => {})}>重试</Button>}/>}
+                action={<Button onClick={() => void reloadList().catch(() => {})}>重试</Button>}/>}
             <div className="searchRes">
                 <Tabs
                     activeKey={query.tab}
@@ -463,7 +463,7 @@ const AllNotes = () => {
                                 </Button>
                                 <Button size="small" icon={<ReloadOutlined />}
                                         style={{marginRight: 12}}
-                                        onClick={() => reloadList(false)}>
+                                        onClick={() => reloadList()}>
                                     刷新
                                 </Button>
                             </>
