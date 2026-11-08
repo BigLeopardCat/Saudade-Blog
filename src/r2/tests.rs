@@ -254,3 +254,71 @@ fn creds_prefer_image_token_with_per_key_fallback() {
     ]))
     .is_none());
 }
+
+#[tokio::test]
+async fn sdk_handles_signed_upload_paginated_listing_and_missing_object_deletion() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        response::IntoResponse,
+        routing::any,
+        Router,
+    };
+    use std::sync::{Arc, Mutex};
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let calls = seen.clone();
+    let app=Router::new().fallback(any(move |request:Request<Body>|{
+        let calls=calls.clone();async move{
+            let method=request.method().to_string();let uri=request.uri().to_string();
+            assert!(request.headers()["authorization"].to_str().unwrap().starts_with("AWS4-HMAC-SHA256 "));
+            calls.lock().unwrap().push((method.clone(),uri.clone()));
+            if method=="PUT" {
+                assert_eq!(request.headers()["content-type"],"image/png");
+                assert_eq!(axum::body::to_bytes(request.into_body(),1024).await.unwrap(),&b"fixture"[..]);
+                (StatusCode::OK,[("etag","\"fixture\"")],"").into_response()
+            }else if method=="DELETE" {StatusCode::NOT_FOUND.into_response()}
+            else {
+                let (size,tail)=if uri.contains("continuation-token") {(7,"<IsTruncated>false</IsTruncated>")}else{(4,"<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>")};
+                (StatusCode::OK,format!("<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Contents><Key>gallery/a.png</Key><LastModified>2026-01-01T00:00:00Z</LastModified><ETag>fixture</ETag><Size>{size}</Size></Contents>{tail}</ListBucketResult>")).into_response()
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let creds = Creds {
+        endpoint: format!("http://{address}"),
+        access_key: uuid::Uuid::new_v4().to_string(),
+        secret_key: uuid::Uuid::new_v4().to_string(),
+        image_token: true,
+    };
+    put_object(
+        &creds,
+        "images",
+        "gallery/a.png",
+        b"fixture".to_vec(),
+        "image/png",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        list_used_bytes(&creds, "images", "gallery").await.unwrap(),
+        11
+    );
+    delete_object(&creds, "images", "gallery/missing.png")
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 4);
+    server.abort();
+}
+
+fn kv<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |k: &str| {
+        pairs
+            .iter()
+            .find(|(name, _)| *name == k)
+            .map(|(_, v)| v.to_string())
+    }
+}

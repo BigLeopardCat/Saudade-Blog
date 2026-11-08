@@ -52,6 +52,10 @@ pub(crate) async fn guard_texts(db: &DatabaseTransaction, values: &[&str]) -> Re
             "图片已从图库移除，请选择有效图片后保存".into(),
         ));
     }
+    if db.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "SELECT image_id FROM image_location WHERE source_url IS NOT NULL AND source_url<>('/api/public/media/'||image_id::text) AND position(source_url in $1::text)>0 LIMIT 1",[values.join("\n").into()])).await?.is_some() {
+        return Err(DbErr::Custom("图片地址已更新，请刷新编辑器或重新选择图库图片后保存".into()));
+    }
     Ok(())
 }
 
