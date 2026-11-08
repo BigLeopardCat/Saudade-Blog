@@ -72,6 +72,21 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
             spec: spec.clone(),
             attempts: 1,
         };
+        db.execute(sql(
+            "UPDATE \"user\" SET status=1 WHERE id=$1",
+            vec![uid.into()],
+        ))
+        .await
+        .unwrap();
+        assert!(work(&db, &worker).await.is_err());
+        assert!(root.join(&file).exists());
+        assert!(!root.join(&spec.destinations[0].key).exists());
+        db.execute(sql(
+            "UPDATE \"user\" SET status=0 WHERE id=$1",
+            vec![uid.into()],
+        ))
+        .await
+        .unwrap();
         work(&db, &worker).await.unwrap();
         // Re-enter the post-publication stage as after a process crash; source cleanup is idempotent.
         db.execute(sql(
