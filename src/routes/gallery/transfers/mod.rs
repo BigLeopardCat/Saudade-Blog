@@ -101,8 +101,15 @@ async fn plan<C: ConnectionTrait>(db: &C, uid: i32, intent: Intent) -> Result<Sp
             .filter(|v| crate::utils::image_ext_allowed(v))
             .ok_or_else(storage::error)?;
         let name = format!("transfer-{}-{}.{}", uuid::Uuid::new_v4().simple(), id, ext);
-        let destination =
+        let mut destination =
             storage::destination(db, intent.storage.unwrap_or(source.storage), &name).await?;
+        if intent.mode == Mode::Move
+            && source.storage == destination.storage
+            && source.scope == destination.scope
+            && source.bucket == destination.bucket
+        {
+            destination = source.clone();
+        }
         images.push(image);
         sources.push(source);
         destinations.push(destination);
@@ -170,6 +177,9 @@ async fn enqueue(
         return Err(storage::error());
     }
     for (i, loc) in spec.destinations.iter_mut().enumerate() {
+        if *loc == spec.sources[i] {
+            continue;
+        }
         let ext = loc.key.rsplit('.').next().ok_or_else(storage::error)?;
         let name = format!("transfer-{}-{i}.{ext}", input.version);
         loc.key = match loc.storage {

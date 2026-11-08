@@ -86,7 +86,9 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
         .unwrap();
         assert!(work(db, &worker).await.is_err());
         assert!(root.join(&file).exists());
-        assert!(!root.join(&spec.destinations[0].key).exists());
+        if mode == Mode::Copy {
+            assert!(!root.join(&spec.destinations[0].key).exists());
+        }
         db.execute(sql(
             "UPDATE \"user\" SET status=0 WHERE id=$1",
             vec![uid.into()],
@@ -115,7 +117,8 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
             copies.push(result_id);
         } else {
             assert_eq!(result_id, id);
-            assert!(!root.join(&file).exists());
+            assert!(root.join(&file).exists());
+            assert_eq!(spec.sources, spec.destinations);
         }
         assert_eq!(
             &storage::read(db, &spec.destinations[0]).await.unwrap()[..],

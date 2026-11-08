@@ -65,7 +65,8 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
         let r2_guard = if spec
             .destinations
             .iter()
-            .any(|loc| loc.storage == storage::Kind::R2)
+            .zip(&spec.sources)
+            .any(|(dest, source)| dest != source && dest.storage == storage::Kind::R2)
         {
             Some(crate::routes::upload::R2_UPLOAD_LOCK.lock().await)
         } else {
@@ -83,6 +84,9 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
         };
         let mut incoming = 0u64;
         for (source, dest) in spec.sources.iter().zip(&spec.destinations) {
+            if source == dest {
+                continue;
+            }
             renew(db, job).await?;
             let body = tokio::time::timeout(Duration::from_secs(40), storage::read(db, source))
                 .await
@@ -106,7 +110,15 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
     }
     // Publication has committed before source cleanup. A crash now resumes cleanup, never copies again.
     if spec.intent.mode == Mode::Move {
-        for (before, source) in spec.images.iter().zip(&spec.sources) {
+        for ((before, source), dest) in spec
+            .images
+            .iter()
+            .zip(&spec.sources)
+            .zip(&spec.destinations)
+        {
+            if source == dest {
+                continue;
+            }
             renew(db, job).await?;
             let shared=db.query_one(sql("SELECT 1 FROM images i LEFT JOIN image_location l ON l.image_id=i.image_key WHERE NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key) AND (l.location=$1 OR (i.image_url=$2 AND i.image_key<>$3)) LIMIT 1",
                 vec![serde_json::to_value(source).map_err(|_|storage::error())?.into(),before.image_url.clone().into(),before.image_key.into()])).await?;
