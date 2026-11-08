@@ -49,6 +49,19 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
     }
 
     if job.status == "copying" {
+        let actor = db
+            .query_one(sql(
+                "SELECT role,status FROM \"user\" WHERE id=$1",
+                vec![spec.owner.into()],
+            ))
+            .await?
+            .ok_or_else(storage::error)?;
+        if !crate::authz::can_access_console(&actor.try_get::<String>("", "role")?)
+            || actor.try_get::<i16>("", "status")? != crate::authz::STATUS_ACTIVE
+        {
+            return Err(storage::error());
+        }
+
         let r2_guard = if spec
             .destinations
             .iter()
@@ -69,19 +82,6 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
             None
         };
         let mut incoming = 0u64;
-        let actor = db
-            .query_one(sql(
-                "SELECT role,status FROM \"user\" WHERE id=$1",
-                vec![spec.owner.into()],
-            ))
-            .await?
-            .ok_or_else(storage::error)?;
-        if !crate::authz::can_access_console(&actor.try_get::<String>("", "role")?)
-            || actor.try_get::<i16>("", "status")? != crate::authz::STATUS_ACTIVE
-        {
-            return Err(storage::error());
-        }
-
         for (source, dest) in spec.sources.iter().zip(&spec.destinations) {
             renew(db, job).await?;
             let body = tokio::time::timeout(Duration::from_secs(40), storage::read(db, source))
@@ -89,7 +89,7 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
                 .map_err(|_| storage::error())??;
             if dest.storage == storage::Kind::R2 {
                 incoming = incoming
-                    .checked_add(body.len() as u64)
+                    .checked_add((body.len() as u64).saturating_sub(storage::size(db, dest).await?))
                     .ok_or_else(storage::error)?;
                 if quota
                     .is_some_and(|(used, limit)| crate::r2::quota_exceeded(used, incoming, limit))

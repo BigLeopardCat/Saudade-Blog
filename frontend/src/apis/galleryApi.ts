@@ -88,4 +88,4 @@ export const galleryApi=createApi({
 })
 
 export const galleryError=(error:unknown)=>
-  error && typeof error==='object' && 'error' in error ? String(error.error) : '图库操作失败，请刷新后重试'
+  error instanceof Error ? error.message : error && typeof error==='object' && 'error' in error ? String(error.error) : '图库操作失败，请刷新后重试'

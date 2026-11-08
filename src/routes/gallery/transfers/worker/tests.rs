@@ -60,6 +60,18 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
             attempts: 1,
         };
         work(&db, &worker).await.unwrap();
+        // Re-enter the post-publication stage as after a process crash; source cleanup is idempotent.
+        db.execute(sql(
+            "UPDATE image_transfer SET status='published',finished_at=NULL WHERE id=$1",
+            vec![jobid.clone().into()],
+        ))
+        .await
+        .unwrap();
+        let resumed = Job {
+            status: "published".into(),
+            ..worker
+        };
+        work(&db, &resumed).await.unwrap();
         let result = enqueue(&db, uid, replay).await.unwrap();
         assert_eq!(result["status"], "complete");
         let result_id = result["result"]["imageIds"][0].as_i64().unwrap() as i32;
