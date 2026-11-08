@@ -8,16 +8,18 @@
 - `GET /api/protect/comments?page=1&page_size=5`：文章评论。
 
 传入 `page_size` 时，响应为 `{code,data,total}`；`total` 是相同筛选条件的总数，
-`data` 仅包含本页，不能将本页条数当成总数。排序为创建时间、编号双重倒序。
+`data` 仅包含本页，不能将本页条数当成总数。默认按创建时间、编号双重倒序。
 每页大小限制为 1–200；页码与偏移溢出返回错误。
 
 共同筛选：`id`、`status=pending|passed|rejected`、`q`。
 `q` 匹配正文与发表账号；留言还匹配自由填写的留名。匹配不区分大小写，通配符字符按字面处理。
 留言另支持 `ai_result=pass|flag|reject|none`、`cat`、`order=asc|desc`；
-评论另支持 `note_id`。不支持的审核状态或 AI 判定返回参数错误，不悄悄放宽筛选。
+评论另支持 `note_id`、`deleted=true|false` 和 `sort=asc|desc`，关键词也匹配文章标题；
+评论查询词最多 120 个字符。省略 `deleted` 包含软删除记录，传 `false` 仅查未删除记录。不支持的审核状态或 AI 判定返回参数错误，不悄悄放宽筛选。
 最终审核状态与 AI 判定是独立维度。评论后台保留软删除记录，并通过 `isDeleted` 标识。
 
-不传 `page_size` 时保留原有响应形状，不含 `total`：留言返回全量，评论保留 500 条上限。
+评论始终分页并返回 `total`；省略参数时默认第 1 页、每页 20 条。
+留言省略 `page_size` 时仍返回不含 `total` 的全量响应。
 Agent 读取始终显式分页；统计问题使用下方汇总接口。
 
 ## 审核汇总

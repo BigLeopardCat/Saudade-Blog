@@ -1,66 +1,30 @@
 import './index.sass'
-import { useEffect, useMemo, useState } from "react";
-import { Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { COMMENT_REJECT_PRESETS, REJECT_REASON_MAX, aiTip } from "../ContentManage/shared";
 
-interface CommentAdminItem {
-    id: number;
-    noteId: number;
-    /** 文章标题；空 = 文章已删（那时显示「（文章已删除）」，别显示成空白格） */
-    noteTitle: string;
-    content: string;
-    userId: number;
-    username: string;
-    nickname: string;
-    /** 被回复者（「回复 @某人」的 admin 侧镜像）；null = 顶层评论 */
-    replyToNickname?: string | null;
-    createTime: string;
-    /** 人工裁决：0 待审 / 1 通过 / 2 未通过（与留言板同口径） */
-    approved: number;
-    /** AI 判定留痕：pass / flag / reject；null = 未审（AI 关、人工全审、服务不可用、存量行）。
-     *  ⚠️ 键名是 `aiResult`（后端这个 DTO 补了 rename）——**别照留言板的 `ai_result` 抄**，
-     *  读错时拿到的是 undefined：不报错，只是那一列永远显示「未审」。 */
-    aiResult?: string | null;
-    /** 驳回理由；null = 未驳回或没人写过 */
-    rejectReason?: string | null;
-    /** AI 审核说明（与裁决无关，pass/flag/reject 都可能有）——管理员照它写具体理由 */
-    aiReason?: string | null;
-    /** 是否已软删（作者自删 / 管理员删除）。公开侧看不到这些行 */
-    isDeleted: number;
-}
+import {skipToken} from '@reduxjs/toolkit/query'
+import {isConfirmationAttempt} from '../../../components/UserCenter/agentTurn'
+import {useAuthToken} from '../../../utils/useAuthToken'
+import {getUidFromToken} from '../../../utils/auth'
+import {COMMENT_PAGE_SIZE as PAGE_SIZE, useAdminCommentsQuery, useAuditCommentMutation,
+    useDeleteCommentMutation, type CommentAdminItem, type CommentFilter} from '../../../apis/commentAdminApi'
 
-/** 每页条数：分页从 Table 搬到外面那一条，这里的数就是唯一真源（两处都得用它） */
-const PAGE_SIZE = 10;
-
-/** 状态筛。**前四档都排除已删除的行**——它们是"当前讨论区的样子"；
- *  已删除单独一档，因为那是另一个问题（"谁删了什么"，溯源用）。
- *  若把已删行混进「已通过」，管理员会看到一行标着「已通过」却永远不出现的评论。 */
-const STATUS_FILTERS: { key: string; label: string; match: (r: CommentAdminItem) => boolean }[] = [
-    { key: 'all', label: '全部', match: () => true },
-    { key: 'pending', label: '待审', match: (r) => r.isDeleted === 0 && r.approved === 0 },
-    { key: 'pass', label: '已通过', match: (r) => r.isDeleted === 0 && r.approved === 1 },
-    { key: 'reject', label: '未通过', match: (r) => r.isDeleted === 0 && r.approved === 2 },
-    { key: 'deleted', label: '已删除', match: (r) => r.isDeleted !== 0 },
+const STATUS_FILTERS: {key: CommentFilter; label: string}[] = [
+    {key: 'all', label: '全部'},
+    {key: 'pending', label: '待审'},
+    {key: 'passed', label: '已通过'},
+    {key: 'rejected', label: '未通过'},
+    {key: 'deleted', label: '已删除'},
 ];
 
-/** 两个审核开关的键名（**后端 `web_info::COMMENT_REVIEW_KEYS` 的镜像**，改一处要改两处）。
- *  抽成常量是因为它们要同时出现在三处：读取、写入、类型注解——手抄三遍必然漂一处。 */
 const AI_KEY = 'commentAiReviewEnabled';
 const MANUAL_KEY = 'commentManualReviewEnabled';
 
-/** 五个风控键（**后端 `risk::RISK_KEYS` 的镜像**，顺序也一致——那个常量在 Rust 侧
- *  还是解析时的下标，顺序错了整组阈值会串位）。
- *
- *  `def` 是**界面上的占位提示**（"没配过时后端用的那个值"），**不参与提交**：
- *  提交什么只由输入框里有没有字决定。这两件事必须分开——把 `def` 当作值写进库里，
- *  等于把"没配过"永久固化成"配过了"，以后改默认值这个站也不会跟着变。
- *
- *  前缀是 `content` 而不是 `comment`：**这一套管的是评论与留言两种内容**
- *  （后端把两边合起来数），界面上的标题也照此写。 */
 const RISK_FIELDS: { key: string; label: string; def: number; unit: string }[] = [
     { key: 'contentRateWindowSecs', label: '统计窗口', def: 600, unit: '秒' },
     { key: 'contentMinIntervalSecs', label: '最小间隔', def: 5, unit: '秒' },
@@ -69,91 +33,70 @@ const RISK_FIELDS: { key: string; label: string; def: number; unit: string }[] =
     { key: 'contentMuteHours', label: '禁言时长', def: 24, unit: '小时' },
 ];
 
-/** 删除确认。与留言板同款（Popconfirm + 动作词按钮），抽成本文件里的一个小函数只是为了
- *  让 `columns` 里那段读起来还是一行——**它不是共享件，别往外提**。 */
-const DeleteButton = ({ onConfirm }: { onConfirm: () => void }) => (
+const DeleteButton = ({ onConfirm, disabled }: { onConfirm: () => void; disabled: boolean }) => (
     <Popconfirm
+        disabled={disabled}
         title="删除这条评论？"
         description="删除后公开侧不再显示（它下面的回复也一起消失），且不可恢复"
         onConfirm={onConfirm}
         okText="删除"
         cancelText="取消"
     >
-        <Button danger size="small" type="text">删除</Button>
+        <Button danger size="small" type="text" disabled={disabled}>删除</Button>
     </Popconfirm>
 );
 
+const actionError = (error: unknown, fallback: string): string =>
+    error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : fallback;
+
 const CommentManage = () => {
-    const [items, setItems] = useState<CommentAdminItem[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [statusFilter, setStatusFilter] = useState('all');
-    const [query, setQuery] = useState(''); // 关键词：评论内容 / 昵称 / 用户名 / 文章标题
-    const [asc, setAsc] = useState(false); // 时序正序/倒序
-    // 审核开关（web_info key-value，缺省关）
+    const token = useAuthToken();
+    const ownerUserId = getUidFromToken(token);
+    const [filters, setFilters] = useState<{status: CommentFilter; query: string; sort: 'asc' | 'desc'; page: number}>(
+        {status: 'all', query: '', sort: 'desc', page: 1});
+    const {status: statusFilter, query, sort, page} = filters;
+    const {currentData, isFetching: loading, isError, error, refetch} = useAdminCommentsQuery(
+        ownerUserId ? {ownerUserId, ...filters} : skipToken);
+    const [auditComment, {isLoading: auditing}] = useAuditCommentMutation();
+    const [deleteComment, {isLoading: deleting}] = useDeleteCommentMutation();
+    const pageRows = currentData?.items ?? [];
+    const total = currentData?.total;
+    const updateFilters = (next: Partial<typeof filters>) => setFilters(prev => ({...prev, ...next, page: 1}));
+    useEffect(() => {
+        if (total === undefined) return;
+        const last = Math.max(1, Math.ceil(total / PAGE_SIZE));
+        if (page > last) setFilters(prev => prev.page === page ? {...prev, page: last} : prev);
+    }, [total, page]);
     const [aiOn, setAiOn] = useState(false);
     const [manualOn, setManualOn] = useState(false);
     const [riskOpen, setRiskOpen] = useState(false);
     const [riskForm, setRiskForm] = useState<Record<string, string>>({});
     const [riskBusy, setRiskBusy] = useState(false);
-    // 驳回弹窗：驳回要能说明理由，理由会随 Reply 通知发给被回复者（见下）
     const [rejecting, setRejecting] = useState<CommentAdminItem | null>(null);
     const [rejectReason, setRejectReason] = useState('');
     const [rejectBusy, setRejectBusy] = useState(false);
 
-    /** 拉列表。`silent` = 这一次是**背景重拉**（看板娘收尾事件 / 20 秒轮询）：
-     *  · 不闪表格的 loading——后台每 20 秒抖一下 spinner，会让人以为页面自己在动；
-     *  · 失败也不弹提示——服务端真挂了的话，主人手动点一次「刷新」会弹；每 20 秒叠一条
-     *    「获取评论失败」只会把页面刷满，反而盖住别的东西。
-     *  手动那一次（挂载 / 工具栏「刷新」）照旧给反馈。 */
-    const load = async (opts?: { silent?: boolean }) => {
-        if (!opts?.silent) setLoading(true);
-        try {
-            const res = await http.get('/api/protect/comments');
-            setItems(Array.isArray(res?.data?.data) ? res.data.data : []);
-        } catch {
-            if (!opts?.silent) message.error('获取评论失败');
-        } finally {
-            if (!opts?.silent) setLoading(false);
-        }
-    };
-
-    const loadSwitches = async () => {
+    const loadSwitches = useCallback(async () => {
         try {
             const res = await http.get('/api/protected/websetting');
             const d = res?.data?.data;
             if (d) {
                 setAiOn(!!d[AI_KEY]);
                 setManualOn(!!d[MANUAL_KEY]);
-                // 风控阈值：**缺键给空串，不给 0**（`== null` 同时盖住 null 与 undefined）。
-                // 写成 0 的话，设置卡一打开就把五档全显示成"已关闭"——而库里其实什么都没有。
                 setRiskForm(Object.fromEntries(
                     RISK_FIELDS.map((f) => [f.key, d[f.key] == null ? '' : String(d[f.key])]),
                 ));
             }
-        } catch { /* 读取失败保持默认关，入库判定与服务端一致 */ }
-    };
-
-    /** 这一页的「重拉一次」= 列表 + 两个审核开关（开关也可能在别处被改，是同一份服务端状态）。
-     *  挂载、工具栏「刷新」、事件与轮询全走这一条，少一条路径就少一处会漂的判据。 */
-    const refresh = async (opts?: { silent?: boolean }) => {
-        await Promise.all([load(opts), loadSwitches()]);
-    };
-
-    useEffect(() => {
-        refresh();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        } catch { /* Preserve the last loaded settings on refresh failure. */ }
     }, []);
 
-    /* 跨端同步：看板娘从服务端驳回/通过一条评论时，本页只在挂载时拉过一次 ⇒ 界面一直停在
-     * 旧状态，而这是最典型的用法（主人让 agent 替她审，自己开着这一页看结果）。
-     *
-     * `skip`（弹窗开着就不拉）不是保险起见：驳回弹窗里那个文本框是**主人正在写**的东西，
-     * 一次背景重拉虽然不会清掉它的值，但会让列表在弹窗底下换掉/行序变化，而弹窗认的是
-     * 那一行对象 ⇒ 主人按下「确认驳回」时，落到的可能是已经变样的列表。本地有未提交的
-     * 输入时一律不覆盖（同 `BoardManage` / 后台首页待办卡的纪律）。 */
-    useLiveRefresh(() => refresh({ silent: true }), { skip: () => !!rejecting });
+    const refresh = async () => {
+        await Promise.all([ownerUserId ? refetch() : Promise.resolve(), loadSwitches()]);
+    };
+    useEffect(() => { void loadSwitches(); }, [loadSwitches]);
+    useLiveRefresh(refresh, {skip: () => !!rejecting || !ownerUserId, agentEvent: isConfirmationAttempt});
 
-    /** 开关切换：乐观更新，POST websetting 落 web_info；失败回滚 */
     const toggleReview = async (key: typeof AI_KEY | typeof MANUAL_KEY, on: boolean) => {
         const setter = key === AI_KEY ? setAiOn : setManualOn;
         const prev = key === AI_KEY ? aiOn : manualOn;
@@ -170,12 +113,6 @@ const CommentManage = () => {
         }
     };
 
-    /** 保存风控阈值。三条规则与后端 `risk::parse_config` 一一对应（两边口径必须一致，
-     *  否则界面显示的和实际生效的会是两回事）：
-     *   · **留空 ⇒ 不提交这个键**（库里保持现状；没有过就是出厂默认）；
-     *   · **`0` 或负数 ⇒ 显式关掉那一档**，照提交；
-     *   · **填了但不是整数 ⇒ 当场报错、整份不提交**——静默丢弃是最坏的一种：
-     *     主人以为存上了，而闸门用的还是旧值（"改了设置卡、后端读不到"那个坑）。 */
     const saveRisk = async () => {
         const payload: Record<string, number> = {};
         for (const f of RISK_FIELDS) {
@@ -195,8 +132,6 @@ const CommentManage = () => {
         try {
             const res = await http.post('/api/protected/websetting', payload);
             if (res.data?.code === 200) {
-                // 阈值是**每个请求现读**的（`risk::load_config`），所以不必重启也不必有
-                // "生效"按钮——回读一次把库里的真值显示出来（而不是把输入框当真相源）
                 message.success('风控阈值已保存，下一条评论 / 留言起生效');
                 await loadSwitches();
             } else {
@@ -209,47 +144,18 @@ const CommentManage = () => {
         }
     };
 
-    /** 人工复核：通过(1)=放行展示 / 驳回(0)=写未通过(2)隐藏。**两态都能改判**：
-     *  已通过的可以再驳回（收回展示），已驳回的可以「恢复通过」。
-     *  reason 只在驳回时有意义（通过时后端会清空理由，传了也不生效）。
-     *  已删除的行到不了这里——操作列不渲染（后端也拒，见文件头注 ②）。 */
     const audit = async (id: number, approved: number, reason?: string) => {
+        if (!ownerUserId) return false;
         try {
-            const res = await http.put(`/api/protect/comments/${id}/audit`, { approved, reason });
-            if (res.data?.code === 200) {
-                message.success(approved === 1 ? '已通过，讨论区展示' : '已驳回（未通过），不展示');
-                // ⚠️ **入参值 ≠ 落库值**：入参 0 = 「驳回」这个动作，后端落库的是 2
-                // （见 comments.rs::audit_comment 的 `Set(if reject { 2 } else { 1 })`）。
-                // 原样写回本地会让那一行停在「待审」：列上还是金色「待审」、操作列还挂着
-                // 「通过/驳回」两颗按钮、正文下面一个字理由都不显示——后端明明改完了。
-                const stored = approved === 1 ? 1 : 2;
-                // 只改本地那一行（接口已确认成功）：不要每条都 load() 重拉全量列表，
-                // 连审 10 条就是 11 次全量请求、每次带全部 content
-                // 驳回后的理由以后端为准：本次没填而后端回落到已有理由/AI 说明时，
-                // 本地不能显示成空（回落链与后端一致：人工 > reject_reason > aiReason）
-                setItems((prev) => prev.map((it) => (it.id === id
-                    ? {
-                        ...it,
-                        approved: stored,
-                        rejectReason: stored === 2
-                            ? (reason?.trim() || it.rejectReason || it.aiReason || null)
-                            : null, // 通过（含改判）后端会清空理由（aiReason 留痕不动）
-                    }
-                    : it)));
-            } else {
-                message.error(res.data?.message || '操作失败');
-            }
-            return res.data?.code === 200;
-        } catch {
-            message.error('操作失败');
+            await auditComment({ownerUserId, id, approved, reason}).unwrap();
+            message.success(approved === 1 ? '已通过，讨论区展示' : '已驳回（未通过），不展示');
+            return true;
+        } catch (error) {
+            message.error(actionError(error, '操作失败，请重试'));
             return false;
         }
     };
 
-    /** 弹窗确认驳回：理由**必填**（空理由时「确认驳回」禁用）——留空的结果是被回复者
-     *  收到一句"不符合评论规范"，既不知道问题在哪、也不知道去哪儿看。后端不加硬闸
-     *  （那是脚本/老前端的兼容面，它按"人工 > reject_reason > aiReason"回落），
-     *  必填在这一层保证。 */
     const confirmReject = async () => {
         if (!rejecting) return;
         setRejectBusy(true);
@@ -261,50 +167,12 @@ const CommentManage = () => {
         }
     };
 
-    /* 查询筛选：状态 + 关键词 + 时序（倒序默认，新近在前），与留言管理同构 */
-    const filtered = useMemo(() => {
-        const q = query.trim();
-        const f = STATUS_FILTERS.find((s) => s.key === statusFilter);
-        return [...items]
-            .filter((it) => (f ? f.match(it) : true))
-            .filter((it) =>
-                q === '' ||
-                it.content.includes(q) ||
-                it.nickname.includes(q) ||
-                it.username.includes(q) ||
-                it.noteTitle.includes(q)
-            )
-            .sort((a, b) => {
-                const cmp = a.createTime < b.createTime ? -1 : a.createTime > b.createTime ? 1 : 0;
-                return asc ? cmp || a.id - b.id : -cmp || b.id - a.id;
-            });
-    }, [items, statusFilter, query, asc]);
-
-    /** 分页（与 BoardManage 同款：整页是固定壳，只有表格区滚）。
-     *  当前页只切**已经筛过**的那份，所以筛选条件一变就得回到第一页——否则会停在
-     *  「第 3 页」而结果只有 1 页，表格空着、看着像"筛出来什么都没有"。 */
-    const [page, setPage] = useState(1);
-    useEffect(() => { setPage(1); }, [statusFilter, query, asc]);
-    const pageRows = useMemo(
-        () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-        [filtered, page],
-    );
-
-    /** 删除评论（软删）。**本地把行标成已删除，而不是把它从列表里抹掉**：后端是软删，
-     *  下一次 `load()` 这一行还会回来（标着「已删除」）——本地抹掉的话，刷新一下它又
-     *  "复活"，看着像删除失败了。与留言板那个硬删的本地剔除**故意不同**。 */
     const del = async (id: number) => {
+        if (!ownerUserId) return;
         try {
-            const res = await http.delete(`/api/protect/comments/${id}`);
-            if (res.data?.code === 200) {
-                message.success('已删除（公开侧不再显示）');
-                setItems((prev) => prev.map((it) => (it.id === id ? { ...it, isDeleted: 1 } : it)));
-            } else {
-                message.error(res.data?.message || '删除失败');
-            }
-        } catch {
-            message.error('删除失败');
-        }
+            await deleteComment({ownerUserId, id}).unwrap();
+            message.success('已删除（公开侧不再显示）');
+        } catch (error) { message.error(actionError(error, '删除失败，请重试')); }
     };
 
     const screens = Grid.useBreakpoint();
@@ -318,8 +186,6 @@ const CommentManage = () => {
         },
         {
             title: '评论内容', dataIndex: 'content', ellipsis: true,
-            // 已删除标记 + 驳回理由都跟在正文下面：审批人翻列表时要一眼看到
-            // "这条为什么被驳回"与"这条已经没了"，而不是逐行去悬停猜
             render: (c: string, r) => (
                 <>
                     <div className="cm-content">{c}</div>
@@ -349,7 +215,7 @@ const CommentManage = () => {
         },
         { title: '时间', dataIndex: 'createTime', width: 160, responsive: ['lg'] },
         {
-            /* 两段审核之第一段：AI 初审判定留痕 */
+
             title: 'AI 审核', key: 'ai', width: 110, responsive: ['lg'],
             render: (_, r) =>
                 r.aiResult === 'flag' ? (
@@ -371,7 +237,7 @@ const CommentManage = () => {
                 ),
         },
         {
-            /* 两段审核之第二段：人工裁决结果（0 待审 / 1 通过 / 2 未通过=驳回） */
+
             title: '人工审核', key: 'manual', width: isNarrow ? 80 : 110,
             render: (_, r) =>
                 r.approved === 1 ? (
@@ -391,8 +257,6 @@ const CommentManage = () => {
         {
             title: '操作', key: 'op', width: isNarrow ? 120 : 180,
             render: (_, r) => {
-                // 已删除的行**没有任何操作**：公开侧按 is_deleted = 0 过滤，改判看不见效果
-                // （见文件头注 ②）。这里给一句说明而不是留一片空白——空白会被读成"这行坏了"。
                 if (r.isDeleted !== 0) {
                     return (
                         <Tooltip title="已删除的评论不再公开显示，也无法再审核（保留这一行供溯源）">
@@ -400,12 +264,10 @@ const CommentManage = () => {
                         </Tooltip>
                     );
                 }
-                // 驳回按钮**一处实现、两态共用**：待审(0) 与已通过(1) 都挂它。
-                // 已通过的也能驳回 = 把已经放行的评论收回来（后端 handler 从来没有状态守卫，
-                // 卡点只在这排按钮的渲染条件上）；理由弹窗、本地写回两处都不用分叉。
                 const rejectBtn = (
                     <Button
                         danger
+                        disabled={auditing || deleting}
                         type="link"
                         size="small"
                         onClick={() => {
@@ -420,15 +282,15 @@ const CommentManage = () => {
                 <>
                     {r.approved === 0 && (
                         <>
-                            <Button type="link" size="small" onClick={() => audit(r.id, 1)}>通过</Button>
+                            <Button type="link" size="small" disabled={auditing || deleting} onClick={() => audit(r.id, 1)}>通过</Button>
                             {rejectBtn}
                         </>
                     )}
                     {r.approved === 1 && rejectBtn}
                     {r.approved === 2 && (
-                        <Button type="link" size="small" onClick={() => audit(r.id, 1)}>恢复通过</Button>
+                        <Button type="link" size="small" disabled={auditing || deleting} onClick={() => audit(r.id, 1)}>恢复通过</Button>
                     )}
-                    <DeleteButton onConfirm={() => del(r.id)} />
+                    <DeleteButton disabled={auditing || deleting} onConfirm={() => del(r.id)} />
                 </>
                 );
             },
@@ -442,26 +304,30 @@ const CommentManage = () => {
                     {STATUS_FILTERS.map((s) => (
                         <button
                             key={s.key}
+                            role="tab"
+                            aria-selected={statusFilter === s.key}
                             type="button"
                             className={statusFilter === s.key ? 'sel' : ''}
-                            onClick={() => setStatusFilter(s.key)}
+                            onClick={() => updateFilters({status: s.key})}
                         >{s.label}</button>
                     ))}
                 </div>
                 <Input.Search
                     placeholder="检索评论、昵称、用户名或文章标题…"
                     allowClear
-                    onChange={(e) => setQuery(e.target.value)}
+                    defaultValue={query}
+                    onSearch={value => updateFilters({query: value.trim()})}
+                    maxLength={120}
                     style={{ width: 300 }}
                 />
-                <Button onClick={() => setAsc((a) => !a)}>{asc ? '时序 ↑' : '时序 ↓'}</Button>
+                <Button onClick={() => updateFilters({sort: sort === 'asc' ? 'desc' : 'asc'})}>{sort === 'asc' ? '时序 ↑' : '时序 ↓'}</Button>
                 <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
                     刷新
                 </Button>
                 <Button className="cm-risk-toggle" onClick={() => setRiskOpen((v) => !v)}>
                     风控设置{riskOpen ? ' ▲' : ' ▼'}
                 </Button>
-                <span className="cm-count">共 {filtered.length} 条评论</span>
+                <span className="cm-count">{total === undefined ? '评论总数待加载' : `共 ${total} 条评论`}</span>
             </div>
             <div className="cm-review">
                 <span className="cm-review-item">
@@ -510,12 +376,17 @@ const CommentManage = () => {
                     </span>
                 </div>
             )}
+            {isError && <Alert type="error" showIcon
+                message={'message' in (error ?? {}) ? String((error as {message: string}).message) : '评论加载失败'}
+                description={currentData ? '当前显示上次成功加载的结果。' : '无法读取当前页，请重试。'}
+                action={<Button size="small" onClick={() => refetch()}>重试</Button>} />}
             <div className="cm-scroll">
                 <Table
                     rowKey="id"
                     columns={columns}
                     dataSource={pageRows}
                     loading={loading}
+                    locale={{emptyText: isError ? '当前页加载失败' : loading ? '正在加载评论…' : '暂无评论'}}
                     size="middle"
                     pagination={false}
                 />
@@ -534,9 +405,9 @@ const CommentManage = () => {
                     size="small"
                     current={page}
                     pageSize={PAGE_SIZE}
-                    total={filtered.length}
+                    total={total ?? 0}
                     showSizeChanger={false}
-                    onChange={setPage}
+                    onChange={next => setFilters(prev => ({...prev, page: next}))}
                     showTotal={(t) => `共 ${t} 条评论`}
                 />
             </div>
@@ -554,7 +425,6 @@ const CommentManage = () => {
                     danger: true,
                     loading: rejectBusy,
                     className: 'cm-reject-ok',
-                    // 理由必填：空理由时按钮不可点（见 confirmReject 的说明）
                     disabled: !rejectReason.trim(),
                 }}
                 rootClassName="cm-reject-modal"
