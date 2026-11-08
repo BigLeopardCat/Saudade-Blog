@@ -2,6 +2,7 @@
 import boto3, io, os, re, subprocess, sys, tarfile
 from botocore.config import Config
 from deployment_config import read_deployment_config
+from database_indexes import load_contract, MAX_CONTRACT_BYTES, CONTRACT_MEMBER
 
 
 def resolve_sha() -> str:
@@ -28,8 +29,15 @@ sha = resolve_sha()
 bucket = credentials['R2_BUCKET']
 key = f'deploy/{sha}/deploy.tar.gz'
 
+contract_path = os.environ.get('DATABASE_INDEX_CONTRACT', 'database-indexes.json')
+if os.path.getsize(contract_path) > MAX_CONTRACT_BYTES:
+    sys.exit('Database index contract exceeds size limit')
+with open(contract_path, 'rb') as contract_file:
+    load_contract(contract_file.read(MAX_CONTRACT_BYTES + 1), sha)
+
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+    tar.add(contract_path, arcname=CONTRACT_MEMBER)
     backend_bin = 'target/release/saudade_blog_bin'
     frontend_dist = 'frontend/dist'
 
