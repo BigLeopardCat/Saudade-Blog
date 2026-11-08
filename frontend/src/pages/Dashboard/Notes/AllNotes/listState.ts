@@ -114,6 +114,7 @@ export function saveListReturn(search: string): void {
     try {
         window.sessionStorage.setItem(LIST_RETURN_KEY, search);
     } catch {
+        // Storage failure must not prevent navigation.
     }
 }
 
