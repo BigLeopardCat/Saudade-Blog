@@ -51,8 +51,10 @@ export default function ImageActionConfirmation({action,items,folders,r2Availabl
       <p>{deleting?`从图库移除所选 ${items.length} 张图片，存储文件随后由后台清理。`:action==='copy'?`为所选 ${items.length} 张图片建立独立副本，原图和已有引用保持不变。`:`移动所选 ${items.length} 张图片，已发布内容的图片引用会同步更新。`}</p>
       {!deleting&&<>
         <Select aria-label="目标存储" value={storage} disabled={busy||prepared} onChange={setStorage} style={{width:'100%',marginBottom:12}}
+          getPopupContainer={trigger=>trigger.parentElement??document.body}
           options={[{value:'keep',label:'保持原存储'},{value:'local',label:'本地存储'},{value:'r2',label:'R2 存储',disabled:!r2Available}]}/>
         <TreeSelect aria-label="目标文件夹" placeholder="选择目标文件夹" value={target} disabled={busy||prepared}
+          getPopupContainer={trigger=>trigger.parentElement??document.body}
           treeData={folderOptions(folders)} treeDefaultExpandAll onChange={setTarget} style={{width:'100%'}}/>
       </>}
       {prepared&&<section role="region" aria-label={label+'预览'}>
