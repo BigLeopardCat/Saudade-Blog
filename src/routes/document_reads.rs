@@ -34,9 +34,19 @@ pub enum Kind {
     Announcement,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum View {
+    #[default]
+    Body,
+    Outline,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadQuery {
+    #[serde(default)]
+    pub view: View,
     pub section: Option<String>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
@@ -150,6 +160,12 @@ fn validate_range(query: &ReadQuery) -> Result<(), (StatusCode, &'static str)> {
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(12000);
     let section = query.section.as_deref().unwrap_or("");
+    if query.view == View::Outline && !section.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "outline does not select a body section",
+        ));
+    }
     let locator = offset > 0 || (section.starts_with('s') && section[1..].parse::<usize>().is_ok());
     if !(1..=24000).contains(&limit) || offset > i32::MAX as usize || section.chars().count() > 1024
     {
@@ -206,9 +222,30 @@ fn frame(doc: Document, query: ReadQuery) -> Result<Value, (StatusCode, &'static
         return Err((StatusCode::PAYLOAD_TOO_LARGE, "document exceeds read limit"));
     }
     let rows = sections::outline(&doc.body, &doc.title);
-    let available: Vec<Value> = rows.iter().filter(|s| s.level > 0).take(12)
+    let section_count = rows.iter().filter(|s| s.level > 0).count();
+    let section_offset = if query.view == View::Outline {
+        offset
+    } else {
+        0
+    };
+    if section_offset > section_count {
+        return Err((StatusCode::BAD_REQUEST, "offset exceeds section directory"));
+    }
+    let available: Vec<Value> = rows.iter().filter(|s| s.level > 0).skip(section_offset).take(12)
         .map(|s| json!({"id":s.id,"title":s.title.chars().take(200).collect::<String>(),
                        "path":s.path.iter().map(|v| v.chars().take(200).collect::<String>()).collect::<Vec<_>>()})).collect();
+    let section_end = section_offset + available.len();
+    let next_section_offset = (section_end < section_count).then_some(section_end);
+    if query.view == View::Outline {
+        return Ok(
+            json!({"view":"outline","type":doc.kind,"id":doc.id,"title":doc.title,
+            "content":"","metadata":{},"contentRevision":revision,"sectionSchema":sections::SCHEMA,
+            "readOffset":0,"nextOffset":null,"totalChars":doc.body.chars().count(),
+            "readComplete":false,"sections":available,"sectionCount":section_count,
+            "sectionsOffset":section_offset,"nextSectionsOffset":next_section_offset,
+            "source":null}),
+        );
+    }
     let (selected_body, selected) = if section.is_empty() {
         (doc.body.as_str(), None)
     } else if let Some(index) = sections::select(&rows, section) {
@@ -226,9 +263,10 @@ fn frame(doc: Document, query: ReadQuery) -> Result<Value, (StatusCode, &'static
         )
     } else {
         return Ok(
-            json!({"type":doc.kind,"id":doc.id,"title":doc.title,"content":"",
+            json!({"view":"body","type":doc.kind,"id":doc.id,"title":doc.title,"content":"",
             "contentRevision":revision,"sectionSchema":sections::SCHEMA,"sections":available,
-            "sectionCount":rows.iter().filter(|s|s.level>0).count(),"readSection":section,
+            "sectionCount":section_count,"sectionsOffset":0,"nextSectionsOffset":next_section_offset,
+            "readSection":section,
             "readOffset":0,"nextOffset":null,"totalChars":0,"readComplete":false,
             "source":null,"note":"Section missing or ambiguous; choose an explicit section ID."}),
         );
@@ -244,11 +282,11 @@ fn frame(doc: Document, query: ReadQuery) -> Result<Value, (StatusCode, &'static
         .take(end - offset)
         .collect();
     Ok(
-        json!({"type":doc.kind,"id":doc.id,"title":doc.title,"content":body,
+        json!({"view":"body","type":doc.kind,"id":doc.id,"title":doc.title,"content":body,
         "metadata":doc.metadata,"contentRevision":revision,"sectionSchema":sections::SCHEMA,
         "readOffset":offset,"nextOffset":if end < length {Some(end)} else {None},
         "totalChars":length,"readComplete":end==length,"sections":available,
-        "sectionCount":rows.iter().filter(|s|s.level>0).count(),
+        "sectionCount":section_count,"sectionsOffset":0,"nextSectionsOffset":next_section_offset,
         "readSection":selected.map(|s| s.title.chars().take(200).collect::<String>()),
         "source":{"type":doc.kind,"id":doc.id,"revision":revision,"section_schema":sections::SCHEMA,
                   "section_id":selected.map(|s|s.id.as_str()).unwrap_or(""),"offset":offset,"end":end}}),

@@ -389,3 +389,108 @@ async fn attribution_database_failures_are_not_anonymous_or_empty_metadata() {
         .into_connection();
     assert!(metadata::article(&db, &row).await.is_err());
 }
+
+#[test]
+fn directory_pages_are_complete_and_do_not_claim_a_body_read() {
+    let body = (1..=25)
+        .map(|i| format!("## Section {i}\nbody {i}\n"))
+        .collect::<String>();
+    let revision = content_revision("标题", &body);
+    let first = frame(source(&body), ReadQuery::default()).unwrap();
+    assert_eq!(first["sections"].as_array().unwrap().len(), 12);
+    assert_eq!(first["sectionsOffset"], 0);
+    assert_eq!(first["nextSectionsOffset"], 12);
+    let mut offset = 0;
+    let mut identifiers = Vec::new();
+    loop {
+        let page = frame(
+            source(&body),
+            ReadQuery {
+                view: View::Outline,
+                offset: Some(offset),
+                revision: Some(revision.clone()),
+                section_schema: Some(sections::SCHEMA.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page["view"], "outline");
+        assert_eq!(page["content"], "");
+        assert!(page["source"].is_null());
+        assert_eq!(page["readComplete"], false);
+        assert_eq!(page["readOffset"], 0);
+        assert!(page["nextOffset"].is_null());
+        assert_eq!(page["sectionsOffset"], offset);
+        assert_eq!(page["sectionCount"], 25);
+        identifiers.extend(
+            page["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_str().unwrap().to_string()),
+        );
+        let Some(next) = page["nextSectionsOffset"].as_u64() else {
+            break;
+        };
+        assert!(next as usize > offset);
+        offset = next as usize;
+    }
+    assert_eq!(
+        identifiers,
+        (1..=25).map(|i| format!("s{i}")).collect::<Vec<_>>()
+    );
+    let selected = frame(
+        source(&body),
+        ReadQuery {
+            section: Some("s22".into()),
+            revision: Some(revision),
+            section_schema: Some(sections::SCHEMA.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(selected["content"], "body 22\n");
+    assert_eq!(selected["source"]["section_id"], "s22");
+}
+
+#[test]
+fn directory_continuations_reject_wrong_revision_and_invalid_combinations() {
+    let body = "## One\nbody\n";
+    for query in [
+        ReadQuery {
+            view: View::Outline,
+            offset: Some(1),
+            ..Default::default()
+        },
+        ReadQuery {
+            view: View::Outline,
+            section: Some("s1".into()),
+            ..Default::default()
+        },
+        ReadQuery {
+            view: View::Outline,
+            offset: Some(2),
+            revision: Some(content_revision("标题", body)),
+            section_schema: Some(sections::SCHEMA.into()),
+            ..Default::default()
+        },
+    ] {
+        assert_eq!(
+            frame(source(body), query).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        frame(
+            source(body),
+            ReadQuery {
+                view: View::Outline,
+                revision: Some("0".repeat(64)),
+                ..Default::default()
+            }
+        )
+        .unwrap_err()
+        .0,
+        StatusCode::CONFLICT
+    );
+}
