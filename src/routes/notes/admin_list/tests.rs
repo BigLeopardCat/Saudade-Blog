@@ -12,7 +12,7 @@ fn filters_are_bound_and_summary_projection_does_not_select_bodies() {
         .limit(20)
         .offset(40)
         .into_partial_model::<NoteSummary>()
-        .build(DatabaseBackend::Postgres);
+        .into_statement(DatabaseBackend::Postgres);
     let selected = statement.sql.split(" FROM ").next().unwrap();
     assert!(!selected.contains("\"content\""), "{statement}");
     assert!(statement.sql.contains("note_tag") && statement.sql.contains("ILIKE"));
