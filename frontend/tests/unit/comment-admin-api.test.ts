@@ -45,8 +45,9 @@ describe('administrator comment query lifecycle',()=>{
         const response=envelope([item(2)],total)
         if(total===undefined)delete (response.data as {total?:unknown}).total
         http.get.mockResolvedValueOnce(response)
-        await expect(request.refetch().unwrap()).rejects.toBeTruthy()
-        expect(commentAdminApi.endpoints.adminComments.select(args())(store.getState()).data?.items).toEqual([item(1)])
+        const failed = request.refetch()
+        await expect(failed.unwrap()).rejects.toBeTruthy()
+        expect((await failed).data?.items).toEqual([item(1)])
         request.unsubscribe()
     })
 
@@ -61,8 +62,10 @@ describe('administrator comment query lifecycle',()=>{
         const current=store.dispatch(commentAdminApi.endpoints.adminComments.initiate(args({ownerUserId:8})))
         await current.unwrap()
         pending.resolve(envelope([item(7)]));await old
-        expect(commentAdminApi.endpoints.adminComments.select(args())(store.getState()).isUninitialized).toBe(true)
-        expect(commentAdminApi.endpoints.adminComments.select(args({ownerUserId:8}))(store.getState()).data?.items[0].id).toBe(8)
+        expect(Object.values(store.getState().privateApi.queries).some(query => query?.requestId === old.requestId)).toBe(false)
+        const cached = store.dispatch(commentAdminApi.endpoints.adminComments.initiate(args({ownerUserId:8}), {subscribe:false}))
+        expect((await cached.unwrap()).items[0].id).toBe(8)
+        expect(http.get).toHaveBeenCalledTimes(2)
         current.unsubscribe();old.unsubscribe()
     })
 

@@ -43,4 +43,37 @@ for (const path of ['/api/public/notes/{id}/comments','/api/public/comments/{id}
 }
 assert.ok(routes.includes('delete(comments::delete_my_comment)'));
 assert.ok(routes.includes('delete(comments::delete_comment_admin)'));
+const users = read('frontend/src/pages/Dashboard/Users/index.tsx');
+assert.match(users, /key: 'review',[\s\S]{0,160}?children: <BoardManage \/>/);
+assert.match(users, /key: 'comment',[\s\S]{0,160}?children: <CommentManage \/>/);
+assert.match(users, /t === 'review' \|\| t === 'comment' \|\| t === 'quota' \? t : 'accounts'/);
+const board = read('frontend/src/pages/Dashboard/BoardManage/index.tsx');
+assert.ok(board.includes('maxLength={REJECT_REASON_MAX}'));
+assert.ok(board.includes('BOARD_REJECT_PRESETS.map'));
+assert.ok(shared.includes("export const BOARD_REJECT_PRESETS = withVenue('与留言板无关')"));
+assert.ok(shared.includes("export const COMMENT_REJECT_PRESETS = withVenue('与文章无关')"));
+assert.ok(shared.includes('COMMON_REJECT_PRESETS.slice(0, 5)'));
+assert.ok(shared.includes('export const aiTip'));
+assert.ok(board.includes('aiTip') && comp.includes('aiTip'));
+assert.ok(comp.includes('setAiOn(!!d[AI_KEY])') && comp.includes('setManualOn(!!d[MANUAL_KEY])'));
+assert.ok(comp.includes('这对开关只管评论，与「留言管理」那对互不影响'));
+assert.ok(writes.includes('.or(saved_reason)') && writes.includes('.or(saved_ai_reason)'));
+const home = read('frontend/src/pages/Dashboard/Home/index.tsx');
+function todoBlock(name) {
+    const offset = home.indexOf(`className="todo-${name}"`);
+    assert.ok(offset >= 0, name);
+    const rest = home.slice(offset + 1);
+    const next = rest.search(/className="todo-(review|quota|comments)"/);
+    return next < 0 ? rest : rest.slice(0, next);
+}
+for (const [name, count, label, target] of [
+    ['review','pendingReview','条留言待人工审核','tab=review'],
+    ['comments','pendingComments','条评论待人工审核','tab=comment'],
+    ['quota','pendingQuota','条额度重置申请待处理','tab=quota'],
+]) {
+    const block = todoBlock(name);
+    assert.ok(block.includes(count) && block.includes(label) && block.includes(target), name);
+}
+assert.ok(!todoBlock('comments').includes('pendingReview'));
+assert.ok(!todoBlock('review').includes('条评论'));
 console.log(`${fileURLToPath(import.meta.url)}: comment wire and permission contracts passed`);
