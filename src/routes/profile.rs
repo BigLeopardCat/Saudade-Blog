@@ -423,8 +423,6 @@ const MESSAGE_TITLE_MAX_CHARS: usize = 60;
 pub(crate) struct PeerInfo {
     /// **展示名**：昵称优先，空串（没设过）退回账号。见 [`peer_map`]
     pub name: String,
-    /// 账号本身（后台要按它找人时用；公开侧一律用 `name`）
-    pub username: String,
     pub avatar: Option<String>,
     /// 角色（权限身份徽章用）。**从库里现读**，不是令牌快照
     pub role: String,
@@ -453,7 +451,7 @@ pub(crate) async fn peer_map(
         .into_iter()
         .map(|(id, username, nickname, avatar, role)| {
             let name = if nickname.trim().is_empty() { username.clone() } else { nickname };
-            (id, PeerInfo { name, username, avatar, role })
+            (id, PeerInfo { name, avatar, role })
         })
         .collect()
 }

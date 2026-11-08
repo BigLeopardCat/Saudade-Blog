@@ -53,7 +53,10 @@ async fn count_or_enrichment_failures_do_not_become_empty_or_anonymous_results()
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_errors([DbErr::Custom("count unavailable".into())])
         .into_connection();
-    assert!(read_page(&db, &q, 10, 0).await.is_err());
+    let Err(error) = read_page(&db, &q, 10, 0).await else {
+        panic!("read failure was hidden")
+    };
+    assert!(error.to_string().contains("count unavailable"));
     let count = BTreeMap::from([("num_items".to_owned(), Value::from(1i64))]);
     let row: note_comment::Model = serde_json::from_value(json!({
         "id":1,"note_id":1,"user_id":1,"content":"body","root_id":null,"parent_id":null,
@@ -61,12 +64,30 @@ async fn count_or_enrichment_failures_do_not_become_empty_or_anonymous_results()
         "is_deleted":0,"created_at":"2020-01-01T00:00:00","updated_at":"2020-01-01T00:00:00"
     }))
     .unwrap();
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_query_results([vec![count]])
-        .append_query_results([vec![row]])
-        .append_query_errors([DbErr::Custom("author lookup unavailable".into())])
-        .into_connection();
-    assert!(read_page(&db, &q, 10, 0).await.is_err());
+    for stage in ["author", "title"] {
+        let mut mock = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![count.clone()]])
+            .append_query_results([vec![row.clone()]]);
+        if stage == "title" {
+            mock = mock.append_query_results([vec![BTreeMap::from([
+                ("id".to_owned(), Value::from(1i32)),
+                ("username".to_owned(), Value::from("reader")),
+                ("nickname".to_owned(), Value::from("Reader")),
+            ])]]);
+        }
+        let db = mock
+            .append_query_errors([DbErr::Custom(format!("{stage} lookup unavailable"))])
+            .into_connection();
+        let Err(error) = read_page(&db, &q, 10, 0).await else {
+            panic!("enrichment failure was hidden")
+        };
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("{stage} lookup unavailable")),
+            "{error}"
+        );
+    }
 }
 
 #[tokio::test]
