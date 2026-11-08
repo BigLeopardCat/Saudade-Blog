@@ -36,7 +36,7 @@ test('local-only library copies with approval and refreshes after durable comple
   await page.getByRole('button',{name:'复制到',exact:true}).click()
   const modal=page.getByRole('dialog',{name:'复制图片'})
   await expect(page.getByRole('dialog')).toHaveCount(1)
-  await modal.getByRole('button',{name:'取消',exact:true}).click()
+  await modal.getByRole('button',{name:/^取\s*消$/}).click()
   await expect(page.getByRole('dialog',{name:'山景',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'复制到',exact:true}).click()
   await expect(page.getByRole('dialog')).toHaveCount(1)
