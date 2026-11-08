@@ -82,7 +82,7 @@ pub(crate) async fn targets(
     let root = local_root().await?;
     let mut result = Vec::new();
     for image in images {
-        if image.image_url == super::super::storage::media_url(image.image_key) {
+        if super::super::storage::public_id(&image.image_url).is_some() {
             let loc = super::super::storage::resolve(db, image).await?;
             // Resolve and validate the bound provider before authorizing cleanup.
             super::super::storage::store(db, &loc).await?;

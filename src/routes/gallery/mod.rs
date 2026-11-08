@@ -279,7 +279,7 @@ async fn register(
             [id.into(),name.into()])).await?;
     }
     let current=read(&txn,0,id).await?;
-    if current.image_url!=storage::media_url(id) {
+    if storage::public_id(&current.image_url).is_none() {
         let location=storage::resolve(&txn,&current).await?;
         transfers::publish::bind(&txn,id,&current.image_url,&location,true).await?;
     }

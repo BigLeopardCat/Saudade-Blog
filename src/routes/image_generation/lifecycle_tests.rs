@@ -460,7 +460,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
             .is_ok(),
         "Deleting generation history must retain the accepted gallery image"
     );
-    assert_eq!(url,crate::routes::gallery::storage::media_url(image_id));
+    assert!(crate::routes::gallery::storage::public_id(&url).is_some());
     let image=crate::routes::gallery::read(&state.db,fixture.uid,image_id).await.unwrap();
     let location=crate::routes::gallery::storage::resolve(&state.db,&image).await.unwrap();
     let filename = location.key.as_str();

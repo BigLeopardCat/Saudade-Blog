@@ -214,15 +214,39 @@ pub(crate) async fn remove<C: ConnectionTrait>(db: &C, loc: &Location) -> Result
         Err(_) => Err(error()),
     }
 }
-pub fn media_url(id: i32) -> String {
+pub fn media_url(id: uuid::Uuid) -> String {
     format!("/api/public/media/{id}")
+}
+pub fn public_id(url: &str) -> Option<uuid::Uuid> {
+    let raw = url.strip_prefix("/api/public/media/")?;
+    let id = uuid::Uuid::parse_str(raw).ok()?;
+    (id.to_string() == raw).then_some(id)
 }
 
 pub async fn media(
     axum::extract::State(state): axum::extract::State<Arc<crate::routes::AppState>>,
-    axum::extract::Path(id): axum::extract::Path<i32>,
+    axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::response::Response {
-    serve(state, id, true).await
+    use axum::response::IntoResponse;
+    let Some(public_id) = public_id(&format!("/api/public/media/{id}")) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let result = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT image_id FROM image_location WHERE public_id=$1::uuid",
+            [public_id.to_string().into()],
+        ))
+        .await;
+    match result {
+        Ok(Some(row)) => match row.try_get::<i32>("", "image_id") {
+            Ok(id) => serve(state, id, true).await,
+            Err(_) => axum::http::StatusCode::NOT_FOUND.into_response(),
+        },
+        Ok(None) => axum::http::StatusCode::NOT_FOUND.into_response(),
+        Err(_) => axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 pub async fn content(

@@ -49,7 +49,7 @@ async fn register(state: &Arc<AppState>, url: &str, name: Option<&str>) -> Resul
         Some(name) => super::gallery::register_named_image(&state.db, url, name).await?,
         None => super::gallery::register_image(&state.db, url).await?,
     };
-    Ok(super::gallery::storage::media_url(id))
+    Ok(super::gallery::read(&state.db,0,id).await?.image_url)
 }
 
 async fn write_local(dir: &Path, name: &str, data: &[u8]) -> Result<String, DbErr> {

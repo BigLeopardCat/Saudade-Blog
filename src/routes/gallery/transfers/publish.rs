@@ -9,9 +9,10 @@ pub(crate) async fn bind(
     location: &storage::Location,
     rewrite_references: bool,
 ) -> Result<String, DbErr> {
-    let url = storage::media_url(id);
-    db.execute(sql("INSERT INTO image_location(image_id,location,source_url) VALUES($1,$2,$3) ON CONFLICT(image_id) DO UPDATE SET location=EXCLUDED.location",
-        vec![id.into(),serde_json::to_value(location).map_err(|_|storage::error())?.into(),Some(source_url).filter(|_|rewrite_references && source_url!=url).into()])).await?;
+    let row=db.query_one(sql("INSERT INTO image_location(image_id,location,source_url) VALUES($1,$2,$3) ON CONFLICT(image_id) DO UPDATE SET location=EXCLUDED.location RETURNING public_id::text AS public_id",
+        vec![id.into(),serde_json::to_value(location).map_err(|_|storage::error())?.into(),Some(source_url).filter(|_|rewrite_references && storage::public_id(source_url).is_none()).into()])).await?.ok_or_else(storage::error)?;
+    let public_id: String = row.try_get("", "public_id")?;
+    let url = storage::media_url(uuid::Uuid::parse_str(&public_id).map_err(|_| storage::error())?);
     if rewrite_references && source_url != url {
         rewrite(db, source_url, &url).await?;
     }

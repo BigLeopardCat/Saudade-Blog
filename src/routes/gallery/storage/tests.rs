@@ -7,7 +7,9 @@ fn provider_paths_reject_traversal_and_unrecognized_providers() {
     }
     assert!(key("gallery/中文.png"));
     assert!(serde_json::from_str::<Kind>("\"disk://elsewhere\"").is_err());
-    assert_eq!(media_url(72), "/api/public/media/72");
+    let id = uuid::Uuid::new_v4();
+    assert_eq!(public_id(&media_url(id)), Some(id));
+    assert!(public_id("/api/public/media/72").is_none());
 }
 #[tokio::test]
 async fn local_provider_reads_writes_deletes_without_r2_and_rejects_changed_scope() {
