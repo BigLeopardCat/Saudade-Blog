@@ -185,3 +185,26 @@ test('failed review keeps its draft and does not invalidate the confirmed page',
   await expect(modal).toBeHidden()
   await expect(bodyRows(page)).toContainText('未通过')
 })
+
+test('agent read turns do not reload the page, while a confirmation attempt refreshes it',async({page,sandboxURL})=>{
+  const state=await mockComments(page,rows(11))
+  await page.goto(sandboxURL)
+  await expect(bodyRows(page)).toHaveCount(10)
+  await page.locator('.cm-foot li[title="2"]').click()
+  await expect(bodyRows(page)).toHaveCount(1)
+  const before=state.reads.length
+  await page.evaluate(()=>{
+    for(const detail of [{},{confirmationAttempted:false},{confirmationAttempted:false,articleIdsToRefresh:[19]}]){
+      window.dispatchEvent(new CustomEvent('agent-turn-done',{detail}))
+    }
+  })
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))))
+  expect(state.reads).toHaveLength(before)
+  state.rows=state.rows.map(row=>row.id===1?{...row,content:'确认后的事实'}:row)
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('agent-turn-done',{
+    detail:{confirmationAttempted:true,articleIdsToRefresh:[]},
+  })))
+  await expect(table(page)).toContainText('确认后的事实')
+  expect(state.reads).toHaveLength(before+1)
+  expect(state.reads.at(-1)?.page).toBe(2)
+})

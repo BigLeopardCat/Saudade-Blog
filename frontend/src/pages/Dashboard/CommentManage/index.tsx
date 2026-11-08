@@ -8,6 +8,7 @@ import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { COMMENT_REJECT_PRESETS, REJECT_REASON_MAX, aiTip } from "../ContentManage/shared";
 
 import {skipToken} from '@reduxjs/toolkit/query'
+import {isConfirmationAttempt} from '../../../components/UserCenter/agentTurn'
 import {useAuthToken} from '../../../utils/useAuthToken'
 import {getUidFromToken} from '../../../utils/auth'
 import {COMMENT_PAGE_SIZE as PAGE_SIZE, useAdminCommentsQuery, useAuditCommentMutation,
@@ -90,7 +91,7 @@ const CommentManage = () => {
         await Promise.all([ownerUserId ? refetch() : Promise.resolve(), loadSwitches()]);
     };
     useEffect(() => { void loadSwitches(); }, [loadSwitches]);
-    useLiveRefresh(refresh, {skip: () => !!rejecting || !ownerUserId});
+    useLiveRefresh(refresh, {skip: () => !!rejecting || !ownerUserId, agentEvent: isConfirmationAttempt});
 
     const toggleReview = async (key: typeof AI_KEY | typeof MANUAL_KEY, on: boolean) => {
         const setter = key === AI_KEY ? setAiOn : setManualOn;
