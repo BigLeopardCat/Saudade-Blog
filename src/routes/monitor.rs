@@ -292,6 +292,8 @@ async fn append_line(path: &str, line: &str) {
         Ok(mut f) => {
             if let Err(e) = f.write_all(line.as_bytes()).await {
                 warn_write_failed(path, &e);
+            } else if let Err(e) = f.flush().await {
+                warn_write_failed(path, &e);
             }
         }
         Err(e) => warn_write_failed(path, &e),
