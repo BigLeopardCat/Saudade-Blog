@@ -34,7 +34,7 @@ export default function ImageActionConfirmation({action,items,folders,r2Availabl
         onComplete()
       }else if(preview){
         const result=await change({version:preview.version,expiresAt:preview.expiresAt,intent:preview.intent}).unwrap()
-        if(deleting)void message.success(`已从图库移除 ${result.changedIds.length} 张图片`+(result.cleanupPendingIds.length?'；文件待后台清理':''))
+        if(deleting)void message.success(`已从图库移除 ${result.changedIds.length} 张图片`+(result.cleanupPendingIds.length?`；${result.cleanupPendingIds.length} 张文件待后台清理`:''))
         else void message.success(result.changedIds.length?'已移动 '+result.changedIds.length+' 张图片':'图片已在目标文件夹')
         onComplete()
       }
