@@ -145,7 +145,22 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
         .await
         .unwrap();
     }
+    db.execute(sql("DELETE FROM \"user\" WHERE id=$1", vec![uid.into()]))
+        .await
+        .unwrap();
     for job in jobs {
+        let row = db
+            .query_one(sql(
+                "SELECT requested_by FROM image_transfer WHERE id=$1",
+                vec![job.clone().into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row
+            .try_get::<Option<i32>>("", "requested_by")
+            .unwrap()
+            .is_none());
         db.execute(sql(
             "DELETE FROM image_transfer WHERE id=$1",
             vec![job.into()],
@@ -153,7 +168,4 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
         .await
         .unwrap();
     }
-    db.execute(sql("DELETE FROM \"user\" WHERE id=$1", vec![uid.into()]))
-        .await
-        .unwrap();
 }

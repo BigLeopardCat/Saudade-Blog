@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS image_location (
 );
 CREATE TABLE IF NOT EXISTS image_transfer (
     id text PRIMARY KEY CHECK (length(id)=64),
-    requested_by integer NOT NULL REFERENCES "user"(id),
+    requested_by integer REFERENCES "user"(id) ON DELETE SET NULL,
     spec jsonb NOT NULL,
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','copying','published','complete','failed')),
     lease uuid,
