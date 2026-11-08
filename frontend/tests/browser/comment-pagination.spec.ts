@@ -176,7 +176,7 @@ test('failed review keeps its draft and does not invalidate the confirmed page',
   await reason.fill('具体理由')
   const before=state.reads.length
   await modal.getByRole('button',{name:'确认驳回',exact:true}).click()
-  await expect(page.locator('.ant-message-error')).toContainText('操作失败')
+  await expect(page.locator('.ant-message-error')).toContainText('写入失败')
   await expect(modal).toBeVisible()
   await expect(reason).toHaveValue('具体理由')
   expect(state.reads).toHaveLength(before)

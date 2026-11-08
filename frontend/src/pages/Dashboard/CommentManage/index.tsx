@@ -46,6 +46,10 @@ const DeleteButton = ({ onConfirm, disabled }: { onConfirm: () => void; disabled
     </Popconfirm>
 );
 
+const actionError = (error: unknown, fallback: string): string =>
+    error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : fallback;
+
 const CommentManage = () => {
     const token = useAuthToken();
     const ownerUserId = getUidFromToken(token);
@@ -146,8 +150,8 @@ const CommentManage = () => {
             await auditComment({ownerUserId, id, approved, reason}).unwrap();
             message.success(approved === 1 ? '已通过，讨论区展示' : '已驳回（未通过），不展示');
             return true;
-        } catch {
-            message.error('操作失败，请重试');
+        } catch (error) {
+            message.error(actionError(error, '操作失败，请重试'));
             return false;
         }
     };
@@ -168,7 +172,7 @@ const CommentManage = () => {
         try {
             await deleteComment({ownerUserId, id}).unwrap();
             message.success('已删除（公开侧不再显示）');
-        } catch { message.error('删除失败，请重试'); }
+        } catch (error) { message.error(actionError(error, '删除失败，请重试')); }
     };
 
     const screens = Grid.useBreakpoint();
