@@ -67,6 +67,16 @@ pub(super) struct Spec {
     pub destinations: Vec<Location>,
     pub folder_name: String,
 }
+impl Spec {
+    pub(super) fn file_transfers(&self) -> impl Iterator<Item = (&Image, &Location, &Location)> {
+        self.images
+            .iter()
+            .zip(self.sources.iter().zip(&self.destinations))
+            .filter_map(|(image, (source, destination))| {
+                (source != destination).then_some((image, source, destination))
+            })
+    }
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {

@@ -30,7 +30,7 @@ export default function ImageActionConfirmation({action,items,folders,r2Availabl
       }else if(transfer){
         const job=await changeTransfer({version:transfer.version,expiresAt:transfer.expiresAt,intent:transfer.intent}).unwrap()
         if(job.status==='failed')throw new Error(job.error||'传输未完成，请核对图库状态')
-        void message.success(['published','complete'].includes(job.status)?'图片已'+label:'已提交'+label+'任务，可以离开页面')
+        void message.success(['published','complete'].includes(job.status)?'目标状态已核对':'已提交'+label+'任务，可以离开页面')
         onComplete()
       }else if(preview){
         const result=await change({version:preview.version,expiresAt:preview.expiresAt,intent:preview.intent}).unwrap()
