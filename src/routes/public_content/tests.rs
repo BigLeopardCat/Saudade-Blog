@@ -80,6 +80,13 @@ async fn postgres_archive_passes_999_and_talk_deep_links_never_expose_hidden_sou
     };
     let db = Database::connect(url).await.unwrap();
     let tx = db.begin().await.unwrap();
+    // The traversal and its reference total must observe the same fixture snapshot.
+    tx.execute(Statement::from_string(
+        DatabaseBackend::Postgres,
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    ))
+    .await
+    .unwrap();
     let prefix = format!("public_feed_{}", uuid::Uuid::new_v4().simple());
     async fn insert<C: ConnectionTrait>(db: &C, sql: &str, values: Vec<sea_orm::Value>) -> i32 {
         db.query_one(Statement::from_sql_and_values(
