@@ -3,8 +3,8 @@ import {test, expect} from './sandbox'
 import type {Page} from '@playwright/test'
 
 test.use({entry: 'article-cover'})
-test.beforeEach(async ({page}) => {
-    await page.route('**/loading.svg', route => route.fulfill({contentType: 'image/svg+xml',
+test.beforeEach(async ({page, sandboxURL}) => {
+    await page.route(new URL('/loading.svg', sandboxURL).href, route => route.fulfill({contentType: 'image/svg+xml',
         body: readFileSync(new URL('../../public/loading.svg', import.meta.url), 'utf8')}))
 })
 const portrait = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="900"><rect width="300" height="900" fill="pink"/><text x="10" y="30">TOP</text><text x="10" y="880">BOTTOM</text></svg>'

@@ -7,6 +7,15 @@ const deferred=()=>{
     return {ready,release}
 }
 test.use({entry:'article-grid'})
+test.beforeEach(async({page,sandboxURL})=>{
+    await page.route(new URL('/api/monitor/log',sandboxURL).href,route=>{
+        expect(route.request().method()).toBe('POST')
+        const payload=route.request().postDataJSON()
+        expect(payload.type).toBe('resource_error')
+        expect(new URL(payload.url).pathname).toBe('/fixture/card-cover.svg')
+        return route.fulfill({json:{code:200}})
+    })
+})
 
 for(const width of [375,1280]){
     test(`card cover owns the sweeping state, failure and retry without shifting at ${width}px`,async({page,sandboxURL})=>{
@@ -23,6 +32,7 @@ for(const width of [375,1280]){
         const sprite=art.locator('.sweep-loading__sprite')
         await expect(art).toBeVisible()
         await expect(sprite).toHaveCSS('animation-play-state','running')
+        const layout=await cover.evaluate(element=>[element.clientWidth,element.clientHeight])
         const initial=await cover.boundingBox()
         expect(initial).toBeTruthy()
         const stage=await art.boundingBox()
@@ -40,9 +50,8 @@ for(const width of [375,1280]){
         success.release()
         await expect(cover.getByRole('img',{name:'短标题'})).toHaveJSProperty('naturalWidth',200)
         await expect(art).toHaveCount(0)
-        const final=await cover.boundingBox()
-        expect(Math.abs(final!.height-initial!.height)).toBeLessThan(0.5)
-        expect(Math.abs(final!.width-initial!.width)).toBeLessThan(0.5)
+        // Layout sizes exclude the card's decorative hover transform.
+        expect(await cover.evaluate(element=>[element.clientWidth,element.clientHeight])).toEqual(layout)
         expect(requests).toHaveLength(2)
         expect(requests[0]).toBe(requests[1])
         await expect(cover.locator('.asset-image')).toHaveAttribute('aria-busy','false')
