@@ -268,6 +268,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/gallery/transfers", post(gallery::transfers::change).get(gallery::transfers::list))
         .route("/api/protect/gallery/transfers/{id}", get(gallery::transfers::status))
         .route("/api/protect/gallery/images", get(gallery::list))
+        .route("/api/protect/gallery/images/{id}/content", get(gallery::storage::content))
         .route("/api/protect/gallery/images/{id}", get(gallery::detail).put(gallery::metadata::change))
         .route("/api/protect/gallery/folders", get(gallery::folders::list).post(gallery::folders::create))
         .route("/api/protect/gallery/folders/{id}", delete(gallery::folders::remove))

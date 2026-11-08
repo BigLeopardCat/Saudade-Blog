@@ -48,6 +48,26 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
     }
 
     if job.status == "copying" {
+        let r2_guard = if spec
+            .destinations
+            .iter()
+            .any(|loc| loc.storage == storage::Kind::R2)
+        {
+            Some(crate::routes::upload::R2_UPLOAD_LOCK.lock().await)
+        } else {
+            None
+        };
+        let quota = if r2_guard.is_some() {
+            let config = crate::r2::load_config(db).await?;
+            let creds = crate::r2::load_creds().ok_or_else(storage::error)?;
+            let used = crate::r2::list_used_bytes(&creds, &config.bucket, &config.prefix)
+                .await
+                .map_err(|_| storage::error())?;
+            Some((used, config.quota_bytes))
+        } else {
+            None
+        };
+        let mut incoming = 0u64;
         let actor = db
             .query_one(sql(
                 "SELECT role,status FROM \"user\" WHERE id=$1",
@@ -66,6 +86,16 @@ async fn work(db: &DatabaseConnection, job: &Job) -> Result<(), DbErr> {
             let body = tokio::time::timeout(Duration::from_secs(40), storage::read(db, source))
                 .await
                 .map_err(|_| storage::error())??;
+            if dest.storage == storage::Kind::R2 {
+                incoming = incoming
+                    .checked_add(body.len() as u64)
+                    .ok_or_else(storage::error)?;
+                if quota
+                    .is_some_and(|(used, limit)| crate::r2::quota_exceeded(used, incoming, limit))
+                {
+                    return Err(storage::error());
+                }
+            }
             tokio::time::timeout(Duration::from_secs(40), storage::put(db, dest, body))
                 .await
                 .map_err(|_| storage::error())??;

@@ -211,10 +211,44 @@ pub async fn media(
     axum::extract::State(state): axum::extract::State<Arc<crate::routes::AppState>>,
     axum::extract::Path(id): axum::extract::Path<i32>,
 ) -> axum::response::Response {
+    serve(state, id, true).await
+}
+
+pub async fn content(
+    axum::extract::State(state): axum::extract::State<Arc<crate::routes::AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+) -> axum::response::Response {
+    serve(state, id, false).await
+}
+
+async fn serve(
+    state: Arc<crate::routes::AppState>,
+    id: i32,
+    redirect: bool,
+) -> axum::response::Response {
     use axum::{http::StatusCode, response::IntoResponse};
     let result = async {
         let image = super::read(&state.db, 0, id).await?;
         let loc = resolve(&state.db, &image).await?;
+        if redirect && loc.storage == Kind::R2 {
+            let cfg = r2::load_config(&state.db).await?;
+            let creds = r2::load_creds().ok_or_else(error)?;
+            if loc.bucket.as_deref() != Some(cfg.bucket.as_str())
+                || loc.scope != creds.endpoint
+                || !loc.key.starts_with(&format!("{}/", cfg.prefix))
+            {
+                return Err(error());
+            }
+            let url = reqwest::Url::parse(&r2::public_url(&cfg.public_base, &loc.key))
+                .map_err(|_| error())?;
+            return Ok::<_, DbErr>(
+                (
+                    [("cache-control", "public,max-age=300")],
+                    axum::response::Redirect::temporary(url.as_str()),
+                )
+                    .into_response(),
+            );
+        }
         let bytes = read(&state.db, &loc).await?;
         let ext = crate::utils::sniff_image_ext(&bytes).ok_or_else(error)?;
         let ct = if ext == "jpg" {

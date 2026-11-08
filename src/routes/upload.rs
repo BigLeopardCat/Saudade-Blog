@@ -134,7 +134,7 @@ fn normalize_file_name(raw: &str, sniffed: &str) -> String {
 }
 
 // Quota listing and PUT share a process-local critical section.
-static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 字节换算为面板使用的 GiB。
 fn gib(bytes: u64) -> f64 {
