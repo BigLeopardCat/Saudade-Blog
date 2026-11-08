@@ -461,7 +461,7 @@ const AllNotes = () => {
                                         onClick={() => navigate('/dashboard/notes/newnote')}>
                                     新增文章
                                 </Button>
-                                <Button size="small" icon={<ReloadOutlined />}
+                                <Button size="small" aria-label="刷新文章列表" icon={<ReloadOutlined aria-hidden="true" />}
                                         style={{marginRight: 12}}
                                         onClick={() => reloadList()}>
                                     刷新

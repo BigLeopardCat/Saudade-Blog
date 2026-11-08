@@ -47,7 +47,7 @@ test('business failures preserve confirmed rows and expose retry instead of an e
   await browser.goto(sandboxURL)
   await expect(browser.getByText('文章1003',{exact:true})).toBeVisible()
   fail=true
-  await browser.getByRole('button',{name:/^刷\s*新$/}).click()
+  await browser.getByRole('button',{name:'刷新文章列表',exact:true}).click()
   await expect(browser.getByRole('alert')).toContainText('文章列表加载失败')
   await expect(browser.getByText('文章1003',{exact:true})).toBeVisible()
   await expect(browser.getByText('没有符合条件的文章',{exact:true})).toHaveCount(0)
