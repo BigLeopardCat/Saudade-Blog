@@ -5,10 +5,14 @@ import {clearAuthToken} from '../utils/authSession'
 
 export interface GalleryImage {
   imageKey:number; imageUrl:string; displayName:string|null; description:string;
-  folderId:number; isFavorite:boolean; version:string
+  folderId:number; isFavorite:boolean; version:string; storage?:StorageKind; storagePath?:string
 }
 export interface GalleryFolder {id:number; parentId:number; name:string; imageCount:number}
-export interface GalleryFilters {folderId?:number; search?:string; favorite?:boolean}
+export type StorageKind='local'|'r2'
+export interface GalleryFilters {folderId?:number; search?:string; favorite?:boolean;storage?:StorageKind}
+export interface GalleryTransferIntent {mode:'move'|'copy';imageIds:number[];storage?:StorageKind;folderId:number}
+export interface GalleryTransferPreview {version:string;expiresAt:number;intent:GalleryTransferIntent;destinationName:string;images:GalleryImage[]}
+export interface GalleryTransferJob {id:string;status:'queued'|'copying'|'published'|'complete'|'failed';result:{mode:'move'|'copy';sourceIds:number[];imageIds:number[]}|null;error:string|null}
 export interface GalleryPage {items:GalleryImage[]; nextCursor:number|null}
 export const GALLERY_ACTION_LIMIT=100
 export type GalleryImageActionIntent={action:'move';imageIds:number[];folderId:number}|{action:'delete';imageIds:number[]}
@@ -41,12 +45,19 @@ const baseQuery:BaseQueryFn<string|FetchArgs,unknown,{status:string|number;error
 }
 
 export const galleryApi=createApi({
-  reducerPath:'galleryApi',baseQuery,tagTypes:['Images','Folders','GenerationJobs'],keepUnusedDataFor:60,
+  reducerPath:'galleryApi',baseQuery,tagTypes:['Images','Folders','GenerationJobs','Transfers'],keepUnusedDataFor:60,
   endpoints:builder=>({
     images:builder.infiniteQuery<GalleryPage,GalleryFilters,number|undefined>({
       infiniteQueryOptions:{initialPageParam:undefined,getNextPageParam:page=>page.nextCursor??undefined},
       query:({queryArg,pageParam})=>({url:'/api/protect/gallery/images',params:{...queryArg,before:pageParam,limit:30}}),
       providesTags:['Images'],
+    }),
+    transfers:builder.query<GalleryTransferJob[],void>({query:()=>'/api/protect/gallery/transfers',providesTags:['Transfers']}),
+    prepareTransfer:builder.mutation<GalleryTransferPreview,GalleryTransferIntent>({
+      query:body=>({url:'/api/protect/gallery/transfers/prepare',method:'POST',body}),
+    }),
+    changeTransfer:builder.mutation<GalleryTransferJob,Pick<GalleryTransferPreview,'version'|'expiresAt'|'intent'>>({
+      query:body=>({url:'/api/protect/gallery/transfers',method:'POST',body}),invalidatesTags:['Transfers'],
     }),
     folders:builder.query<GalleryFolder[],void>({query:()=>'/api/protect/gallery/folders',providesTags:['Folders']}),
     updateImage:builder.mutation<{changed:boolean;state:GalleryImage},{id:number;version:string;patch:GalleryPatch}>({

@@ -7,7 +7,7 @@ import type {UploadProps, UploadFile} from 'antd'
 import {AppstoreOutlined, FolderAddOutlined, InboxOutlined, StarFilled, UnorderedListOutlined} from '@ant-design/icons'
 import {useNavigate} from 'react-router-dom'
 import type {AppDispatch} from '../../../store'
-import {galleryApi, galleryError, GALLERY_ACTION_LIMIT, type GalleryFolder, type GalleryImage} from '../../../apis/galleryApi'
+import {galleryApi, galleryError, GALLERY_ACTION_LIMIT, type GalleryFolder, type StorageKind, type GalleryImage} from '../../../apis/galleryApi'
 import {getR2Usage, uploadImages, type UploadTarget} from '../../../apis/ImageMethods'
 import ImageCompression from '../../../apis/ImageCompression'
 import type {R2Usage} from '../../../interface/Setting'
@@ -16,6 +16,7 @@ import {assetDisplayName} from '../../../utils/assetName'
 import ImageDetail from './ImageDetail'
 import ImageGeneration from './ImageGeneration'
 import FolderNavigation from './FolderNavigation'
+import TransferJobs from './TransferJobs'
 import ImageActionConfirmation from './ImageActionConfirmation'
 import './index.sass'
 
@@ -25,6 +26,8 @@ export default function Albums() {
   const navigate=useNavigate()
   const [folderId,setFolderId]=useState<number|undefined>()
   const [search,setSearch]=useState('')
+  const [storage,setStorage]=useState<StorageKind|undefined>()
+  const [copyItems,setCopyItems]=useState<GalleryImage[]>([])
   const [favorite,setFavorite]=useState(false)
   const [view,setView]=useState<'grid'|'list'>(()=>{
     try {return localStorage.getItem('albumViewMode')==='list'?'list':'grid'} catch {return 'grid'}
@@ -40,11 +43,11 @@ export default function Albums() {
   const [uploadTarget,setUploadTarget]=useState<UploadTarget|null>(null)
   const [uploadedFiles,setUploadedFiles]=useState<UploadFile[]>([])
   const [r2,setR2]=useState<R2Usage|null>(null)
-  const query=galleryApi.useImagesInfiniteQuery({folderId,search:search||undefined,favorite:favorite||undefined})
+  const query=galleryApi.useImagesInfiniteQuery({folderId,search:search||undefined,favorite:favorite||undefined,storage})
   const {currentData,hasNextPage,isFetching,isError,fetchNextPage}=query
   const paginationSentinel=useRef<HTMLDivElement>(null)
   const pendingPage=useRef<string|null>(null)
-  const queryKey=JSON.stringify([folderId??null,search,favorite])
+  const queryKey=JSON.stringify([folderId??null,search,favorite,storage])
   const foldersQuery=galleryApi.useFoldersQuery()
   const folders=foldersQuery.data??[]
   const [createFolder,{isLoading:creating}]=galleryApi.useCreateFolderMutation()
@@ -56,7 +59,7 @@ export default function Albums() {
     while(current){result.unshift(current);current=folders.find(f=>f.id===current?.parentId)}
     return result
   },[folders,folderId])
-  useEffect(()=>{setSelected(new Set())},[folderId,search,favorite])
+  useEffect(()=>{setSelected(new Set())},[folderId,search,favorite,storage])
   useEffect(()=>{
     const target=paginationSentinel.current
     if(!target||!currentData||!hasNextPage||isFetching||isError)return
@@ -93,10 +96,10 @@ export default function Albums() {
     const next=new Set(before);if(checked)next.add(id);else next.delete(id);return next
   })
   const chooseFolder=(id:number|undefined)=>{setSelected(new Set());setFolderId(id)}
-  const beginAction=(action:'move'|'delete')=>{
+  const beginAction=(action:'move'|'copy'|'delete')=>{
     const items=images.filter(image=>selected.has(image.imageKey))
     if(items.length!==selected.size){void message.warning('所选图片已变化，请重新选择');return}
-    if(action==='move')setMoveItems(items);else setDeleteItems(items)
+    if(action==='move')setMoveItems(items);else if(action==='copy')setCopyItems(items);else setDeleteItems(items)
   }
   const addFolder=async()=>{
     try {
@@ -138,18 +141,20 @@ export default function Albums() {
       <Space wrap>
         <Button onClick={()=>setGeneration(true)}>AI 生图</Button>
         <Button onClick={()=>setUploadTarget('local')}>传到本站</Button>
-        <Button disabled={!canUploadR2} title={!r2?.configured?'请先配置 R2 存储':blocked.reason}
-          onClick={()=>setUploadTarget('r2')}>传到 R2</Button>
+        {r2?.configured&&<Button disabled={!canUploadR2} title={!r2?.configured?'请先配置 R2 存储':blocked.reason}
+          onClick={()=>setUploadTarget('r2')}>传到 R2</Button>}
         <Button onClick={()=>setNewFolder(true)} icon={<FolderAddOutlined/>}>新建文件夹</Button>
       </Space>
     </div>
+    <TransferJobs/>
     <div className="albumFilters">
+      <Segmented aria-label="存储位置" value={storage??'all'} options={[{label:'全部存储',value:'all'},{label:'本地',value:'local'},{label:'R2',value:'r2'}]} onChange={value=>setStorage(value==='all'?undefined:value as StorageKind)}/>
       <Input.Search aria-label="搜索图库" placeholder="搜索文件名或描述" allowClear onSearch={setSearch}/>
       <Checkbox checked={favorite} onChange={e=>setFavorite(e.target.checked)}>只看收藏</Checkbox>
       <Segmented value={view} onChange={value=>chooseView(value as 'grid'|'list')}
         options={[{value:'grid',label:'平铺',icon:<AppstoreOutlined/>},{value:'list',label:'列表',icon:<UnorderedListOutlined/>}]}/>
       <Button onClick={()=>navigate('/dashboard/usercontrol',{state:{tab:'4'}})}>
-        {r2&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'R2 存储'}
+        {r2?.configured&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'存储设置'}
       </Button>
     </div>
     <FolderNavigation folders={folders} selected={folderId} onSelect={chooseFolder}
@@ -160,6 +165,7 @@ export default function Albums() {
       <span aria-live="polite">已选 {selected.size} 张</span>
       <Button disabled={!selected.size||selected.size>GALLERY_ACTION_LIMIT}
         title={selected.size>GALLERY_ACTION_LIMIT?`每批最多移动 ${GALLERY_ACTION_LIMIT} 张图片`:undefined} onClick={()=>beginAction('move')}>移动选中</Button>
+      <Button disabled={!selected.size||selected.size>GALLERY_ACTION_LIMIT} onClick={()=>beginAction('copy')}>复制选中</Button>
       <Button danger disabled={!selected.size||selected.size>GALLERY_ACTION_LIMIT}
         title={selected.size>GALLERY_ACTION_LIMIT?`每批最多删除 ${GALLERY_ACTION_LIMIT} 张图片`:undefined} onClick={()=>beginAction('delete')}>删除选中</Button>
       <Button type="text" disabled={!selected.size} onClick={()=>setSelected(new Set())}>清除选择</Button>
@@ -192,14 +198,15 @@ export default function Albums() {
       </>}
     </div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
-    {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
+    {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])} onCopy={image=>setCopyItems([image])} onMove={image=>setMoveItems([image])}/>}
     {!!deleteItems.length&&<ImageActionConfirmation action="delete" items={deleteItems} folders={folders}
       onClose={()=>setDeleteItems([])} onComplete={()=>{
         if(deleteItems.some(item=>item.imageKey===detail?.imageKey))setDetail(null)
         setDeleteItems([]);setSelected(new Set())
       }}/>}
-    {!!moveItems.length&&<ImageActionConfirmation action="move" items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
+    {!!moveItems.length&&<ImageActionConfirmation action="move" r2Available={canUploadR2} items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
       onComplete={()=>{setMoveItems([]);setSelected(new Set())}}/>}
+    {!!copyItems.length&&<ImageActionConfirmation action="copy" r2Available={canUploadR2} items={copyItems} folders={folders} onClose={()=>setCopyItems([])} onComplete={()=>{setCopyItems([]);setSelected(new Set())}}/>}
     <Modal title="删除文件夹" open={!!deleteFolderTarget} confirmLoading={removingFolder}
       okText="删除文件夹" cancelText="取消" okButtonProps={{danger:true,style:{width:120}}}
       cancelButtonProps={{disabled:removingFolder}} closable={!removingFolder} maskClosable={!removingFolder} keyboard={!removingFolder}

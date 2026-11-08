@@ -6,6 +6,8 @@ pub(crate) mod deletions;
 pub mod folder_actions;
 pub mod folders;
 pub mod metadata;
+pub mod storage;
+pub mod transfers;
 pub(crate) mod references;
 
 use crate::{auth_jwt, routes::AppState, utils::ApiResponse};
@@ -18,11 +20,15 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, FromQueryResult, Statemen
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Default, FromQueryResult, Serialize)]
+#[derive(Clone, Debug, Default, FromQueryResult, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {
     pub image_key: i32,
     pub image_url: String,
+    #[serde(default)]
+    pub storage: String,
+    #[serde(default)]
+    pub storage_path: String,
     pub display_name: Option<String>,
     pub description: String,
     pub folder_id: i32,
@@ -33,12 +39,14 @@ pub struct Image {
 }
 
 const SELECT: &str = "SELECT i.image_key,i.image_url,m.display_name, \
+    COALESCE(l.location->>'storage',CASE WHEN i.image_url LIKE '/api/protect/download/%' THEN 'local' ELSE 'r2' END) AS storage, \
+    COALESCE(l.location->>'key',i.image_url) AS storage_path, \
     COALESCE(m.description,'') AS description,COALESCE(m.folder_id,0) AS folder_id, \
     g.name AS folder_name,g.parent_id AS folder_parent_id, \
     (f.image_id IS NOT NULL) AS is_favorite, \
     encode(sha256(convert_to(jsonb_build_array(i.image_key,i.image_url,m.display_name, \
-    COALESCE(m.description,''),COALESCE(m.folder_id,0),f.image_id IS NOT NULL)::text,'UTF8')),'hex') AS version \
-    FROM images i LEFT JOIN image_metadata m ON m.image_id=i.image_key \
+    COALESCE(m.description,''),COALESCE(m.folder_id,0),f.image_id IS NOT NULL,l.location)::text,'UTF8')),'hex') AS version \
+    FROM images i LEFT JOIN image_location l ON l.image_id=i.image_key LEFT JOIN image_metadata m ON m.image_id=i.image_key \
     LEFT JOIN image_folder g ON g.id=m.folder_id \
     LEFT JOIN image_favorite f ON f.image_id=i.image_key AND f.user_id=$1";
 
@@ -84,6 +92,7 @@ pub struct ListQuery {
     pub search: Option<String>,
     pub url: Option<String>,
     pub favorite: Option<bool>,
+    pub storage: Option<storage::Kind>,
 }
 
 #[derive(Default, Serialize)]
@@ -117,6 +126,10 @@ pub(super) async fn page<C: ConnectionTrait>(
     if let Some(folder) = q.folder_id {
         args.push(folder.into());
         sql.push_str(&format!(" AND COALESCE(m.folder_id,0)=${}", args.len()));
+    }
+    if let Some(storage) = q.storage {
+        args.push(storage.as_str().into());
+        sql.push_str(&format!(" AND COALESCE(l.location->>'storage',CASE WHEN i.image_url LIKE '/api/protect/download/%' THEN 'local' ELSE 'r2' END)=${}", args.len()));
     }
     if let Some(url) = q.url {
         if url.len() > 2048 {
@@ -234,7 +247,7 @@ async fn register(
     let txn = db
         .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
         .await?;
-    references::fence(&txn, false).await?;
+    references::fence(&txn, true).await?;
     // Serialize same-URL registration without blocking unrelated uploads or holding I/O in the transaction.
     txn.query_one(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
@@ -246,7 +259,7 @@ async fn register(
         return Err(DbErr::Custom("image storage URL is retired".into()));
     }
     let row=txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-        "SELECT image_key FROM images WHERE image_url=$1 ORDER BY image_key LIMIT 1 FOR KEY SHARE",[url.into()])).await?;
+        "SELECT image_key FROM images WHERE image_url=$1 OR image_key IN (SELECT image_id FROM image_location WHERE source_url=$1) ORDER BY image_key LIMIT 1 FOR UPDATE",[url.into()])).await?;
     let id = if let Some(row) = row {
         row.try_get::<i32>("", "image_key")?
     } else {
@@ -264,6 +277,11 @@ async fn register(
             "INSERT INTO image_metadata(image_id,display_name) VALUES($1,$2) ON CONFLICT(image_id) \
              DO UPDATE SET display_name=COALESCE(image_metadata.display_name,EXCLUDED.display_name)",
             [id.into(),name.into()])).await?;
+    }
+    let current=read(&txn,0,id).await?;
+    if current.image_url!=storage::media_url(id) {
+        let location=storage::resolve(&txn,&current).await?;
+        transfers::publish::bind(&txn,id,&current.image_url,&location).await?;
     }
     txn.commit().await?;
     Ok(id)

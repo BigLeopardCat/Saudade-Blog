@@ -82,6 +82,19 @@ pub(crate) async fn targets(
     let root = local_root().await?;
     let mut result = Vec::new();
     for image in images {
+        if image.image_url == super::super::storage::media_url(image.image_key) {
+            let loc = super::super::storage::resolve(db, image).await?;
+            // Resolve and validate the bound provider before authorizing cleanup.
+            super::super::storage::store(db, &loc).await?;
+            result.push(Target {
+                image_id: image.image_key,
+                storage_kind: loc.storage.as_str().into(),
+                storage_scope: loc.scope,
+                storage_bucket: loc.bucket,
+                storage_key: loc.key,
+            });
+            continue;
+        }
         if let Some(key) = image
             .image_url
             .strip_prefix("/api/protect/download/")
