@@ -38,6 +38,9 @@ async fn rewrite(db: &DatabaseTransaction, from: &str, to: &str) -> Result<(), D
             ("user", "avatar"),
             ("web_info", "value"),
             ("announcement", "content"),
+            ("talk", "content"),
+            ("knowledge_base", "content"),
+            ("user_notification", "content"),
             ("user_message", "content"),
             ("user_message_draft", "content"),
         ] {

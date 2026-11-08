@@ -101,6 +101,12 @@ pub(super) async fn first_use(
     let mut rows = Reference::find_by_statement(Statement::from_string(DatabaseBackend::Postgres,
         "SELECT 'article'::text AS resource,id::text AS resource_id,content,cover FROM note \
          UNION ALL SELECT 'comment',id::text,content,NULL::text FROM note_comment WHERE is_deleted=0 \
+         UNION ALL SELECT 'talk',id::text,content,NULL::text FROM talk \
+         UNION ALL SELECT 'announcement',id::text,content,NULL::text FROM announcement \
+         UNION ALL SELECT 'message',id::text,content,NULL::text FROM user_message \
+         UNION ALL SELECT 'message_draft',id::text,content,NULL::text FROM user_message_draft \
+         UNION ALL SELECT 'notification',id::text,COALESCE(content,''),NULL::text FROM user_notification \
+         UNION ALL SELECT 'knowledge',id::text,content,NULL::text FROM knowledge_base \
          UNION ALL SELECT 'user_avatar',id::text,''::text,avatar FROM \"user\" \
          UNION ALL SELECT 'site_avatar',key_name,''::text,value FROM web_info WHERE key_name='avatar'".to_string())).stream(db).await?;
     while let Some(row) = rows.try_next().await? {
