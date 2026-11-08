@@ -68,8 +68,8 @@ test('501st old pending comment is reachable and server filters reset pagination
   expect(state.reads.at(-1)).toMatchObject({page:1,status:'pending',deleted:'false'})
   await tab(page,'全部').click()
   await page.locator('.cm-foot li[title="51"]').click()
-  await search(page).fill('分页文章')
   const before=state.reads.length
+  await search(page).fill('分页文章')
   expect(state.reads).toHaveLength(before)
   await search(page).press('Enter')
   await expect.poll(()=>state.reads.at(-1)?.q).toBe('分页文章')

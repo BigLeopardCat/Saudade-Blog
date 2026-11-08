@@ -577,7 +577,6 @@ pub async fn send_message(
         t.id,
         PeerInfo {
             name,
-            username: t.username.clone(),
             avatar: t.avatar.clone(),
             role: t.role.clone(),
         },

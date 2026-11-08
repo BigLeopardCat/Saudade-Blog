@@ -1,5 +1,5 @@
 import './index.sass'
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
@@ -72,7 +72,7 @@ const CommentManage = () => {
     const [rejectReason, setRejectReason] = useState('');
     const [rejectBusy, setRejectBusy] = useState(false);
 
-    const loadSwitches = async () => {
+    const loadSwitches = useCallback(async () => {
         try {
             const res = await http.get('/api/protected/websetting');
             const d = res?.data?.data;
@@ -84,12 +84,12 @@ const CommentManage = () => {
                 ));
             }
         } catch { /* Preserve the last loaded settings on refresh failure. */ }
-    };
+    }, []);
 
     const refresh = async () => {
         await Promise.all([ownerUserId ? refetch() : Promise.resolve(), loadSwitches()]);
     };
-    useEffect(() => { void loadSwitches(); }, []);
+    useEffect(() => { void loadSwitches(); }, [loadSwitches]);
     useLiveRefresh(refresh, {skip: () => !!rejecting || !ownerUserId});
 
     const toggleReview = async (key: typeof AI_KEY | typeof MANUAL_KEY, on: boolean) => {
