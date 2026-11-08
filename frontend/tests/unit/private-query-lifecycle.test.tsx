@@ -162,6 +162,8 @@ function Profile() {
 describe('mounted private consumers', () => {
     it('shares unread polling, pauses when unfocused and stops after unmount', async () => {
         vi.useFakeTimers()
+        const visibility=vi.spyOn(document,'visibilityState','get').mockReturnValue('visible')
+        act(()=>window.dispatchEvent(new Event('visibilitychange')))
         const Badge=()=>{const {counts}=useUnread(true);return <output>{counts.pendingQuota}</output>}
         http.mockResolvedValue(envelope(counts(1)))
         const mounted=render(<Provider store={store}><Badge/><Badge/></Provider>)
@@ -170,16 +172,18 @@ describe('mounted private consumers', () => {
             expect(http).toHaveBeenCalledTimes(1)
             await act(async()=>{await vi.advanceTimersByTimeAsync(61_000)})
             expect(http).toHaveBeenCalledTimes(2)
-            act(()=>window.dispatchEvent(new Event('blur')))
+            visibility.mockReturnValue('hidden')
+            act(()=>window.dispatchEvent(new Event('visibilitychange')))
             await act(async()=>{await vi.advanceTimersByTimeAsync(61_000)})
             expect(http).toHaveBeenCalledTimes(2)
-            act(()=>window.dispatchEvent(new Event('focus')))
+            visibility.mockReturnValue('visible')
+            act(()=>window.dispatchEvent(new Event('visibilitychange')))
             await act(async()=>{await vi.advanceTimersByTimeAsync(1000)})
             expect(http).toHaveBeenCalledTimes(3)
             mounted.unmount()
             await act(async()=>{await vi.advanceTimersByTimeAsync(121_000)})
             expect(http).toHaveBeenCalledTimes(3)
-        } finally {mounted.unmount();vi.useRealTimers()}
+        } finally {mounted.unmount();visibility.mockRestore();vi.useRealTimers()}
     })
 
     it('never renders A data as B while B requests are pending', async () => {
