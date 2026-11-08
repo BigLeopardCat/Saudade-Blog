@@ -3,25 +3,23 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
-use sea_orm::sea_query::extension::postgres::PgExpr;
 use sea_orm::{
-    ColumnTrait, Condition, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, QueryTrait, Select, Set, TransactionTrait,
+    ColumnTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
-use super::moderation::{page_window, ReviewStatus};
 use crate::entity::{note, note_comment, user};
-use crate::utils::{ApiResponse, ApiResponsePage};
+use crate::utils::ApiResponse;
 
 use super::AppState;
 
-/// 评论正文上限（**字符数**不是字节数）。与留言板的 500 分开定：讨论区是短回复，
-/// 300 字足够表达一个观点，也让两层的排版不会一条占满整屏。
+/// 评论正文上限，按 Unicode 字符数计算。
 const MAX_COMMENT_CHARS: usize = 300;
 
-/// 后台列表一次最多回多少条（与其它后台列表同量级；讨论区量与留言板同级，不分页）。
-const ADMIN_PAGE_LIMIT: u64 = 500;
+mod admin;
+#[cfg(test)]
+pub(super) use admin::comment_admin_filter;
+pub use admin::list_comments_admin;
 
 /// 公开可见性与文章列表保持一致。
 pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
@@ -48,8 +46,6 @@ fn clean_content(raw: &str) -> String {
         .to_string()
 }
 
-// DTO
-
 /// 顶层与回复使用扁平 DTO，由 rootId 分组；列表批量查询，避免逐行读取。
 #[derive(Serialize)]
 pub struct CommentDto {
@@ -60,12 +56,12 @@ pub struct CommentDto {
     /// 直接父评论 id；null = 顶层
     #[serde(rename = "parentId")]
     pub parent_id: Option<i32>,
-    /// 顶层评论 id；**null = 本行就是顶层**（前端据此分组）
+    /// 顶层评论 id；null 表示本行是顶层。
     #[serde(rename = "rootId")]
     pub root_id: Option<i32>,
     #[serde(rename = "replyToUid")]
     pub reply_to_uid: Option<i32>,
-    /// 被回复者的**展示名**；null = 顶层，或对方账号已销（此时前端显示「已注销用户」）
+    /// 被回复者的展示名；null 表示顶层评论或账号已注销。
     #[serde(rename = "replyToNickname")]
     pub reply_to_nickname: Option<String>,
     #[serde(rename = "userId")]
@@ -73,7 +69,7 @@ pub struct CommentDto {
     /// 作者的展示名（昵称优先、没设昵称退回账号，见 `profile::peer_map`）
     pub nickname: String,
     pub avatar: Option<String>,
-    /// 角色（权限身份徽章用）。**从库里现读**，不是令牌快照
+    /// 当前数据库角色，用于身份徽章。
     pub role: String,
     /// 是否当前登录用户所发（删按钮的门控）。未登录恒 false
     pub mine: bool,
@@ -88,7 +84,7 @@ pub struct CommentDto {
 /// 未知 sort 值回落 hot，保留可解析的列表响应。
 #[derive(Deserialize)]
 pub struct CommentListQuery {
-    /// `hot`（缺省）/ `new`。**只有 `new` 会改变行为**，其余一律当 `hot`。
+    /// hot 为默认排序；只有 new 切换到时间排序。
     pub sort: Option<String>,
 }
 
@@ -117,21 +113,18 @@ fn hot_key(score: f64, id: i32) -> (i64, i32) {
     ((score * 1_000_000.0).round() as i64, id)
 }
 
-// 公开读
-
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(note_id): Path<i32>,
     Query(q): Query<CommentListQuery>,
 ) -> Json<ApiResponse<Vec<CommentDto>>> {
-    // 过期身份按匿名读取；登录身份决定 mine，匿名投票身份仍可决定 myVote。
+    // 过期身份按匿名读取；投票身份与作者身份分别计算。
     let who = super::note_stats::optional_who(&state.db, &headers).await;
     let uid = who.as_ref().and_then(|w| w.uid());
     if !note_visible(&state.db, note_id).await {
         return Json(ApiResponse::error("文章不存在或不可见"));
     }
-    // 排序口径：缺省与**未知值**都当 `hot`（未知值绝不能 reject，见 `CommentListQuery`）。
     let sort_hot = !matches!(q.sort.as_deref(), Some("new"));
     let tops = note_comment::Entity::find()
         .filter(note_comment::Column::NoteId.eq(note_id))
@@ -151,7 +144,6 @@ pub async fn list_comments(
     };
     let top_ids: Vec<i32> = tops.iter().map(|c| c.id).collect();
     let replies = if top_ids.is_empty() {
-        // 空表不发 `IN (NULL)` 白查询（同 list_board_admin）
         vec![]
     } else {
         note_comment::Entity::find()
@@ -171,7 +163,6 @@ pub async fn list_comments(
             *reply_counts.entry(root).or_insert(0) += 1;
         }
     }
-    // 展示名一次取全：作者与"被回复者"共用同一份 map（回复者可能不是本页任何一条的作者）
     let mut uids: Vec<i32> = tops.iter().map(|c| c.user_id).collect();
     uids.extend(tops.iter().filter_map(|c| c.reply_to_uid));
     uids.extend(replies.iter().map(|c| c.user_id));
@@ -179,13 +170,12 @@ pub async fn list_comments(
     uids.sort_unstable();
     uids.dedup();
     let peers = super::profile::peer_map(&state.db, &uids).await;
-    // 批量读取票数；票数不可用时仍展示评论正文。
     let ids: Vec<i32> = tops.iter().chain(replies.iter()).map(|c| c.id).collect();
+    // 票数读取失败不阻断评论正文展示。
     let counts = super::comment_votes::vote_counts_for(&state.db, &ids)
         .await
         .unwrap_or_default();
     let mine = super::comment_votes::my_votes(&state.db, &ids, who.as_ref()).await;
-    // 只对顶层按热度排序；回复保留时间顺序。
     let mut tops = tops;
     if sort_hot {
         let mut scored: Vec<((i64, i32), note_comment::Model)> = tops
@@ -199,7 +189,6 @@ pub async fn list_comments(
         scored.sort_by(|a, b| b.0.cmp(&a.0)); // 降序：热度高的在前；同分则 id 大的在前
         tops = scored.into_iter().map(|(_, c)| c).collect();
     }
-    // 顶层在前、回复在后，保持输出顺序稳定。
     let mut rows = tops;
     rows.extend(replies);
     let dtos: Vec<CommentDto> = rows
@@ -239,7 +228,6 @@ fn to_dto(
         parent_id: c.parent_id,
         root_id: c.root_id,
         reply_to_uid: c.reply_to_uid,
-        // 账号不可用时返回 None，由前端显示已注销状态。
         reply_to_nickname: c
             .reply_to_uid
             .and_then(|u| peers.get(&u).map(|p| p.name.clone())),
@@ -309,8 +297,6 @@ async fn notify_comment_reply(
     }
 }
 
-// 公开写
-
 #[derive(Deserialize)]
 pub struct CreateComment {
     pub content: String,
@@ -349,11 +335,9 @@ pub async fn create_comment(
     }
     let cfg = crate::risk::load_config(&state.db).await;
     let forced = match crate::risk::screen(&state, uid, &cfg).await {
-        // 风控拒绝独立于内容审核裁决。
         Ok(risk_verdict) => crate::risk::apply_verdict(&state, uid, &cfg, risk_verdict).await,
         Err(reject) => return Json(ApiResponse::error(&reject.message())),
     };
-    // 回复关系：**只信 parent_id**，三个列全部由父行派生。
     let (parent_id, root_id, reply_to_uid) = match payload.parent_id {
         None => (None, None, None),
         Some(pid) => {
@@ -370,19 +354,12 @@ pub async fn create_comment(
             if p.note_id != note_id {
                 return Json(ApiResponse::error("要回复的评论不属于这篇文章"));
             }
-            // 拒绝回复待审、未通过或已删除的评论。
             if p.approved != 1 || p.is_deleted != 0 {
                 return Json(ApiResponse::error("这条评论当前不可见，回复不了"));
             }
-            (
-                Some(p.id),
-                // 顶层评论的 root_id 是 NULL ⇒ 回复顶层时，顶层自己就是 root
-                Some(p.root_id.unwrap_or(p.id)),
-                Some(p.user_id),
-            )
+            (Some(p.id), Some(p.root_id.unwrap_or(p.id)), Some(p.user_id))
         }
     };
-    // 审核：与留言板**同一份裁决实现**，开关是评论自己那对键
     let (ai_key, manual_key) = super::web_info::COMMENT_REVIEW_KEYS;
     let (ai_on, manual_on) =
         match super::web_info::review_switches_of(&state.db, ai_key, manual_key).await {
@@ -391,15 +368,14 @@ pub async fn create_comment(
         };
     let (approved, ai_result, ai_reason, reject_reason) =
         super::talks::decide_review("comment", uid, &content, ai_on, manual_on).await;
-    // 风控只将原本通过的评论改为待审，不撤销已作出的拒绝。
+    // 风控只将通过改为待审，不撤销已作出的拒绝。
     let approved = if forced && approved == 1 { 0 } else { approved };
-    // 仅公开且不是回复自己的评论需要通知正文。
     let reply_target = match (approved, reply_to_uid) {
         (1, Some(t)) if t != uid => Some(t),
         _ => None,
     };
     let notice_src = reply_target.map(|_| content.clone());
-    // External moderation is complete before taking the gallery reference fence.
+    // 外部审核已完成；写入按 article -> reference fence -> image 的顺序加锁。
     let transaction = match state
         .db
         .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
@@ -411,7 +387,6 @@ pub async fn create_comment(
             return Json(ApiResponse::error("评论失败，请稍后再试"));
         }
     };
-    // Match article writers' note -> reference fence -> image lock order.
     let visible = note::Entity::find_by_id(note_id)
         .select_only()
         .column(note::Column::Id)
@@ -456,7 +431,6 @@ pub async fn create_comment(
         reject_reason: Set(reject_reason),
         created_at: Set(now),
         updated_at: Set(now),
-        // is_deleted 不进模型：交给库里的 DEFAULT 0（新行当然没删）
         ..Default::default()
     };
     match note_comment::Entity::insert(row).exec(&transaction).await {
@@ -497,8 +471,8 @@ pub async fn delete_my_comment(
     let Some(c) = row else {
         return Json(ApiResponse::error("评论不存在"));
     };
+    // 不向非作者确认其他人的评论存在。
     if c.user_id != uid {
-        // 别人的评论一律只说"不存在"，不确认它存在（防枚举别人删过什么）
         return Json(ApiResponse::error("评论不存在"));
     }
     let mut am: note_comment::ActiveModel = c.into();
@@ -511,179 +485,6 @@ pub async fn delete_my_comment(
             Json(ApiResponse::error("删除失败，请稍后再试"))
         }
     }
-}
-
-// 后台
-
-/// 后台列表的一行：评论本体 + 作者 + **挂在哪篇文章下**（管理员要能点回去看上下文）。
-#[derive(Serialize)]
-pub struct CommentAdminDto {
-    pub id: i32,
-    #[serde(rename = "noteId")]
-    pub note_id: i32,
-    /// 文章标题；查不到（文章已删）为空串，前端显示「（文章已删除）」
-    #[serde(rename = "noteTitle")]
-    pub note_title: String,
-    pub content: String,
-    #[serde(rename = "userId")]
-    pub user_id: i32,
-    pub username: String,
-    pub nickname: String,
-    /// 被回复者（「回复 @某人」那一行的 admin 侧镜像）；null = 顶层
-    #[serde(rename = "replyToNickname")]
-    pub reply_to_nickname: Option<String>,
-    #[serde(rename = "createTime")]
-    pub created_at: String,
-    /// 0=待审 / 1=通过 / 2=未通过（与留言板同口径，后台两个现成组件可直接复用）
-    pub approved: i16,
-    #[serde(rename = "aiResult")]
-    pub ai_result: Option<String>,
-    /// 驳回理由；null = 未驳回或没人写过理由（后台显示「未填写」）
-    #[serde(rename = "rejectReason")]
-    pub reject_reason: Option<String>,
-    /// AI 审核说明仅供后台展示，与最终审核状态独立。
-    #[serde(rename = "aiReason")]
-    pub ai_reason: Option<String>,
-    /// 软删除状态仅供后台展示；已删除评论不可再次审核。
-    #[serde(rename = "isDeleted")]
-    pub is_deleted: i16,
-}
-
-/// 后台分页为显式选项，未分页读取保留上限。
-#[derive(Deserialize)]
-pub struct CommentAdminQuery {
-    pub id: Option<i32>,
-    pub status: Option<ReviewStatus>,
-    pub q: Option<String>,
-    pub note_id: Option<i32>,
-    pub page: Option<u64>,
-    pub page_size: Option<u64>,
-}
-
-pub(super) fn comment_admin_filter(q: &CommentAdminQuery) -> Select<note_comment::Entity> {
-    let mut finder = note_comment::Entity::find();
-    if let Some(id) = q.id {
-        finder = finder.filter(note_comment::Column::Id.eq(id));
-    }
-    if let Some(status) = q.status {
-        finder = finder.filter(note_comment::Column::Approved.eq(status.approved()));
-    }
-    if let Some(id) = q.note_id {
-        finder = finder.filter(note_comment::Column::NoteId.eq(id));
-    }
-    if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        let pat = format!("%{}%", crate::search_core::like_escape(kw));
-        let authors = user::Entity::find()
-            .select_only()
-            .column(user::Column::Id)
-            .filter(
-                Condition::any()
-                    .add(user::Column::Username.into_expr().ilike(&pat))
-                    .add(user::Column::Nickname.into_expr().ilike(&pat)),
-            )
-            .into_query();
-        finder = finder.filter(
-            Condition::any()
-                .add(note_comment::Column::Content.into_expr().ilike(&pat))
-                .add(note_comment::Column::UserId.in_subquery(authors)),
-        );
-    }
-    finder
-        .order_by_desc(note_comment::Column::CreatedAt)
-        .order_by_desc(note_comment::Column::Id)
-}
-
-/// 后台评论列表；筛选影响视图，不改变审核权限。
-pub async fn list_comments_admin(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(q): Query<CommentAdminQuery>,
-) -> Json<ApiResponsePage<Vec<CommentAdminDto>>> {
-    let Some(_uid) = super::talks::current_uid(&state.db, &headers).await else {
-        return Json(ApiResponsePage::error("请先登录"));
-    };
-    let window = match page_window(q.page, q.page_size) {
-        Ok(value) => value,
-        Err(message) => return Json(ApiResponsePage::error(message)),
-    };
-    let total = if window.is_some() {
-        match comment_admin_filter(&q).count(&state.db).await {
-            Ok(n) => Some(n as i64),
-            Err(error) => {
-                tracing::error!("[comment] count failed: {error}");
-                return Json(ApiResponsePage::error("查询失败，请稍后再试"));
-            }
-        }
-    } else {
-        None
-    };
-    let mut finder = comment_admin_filter(&q);
-    if let Some((size, offset)) = window {
-        finder = finder.limit(size).offset(offset);
-    } else {
-        finder = finder.limit(ADMIN_PAGE_LIMIT);
-    }
-    let rows = match finder.all(&state.db).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[comment] list_comments_admin 查询失败: {e}");
-            return Json(ApiResponsePage::error("查询失败，请稍后再试"));
-        }
-    };
-    // 作者与"被回复者"共用一份（去重后 is_in，同 list_board_admin 的做法）
-    let mut uids: Vec<i32> = rows.iter().map(|c| c.user_id).collect();
-    uids.extend(rows.iter().filter_map(|c| c.reply_to_uid));
-    uids.sort_unstable();
-    uids.dedup();
-    let peers = super::profile::peer_map(&state.db, &uids).await;
-    // 文章标题：只取用到的两列（find() 是 SELECT *，会把正文一起捞出来）
-    let mut note_ids: Vec<i32> = rows.iter().map(|c| c.note_id).collect();
-    note_ids.sort_unstable();
-    note_ids.dedup();
-    let titles: std::collections::HashMap<i32, String> = if note_ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        note::Entity::find()
-            .select_only()
-            .column(note::Column::Id)
-            .column(note::Column::Title)
-            .filter(note::Column::Id.is_in(note_ids))
-            .into_tuple::<(i32, String)>()
-            .all(&state.db)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect()
-    };
-    let dtos = rows
-        .into_iter()
-        .map(|c| {
-            let (nickname, username) = match peers.get(&c.user_id) {
-                Some(p) => (p.name.clone(), p.username.clone()),
-                None => (format!("用户#{}", c.user_id), String::new()),
-            };
-            CommentAdminDto {
-                id: c.id,
-                note_id: c.note_id,
-                note_title: titles.get(&c.note_id).cloned().unwrap_or_default(),
-                content: c.content,
-                user_id: c.user_id,
-                // 后台同时返回账号与展示名，公开侧仅返回展示名。
-                username,
-                nickname,
-                reply_to_nickname: c
-                    .reply_to_uid
-                    .and_then(|u| peers.get(&u).map(|p| p.name.clone())),
-                created_at: c.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-                approved: c.approved,
-                ai_result: c.ai_result,
-                reject_reason: c.reject_reason,
-                ai_reason: c.ai_reason,
-                is_deleted: c.is_deleted,
-            }
-        })
-        .collect();
-    Json(ApiResponsePage::success(dtos, total))
 }
 
 #[derive(Deserialize)]
@@ -724,7 +525,6 @@ pub async fn audit_comment(
     let reject = payload.approved == 0;
     let saved_reason = c.reject_reason.clone();
     let saved_ai_reason = c.ai_reason.clone();
-    // 转换 ActiveModel 前保留通知所需字段。
     let owner = c.user_id;
     let was_approved = c.approved;
     let note_id = c.note_id;
@@ -745,8 +545,8 @@ pub async fn audit_comment(
     am.updated_at = Set(chrono::Local::now().naive_local());
     match note_comment::Entity::update(am).exec(&state.db).await {
         Ok(_) => {
-            // 仅从未公开变为公开时通知，避免重复审核再次通知。
             let new_approved = if reject { 2 } else { 1 };
+            // 仅首次公开时发通知，重复审核不重复通知。
             if was_approved != 1 && new_approved == 1 {
                 if let Some(t) = reply_target {
                     if t != owner {
@@ -807,7 +607,7 @@ mod tests {
         assert!(clean_content("上\n下").contains('\n'));
     }
 
-    /// 纯空白 = 空：不能靠敲几个空格骗过「评论不能为空」。
+    /// 纯空白正文无效。
     #[test]
     fn 纯空白不算内容() {
         assert!(clean_content("   \n\t  ").is_empty());
@@ -877,9 +677,7 @@ mod tests {
     /// 固定回复权重与赞踩分数的产品取舍。
     #[test]
     fn 交叉点_回复数与赞数的兑换率() {
-        // 15 条回复（+0.40）能越过 5 赞 1 踩（0.409）——讨论量是强信号。
         assert!(hot_score(0, 0, 15) > hot_score(5, 1, 0));
-        // 但 3 条回复（+0.20）越不过 5 赞 1 踩——随手聊两句不算热度。
         assert!(hot_score(0, 0, 3) < hot_score(5, 1, 0));
     }
 
