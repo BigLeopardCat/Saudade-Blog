@@ -10,9 +10,9 @@ pub(crate) mod references;
 
 use crate::{auth_jwt, routes::AppState, utils::ApiResponse};
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::HeaderMap,
-    Json,
 };
 use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, FromQueryResult, Statement, Value};
 use serde::{Deserialize, Serialize};
@@ -26,16 +26,20 @@ pub struct Image {
     pub display_name: Option<String>,
     pub description: String,
     pub folder_id: i32,
+    pub folder_name: Option<String>,
+    pub folder_parent_id: Option<i32>,
     pub is_favorite: bool,
     pub version: String,
 }
 
 const SELECT: &str = "SELECT i.image_key,i.image_url,m.display_name, \
     COALESCE(m.description,'') AS description,COALESCE(m.folder_id,0) AS folder_id, \
+    g.name AS folder_name,g.parent_id AS folder_parent_id, \
     (f.image_id IS NOT NULL) AS is_favorite, \
     encode(sha256(convert_to(jsonb_build_array(i.image_key,i.image_url,m.display_name, \
     COALESCE(m.description,''),COALESCE(m.folder_id,0),f.image_id IS NOT NULL)::text,'UTF8')),'hex') AS version \
     FROM images i LEFT JOIN image_metadata m ON m.image_id=i.image_key \
+    LEFT JOIN image_folder g ON g.id=m.folder_id \
     LEFT JOIN image_favorite f ON f.image_id=i.image_key AND f.user_id=$1";
 
 pub(crate) async fn actor(state: &AppState, headers: &HeaderMap) -> Result<i32, DbErr> {

@@ -4,36 +4,42 @@ use sea_orm::{Database, MockDatabase, TransactionTrait};
 #[tokio::test]
 async fn paging_limits_and_invalid_folders_fail_before_querying() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
-    assert!(page(
-        &db,
-        7,
-        ListQuery {
-            limit: Some(101),
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
-    assert!(page(
-        &db,
-        7,
-        ListQuery {
-            folder_id: Some(-1),
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
-    for name in ["", "..", "a/b"] {
-        assert!(folders::create_in(
+    assert!(
+        page(
             &db,
-            folders::Create {
-                name: name.into(),
-                parent_id: 0
+            7,
+            ListQuery {
+                limit: Some(101),
+                ..Default::default()
             }
         )
         .await
-        .is_err());
+        .is_err()
+    );
+    assert!(
+        page(
+            &db,
+            7,
+            ListQuery {
+                folder_id: Some(-1),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err()
+    );
+    for name in ["", "..", "a/b"] {
+        assert!(
+            folders::create_in(
+                &db,
+                folders::Create {
+                    name: name.into(),
+                    parent_id: 0
+                }
+            )
+            .await
+            .is_err()
+        );
     }
 }
 
@@ -44,9 +50,11 @@ fn metadata_and_cover_changes_reject_unknown_or_unbounded_fields() {
         "version":"a".repeat(64),"imageUrl":"https://elsewhere.invalid/a.png"}))
         .is_err()
     );
-    assert!(serde_json::from_value::<covers::Change>(serde_json::json!({
+    assert!(
+        serde_json::from_value::<covers::Change>(serde_json::json!({
         "version":"a".repeat(64),"imageId":1,"imageVersion":"b".repeat(64),"fit":"unsafe"}))
-    .is_err());
+        .is_err()
+    );
     assert!(!valid_version("short"));
 }
 
@@ -122,6 +130,7 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
     assert_eq!(second.items[0].image_key, ids[0]);
     assert!(second.next_cursor.is_none());
     let image = read(&txn, uid, ids[0]).await.unwrap();
+    assert!(image.folder_name.is_none() && image.folder_parent_id.is_none());
     let original_url = image.image_url.clone();
     let saved = metadata::apply(
         &txn,
@@ -140,22 +149,36 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
     assert!(saved.changed);
     assert_eq!(saved.state.image_url, original_url);
     assert_eq!(saved.state.folder_id, child.id);
+    assert_eq!(saved.state.folder_name.as_deref(), Some("child"));
+    assert_eq!(saved.state.folder_parent_id, Some(folder.id));
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE image_folder SET name=$2 WHERE id=$1",
+        vec![child.id.into(), "renamed child".into()],
+    ))
+    .await
+    .unwrap();
+    let renamed = read(&txn, uid, ids[0]).await.unwrap();
+    assert_eq!(renamed.folder_name.as_deref(), Some("renamed child"));
+    assert_eq!(renamed.version, saved.state.version);
     assert!(saved.state.is_favorite);
     assert!(!read(&txn, uid + 100000, ids[0]).await.unwrap().is_favorite);
-    assert!(metadata::apply(
-        &txn,
-        uid,
-        ids[0],
-        metadata::Change {
-            version: image.version,
-            display_name: Some("stale".into()),
-            description: None,
-            folder_id: None,
-            is_favorite: None
-        }
-    )
-    .await
-    .is_err());
+    assert!(
+        metadata::apply(
+            &txn,
+            uid,
+            ids[0],
+            metadata::Change {
+                version: image.version,
+                display_name: Some("stale".into()),
+                description: None,
+                folder_id: None,
+                is_favorite: None
+            }
+        )
+        .await
+        .is_err()
+    );
     let filtered = page(
         &txn,
         uid,
@@ -282,19 +305,21 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
     .unwrap();
     assert!(!unchanged.changed);
     assert_eq!(unchanged.state.version, reset.state.version);
-    assert!(covers::apply(
-        &txn,
-        uid,
-        root,
-        covers::Change {
-            version: target.version,
-            image_id: ids[0],
-            image_version: read(&txn, uid, ids[0]).await.unwrap().version,
-            fit: crate::routes::notes::CoverFit::Cover
-        }
-    )
-    .await
-    .is_err());
+    assert!(
+        covers::apply(
+            &txn,
+            uid,
+            root,
+            covers::Change {
+                version: target.version,
+                image_id: ids[0],
+                image_version: read(&txn, uid, ids[0]).await.unwrap().version,
+                fit: crate::routes::notes::CoverFit::Cover
+            }
+        )
+        .await
+        .is_err()
+    );
     let rows=txn.query_all(Statement::from_sql_and_values(DatabaseBackend::Postgres,
         "SELECT content,status,is_public,cover FROM note WHERE id=$1 OR draft_of=$1 ORDER BY id",vec![root.into()])).await.unwrap();
     assert_eq!(
