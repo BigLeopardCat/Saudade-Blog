@@ -76,7 +76,11 @@ pub(super) async fn apply(
     let result = db.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
         "UPDATE note SET cover=$1,cover_fit=$2,cover_focus_x=0.5,cover_focus_y=0.5,cover_zoom=1, \
          carousel_fit=$2,carousel_focus_x=0.5,carousel_focus_y=0.5,carousel_zoom=1,updated_at=localtimestamp \
-         WHERE (id=$3 OR draft_of=$3) AND (cover IS DISTINCT FROM $1 OR cover_fit IS DISTINCT FROM $2)",
+         WHERE (id=$3 OR draft_of=$3) AND (cover IS DISTINCT FROM $1 OR cover_fit IS DISTINCT FROM $2 \
+         OR carousel_fit IS DISTINCT FROM $2 OR cover_focus_x IS DISTINCT FROM 0.5 \
+         OR cover_focus_y IS DISTINCT FROM 0.5 OR cover_zoom IS DISTINCT FROM 1 \
+         OR carousel_focus_x IS DISTINCT FROM 0.5 OR carousel_focus_y IS DISTINCT FROM 0.5 \
+         OR carousel_zoom IS DISTINCT FROM 1)",
         vec![image.image_url.into(),fit.into(),id.into()])).await?;
     let state = read_target(db, id).await?;
     Ok(Outcome {

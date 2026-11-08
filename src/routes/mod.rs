@@ -30,6 +30,7 @@ mod pagination;
 pub mod catalog;
 pub mod own_reads;
 pub mod public_catalog;
+pub mod public_content;
 pub mod article_actions;
 pub mod article_deletions;
 pub mod talk_actions;
@@ -160,6 +161,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/categories", get(public_catalog::categories::list))
         .route("/api/public/tags", get(public_catalog::tags::list))
         .route("/api/public/image-generation/{id}/preview", get(image_generation::preview))
+        .route("/api/public/archive", get(public_content::archive))
+        .route("/api/public/talk/feed", get(public_content::talks))
+        .route("/api/public/talk/{id}", get(public_content::talk_detail))
         .route("/api/public/notes", get(notes::list_public_notes))
         .route("/api/protected/agent/delegation", get(crate::auth_jwt::delegation::exchange))
         .route("/api/device-gateway/{*path}", axum::routing::any(device_gateway::proxy)
@@ -269,11 +273,11 @@ pub fn create_router(state: AppState) -> Router {
         // Notes Protected
         .route("/api/protected/articles", get(catalog::articles::list))
         .route("/api/protected/accounts", get(catalog::accounts::list))
-        .route("/api/protected/notes/list", get(notes::list_all_notes))
-        .route("/api/protected/notes/search", post(notes::search_all_notes))
+        .route("/api/protected/notes/count", get(notes::admin_list::count))
         
         .route("/api/protected/notes", 
-            post(notes::create_note)
+            get(notes::admin_list::list)
+            .post(notes::create_note)
             .delete(notes::delete_note)
         )
         .route("/api/protected/moderation/{resource}/{id}/target", get(moderation_actions::target))

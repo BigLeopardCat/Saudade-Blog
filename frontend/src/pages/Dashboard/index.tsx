@@ -1,10 +1,8 @@
 import SeoHelmet from '../../components/SeoHelmet';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import './index.css';
-// import '../../assets/font/iconfont.js';
-// import '../../assets/font/iconfont.css';
 import {Outlet, useLocation, useNavigate} from "react-router-dom";
-import {Card, Spin, Avatar, ConfigProvider, theme as antdTheme} from "antd";
+import {Card, Spin, Avatar, ConfigProvider, message, theme as antdTheme} from "antd";
 import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
 import SettingButton from "../../components/Buttons/SettingButton";
@@ -13,14 +11,13 @@ import {fetchUserInfo, fetchSocial} from "../../store/components/user.tsx";
 import UserState from "../../interface/UserState";
 import {fetchCategories} from "../../store/components/categories.tsx";
 import {fetchTags} from "../../store/components/tags.tsx";
-import {fetchNoteList} from "../../store/components/note.tsx";
 import '@fontsource/roboto/300.css';
 import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
-import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
-import { useViewerProfile } from "../../components/UserCenter/identity"; // 侧栏身份（登录用户头像/昵称）
+import Live2dAgent from "../../components/Live2dAgent";
+import { useViewerProfile } from "../../components/UserCenter/identity";
 import AnnouncementModal from "../../components/AnnouncementModal"; // 同上：公告弹窗也跟壳走，不跟页面走
 
 const NAV_FILL_SVG: Record<string, { viewBox: string; body: ReactNode }> = {
@@ -79,7 +76,6 @@ const WASHI_THEME = {
 
 
 const Dashboard = () => {
-    //hooks区域
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const [tier, setTier] = useState<0 | 1 | 2>(1);
@@ -90,19 +86,13 @@ const Dashboard = () => {
     const dispatch = useDispatch();
     const siteName = useSelector((state: { user: UserState }) => state.user.name);
     const viewer = useViewerProfile();
-
-    //初始渲染
     useEffect(() => {
         dispatch<any>(fetchUserInfo())
         dispatch<any>(fetchSocial())
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
-        dispatch<any>(fetchNoteList(true))
         setLoading(true);
         setDarkMode(readDarkMode());
-        // 反向同步：看板娘面板 / agent 的 DARKMODE 命令在这个页面上切主题时，壳里的
-        // isDarkMode 要跟着走（否则只有 localStorage 变了、侧栏与 antd 主题原地不动）。
-        // 不会循环：那个处理器只 setState + 写 localStorage，**从不回派发**（App.tsx 同理）。
         const onDarkModeChange = (e: Event) => setDarkMode(!!(e as CustomEvent).detail);
         window.addEventListener('darkmode-change', onDarkModeChange);
         return () => window.removeEventListener('darkmode-change', onDarkModeChange);
@@ -142,8 +132,6 @@ const Dashboard = () => {
         document.body.classList.toggle('washiDark', isDarkMode);
     }, [isDarkMode]);
 
-    //回调函数区域
-
     /* 那颗 `.toggle`（圆钮里的箭头）：展开态显 ◀、其余显 ▶，所以它的动作是
        「88 ⇄ 250」，而极简档（0）按一下先回到 88 —— 与箭头指的方向一致。 */
     const handleToggleClick = () => {
@@ -169,14 +157,9 @@ const Dashboard = () => {
     const handleModeSwitch = () => {
         setDarkMode(!isDarkMode);
         localStorage.setItem("isDarkMode", JSON.stringify(!isDarkMode));
-        // 同 Head：手动切换记入 darkModeUserChoice（含主题日，跨日自动恢复）
         recordUserChoice(!isDarkMode ? 'dark' : 'light');
-        // 同 Head 的协议：派发 darkmode-change。少了这一句，后台切完主题后看板娘的
-        // `window.__darkMode`（agent 请求体 current_darkmode 的来源）仍是旧值。
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDarkMode })); } catch { /* ignore */ }
     };
-
-    // 导航栏数据
     const sidebar = [
         {
             index: 1,
@@ -251,52 +234,13 @@ const Dashboard = () => {
 
     const seg = pathname.replace(/^\/dashboard\/?/, '').split('/')[0];
     const activeIndex = seg === 'usercontrol' ? 8 : (sidebar.find(i => i.to === seg)?.index ?? 1);
-
-
-    //全屏
     const fullScreenRef = useRef<HTMLDivElement>(null);
-    const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
-
-    const toggleFullScreen = () => {
-        const elem = fullScreenRef.current;
-
-        if (!isFullScreen) {
-            if (elem?.requestFullscreen) {
-                elem.requestFullscreen();
-            } else { // @ts-ignore
-                if (elem?.mozRequestFullScreen) { /* Firefox */
-                                // @ts-ignore
-                    elem.mozRequestFullScreen();
-                            } else { // @ts-ignore
-                    if (elem?.webkitRequestFullscreen) { /* Chrome, Safari & Opera */
-                                                    // @ts-ignore
-                        elem.webkitRequestFullscreen();
-                                                } else { // @ts-ignore
-                        if (elem?.msRequestFullscreen) { /* IE/Edge */
-                                                                            // @ts-ignore
-                            elem.msRequestFullscreen();
-                                                                        }
-                    }
-                }
-            }
-            setIsFullScreen(true);
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-                // @ts-ignore
-            } else if (document.mozCancelFullScreen) { /* Firefox */
-                // @ts-ignore
-                document.mozCancelFullScreen();
-                // @ts-ignore
-            } else if (document.webkitExitFullscreen) {
-                // @ts-ignore/* Chrome, Safari & Opera */
-                document.webkitExitFullscreen();
-                // @ts-ignore
-            } else if (document.msExitFullscreen) { /* IE/Edge */
-                // @ts-ignore
-                document.msExitFullscreen();
-            }
-            setIsFullScreen(false);
+    const toggleFullScreen = async () => {
+        try {
+            if (document.fullscreenElement) await document.exitFullscreen();
+            else await fullScreenRef.current?.requestFullscreen();
+        } catch {
+            message.warning('当前浏览器未能切换全屏');
         }
     };
 

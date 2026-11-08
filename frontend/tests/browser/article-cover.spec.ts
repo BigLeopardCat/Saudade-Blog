@@ -3,6 +3,10 @@ import {test, expect} from './sandbox'
 import type {Page} from '@playwright/test'
 
 test.use({entry: 'article-cover'})
+test.beforeEach(async ({page, sandboxURL}) => {
+    await page.route(new URL('/loading.svg', sandboxURL).href, route => route.fulfill({contentType: 'image/svg+xml',
+        body: readFileSync(new URL('../../public/loading.svg', import.meta.url), 'utf8')}))
+})
 const portrait = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="900"><rect width="300" height="900" fill="pink"/><text x="10" y="30">TOP</text><text x="10" y="880">BOTTOM</text></svg>'
 async function article(page: Page, cover: string, fields = {}) {
     await page.route('**/api/public/notes/1', route => route.fulfill({json: {code: 200, data: {
@@ -29,7 +33,7 @@ for (const fit of ['contain', 'cover'] as const) {
             return route.fulfill({contentType: 'image/svg+xml', body: portrait})
         })
         await page.goto(sandboxURL)
-        const image = page.locator('.readCover > .asset-image > img')
+        const image = page.locator('.readCoverMedia > .asset-image > img')
         await expect(image).toBeVisible()
         await expect(image).toHaveJSProperty('naturalHeight', 900)
         await expect(image).toHaveCSS('object-fit', fit)
@@ -65,7 +69,7 @@ for (const cover of ['', '/broken-cover.png']) {
         await page.goto(sandboxURL)
         const fallback = page.locator('.readCoverFallback')
         await expect(fallback).toBeVisible()
-        await expect(page.locator('.readCover > .asset-image > img, .readCover video')).toHaveCount(0)
+        await expect(page.locator('.readCoverMedia > .asset-image > img, .readCover video')).toHaveCount(0)
         const background = await fallback.evaluate(element => getComputedStyle(element).backgroundImage)
         expect(background).not.toBe('none')
         await page.getByRole('button', {name: '切换主题'}).click()
@@ -131,9 +135,12 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
     })
     await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
     const cover = page.locator('.readCover')
-    const pending = cover.locator('.sweep-loading')
+    const pending = cover.locator('.asset-image-pending')
     await expect(pending).toBeVisible()
-    await expect(pending.locator('.sweep-loading__sprite')).toHaveCSS('animation-play-state', 'running')
+    await expect(pending.locator('img')).toHaveAttribute('src', '/loading.svg')
+    await expect(pending.locator('img')).toHaveCSS('width', '40px')
+    await expect(pending.locator('img')).toHaveCSS('height', '40px')
+    await expect(cover.locator('.sweep-loading')).toHaveCount(0)
     const bounds = await cover.boundingBox()
     releaseFailure()
     await expect(cover.getByRole('button', {name: '重新加载图片：文章封面'})).toBeVisible()
@@ -141,7 +148,7 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
     await expect(cover.locator('.readCoverFallback')).toBeVisible()
     await cover.getByRole('button', {name: '重新加载图片：文章封面'}).click()
     await expect(pending).toBeVisible()
-    await expect(cover).toHaveCSS('height', `${bounds!.height}px`)
+    await expect.poll(async () => Math.abs((await cover.boundingBox())!.height - bounds!.height)).toBeLessThan(0.1)
     releaseSuccess()
     await expect(cover.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
     await expect(pending).toHaveCount(0)
@@ -152,7 +159,7 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
         .filter(animation => animation instanceof CSSAnimation && animation.animationName === 'saudade-sweep-loading').length)).toBe(0)
 })
 
-test('article data loading uses scoped quiet art rather than the retired global animation', async ({page, sandboxURL}) => {
+test('article data loading preserves the Bongo Cat visual and unmounts when ready', async ({page, sandboxURL}) => {
     let release!: () => void
     const waiting = new Promise<void>(resolve => {release = resolve})
     await article(page, '')
@@ -164,11 +171,38 @@ test('article data loading uses scoped quiet art rather than the retired global 
     })
     await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
     const status = page.getByRole('status', {name: '正在加载文章'})
-    await expect(status.locator('.sweep-loading')).toBeVisible()
+    const art = status.locator('.readPendingArt')
+    await expect(art).toBeVisible()
+    await expect(art).toHaveJSProperty('naturalWidth', 784)
+    await expect(status.locator('.sweep-loading')).toHaveCount(0)
     await expect(status).toHaveText('')
-    await expect(page.locator('#bongo-cat, .LoadingContainer')).toHaveCount(0)
+    expect(await art.evaluate(image => (image as HTMLImageElement).src)).toContain('image/svg+xml')
     release()
     await expect(page.getByRole('heading', {name: '等待后就绪'})).toBeVisible()
     await expect(status).toHaveCount(0)
     await expect(page.locator('.sweep-loading')).toHaveCount(0)
 })
+
+
+for (const width of [375, 1440]) {
+    test(`detail cover keeps a 3.5:1 image and readable metadata at ${width}px`, async ({page, sandboxURL}) => {
+        await page.setViewportSize({width, height: 900})
+        await article(page, '/ratio-cover.svg', {coverFit: 'cover'})
+        await page.route('**/ratio-cover.svg', route => route.fulfill({contentType: 'image/svg+xml', body: portrait}))
+        await page.goto(sandboxURL)
+        const frame = page.locator('.readCoverMedia')
+        await expect(frame.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
+        await expect.poll(async () => {
+            const info = await page.locator('.readInfo').boundingBox()
+            return !!info && info.x >= 0 && info.x + info.width <= width + 1
+        }).toBe(true)
+        const media = await frame.boundingBox()
+        const info = await page.locator('.readInfo').boundingBox()
+        expect(media && info).toBeTruthy()
+        expect(Math.abs(media!.width / media!.height - 3.5)).toBeLessThan(0.02)
+        expect(info!.x).toBeGreaterThanOrEqual(0)
+        expect(info!.x + info!.width).toBeLessThanOrEqual(width + 1)
+        if (width < 768) expect(info!.y).toBeGreaterThanOrEqual(media!.y + media!.height)
+        else expect(info!.y).toBeGreaterThanOrEqual(media!.y)
+    })
+}

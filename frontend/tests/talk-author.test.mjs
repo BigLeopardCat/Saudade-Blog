@@ -106,10 +106,7 @@ console.log('\n③ 前端：卡片取每行自己的发布者，不取看的人'
 
 console.log('\n④ 读失败 ≠ 没有：空态与失败态是两件事');
 {
-    ok(/res\.data\.code !== 200/.test(front),
-        '★ 说说页判了业务码（HTTP 200 + code=500 走的是 `.then`，只看 status 会落成空列表）');
-    ok(/loadFailed/.test(front), '失败有独立状态');
-    ok(/talkEmpty/.test(front) && /talkRetry/.test(front), '失败态有文案与重试入口');
+    // Public read failure and retry behavior are covered by public-content.test.tsx.
     // 两句话必须在场且不相同：一句是"一条都没有"，一句是"没读出来"。
     ok(front.includes('还没有说说'), '空态文案在场');
     ok(front.includes('没能读取出来'), '失败态文案在场');

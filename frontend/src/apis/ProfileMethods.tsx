@@ -68,14 +68,22 @@ function uploadAvatar(file: File) {
 
 // 收藏的文章
 
-function getFavorites() {
+function getFavorites(signal?: AbortSignal) {
     return http<Envelope<FavoriteItem[]>>({
         url: "/api/protected/favorites",
-        method: "GET",
+        method: "GET", signal,
     });
 }
 
-type FavoriteMutation = { ownerUserId: number; noteId: number; isFavorite: boolean; changed: boolean }
+export type FavoriteState = { ownerUserId: number; noteId: number; isFavorite: boolean }
+
+function getFavoriteState(noteId: number, signal?: AbortSignal) {
+    return http<Envelope<FavoriteState>>({
+        url: `/api/protected/favorites/${noteId}`, method: "GET", signal,
+    });
+}
+
+export type FavoriteMutation = { ownerUserId: number; noteId: number; isFavorite: boolean; changed: boolean }
 
 function addFavorite(noteId: number) {
     return http<Envelope<FavoriteMutation>>({
@@ -94,10 +102,10 @@ function removeFavorite(noteId: number) {
 
 // 公告与通知（红点）
 
-function getUnreadSummary() {
+function getUnreadSummary(signal?: AbortSignal) {
     return http<Envelope<UnreadSummary>>({
         url: "/api/protected/notifications/summary",
-        method: "GET",
+        method: "GET", signal,
     });
 }
 
@@ -260,6 +268,7 @@ export {
     changePassword,
     uploadAvatar,
     getFavorites,
+    getFavoriteState,
     addFavorite,
     removeFavorite,
     getUnreadSummary,

@@ -11,10 +11,10 @@ import MarkdownNavbarDefault from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
 import { cjsDefault } from "../../../utils/cjsDefault";
 import AssetImage from "../../../components/AssetImage";
-import SweepLoading from "../../../components/SweepLoading";
+import articleLoading from "../../../assets/bongo-cat.svg";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { noteAuthor } from "../../../utils/noteAuthor";
-import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
+import { DETAIL_ASPECT, coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 import { resolveApiAssetUrl } from "../../../utils/runtimeApi";
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
@@ -23,7 +23,7 @@ import type {NoteStats} from "../../../interface/NoteStatsType";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
 import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
-import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
+import { applyLocalFavorite, useFavoriteState } from "../../../components/UserCenter/favorites.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import CommentSection from "../../../components/CommentSection";
 import {createRequestScope} from "../../../utils/requestScope";
@@ -107,9 +107,7 @@ const ArticleResource = ({id}: {id: string}) => {
     const [article, setArticle] = useState<NoteType|null>(null)
     const [notFound, setNotFound] = useState(false)
     const [favBusy, setFavBusy] = useState(false)
-    const loggedIn = !!getToken()
-    const { has: hasFaved } = useFavorites(loggedIn)
-    const faved = loggedIn && hasFaved(id)
+    const faved = useFavoriteState(Number(id))
 
     const who = noteAuthor(article, { name, avatar })
 
@@ -243,7 +241,7 @@ const ArticleResource = ({id}: {id: string}) => {
             if (!token.current() || getToken() !== accountToken) return
             if (ok(res)) {
                 // Favorites are shared with the personal center, not duplicated locally.
-                applyLocalFavorite(Number(id), !faved)
+                if (!await applyLocalFavorite(res.data.data)) return
                 message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
             } else {
                 message.error(errMsg(res))
@@ -257,7 +255,7 @@ const ArticleResource = ({id}: {id: string}) => {
 
     const content = article?.noteContent || '';
 
-    // Effect: mermaid 图 + 正文图片单击放大(委托,兼容 mermaid 异步渲染)
+    // Delegate image zoom to cover asynchronously rendered Mermaid output.
     useEffect(() => {
         if (isLoading) return;
         const content = document.getElementById("content");
@@ -270,7 +268,7 @@ const ArticleResource = ({id}: {id: string}) => {
         const content = document.getElementById("content");
         if (!content) return;
         decorateCodeBlocks(content);
-        // 只插入了标签栏自身（无删除）的变更 → 忽略,避免自己触发自己
+        // Ignore changes made by the code-block decorator itself.
         const onlyOwnHeads = (m: MutationRecord) =>
             m.addedNodes.length > 0 && m.removedNodes.length === 0
             && Array.from(m.addedNodes).every(
@@ -343,7 +341,7 @@ const ArticleResource = ({id}: {id: string}) => {
         
         const handleTocClick = () => {
             isClickingTocRef.current = true;
-            // Unlock after animation/scroll finishes (approx 1s safe buffer)
+            // Ignore observer-driven section changes until the scroll settles.
             setTimeout(() => {
                 isClickingTocRef.current = false;
             }, 1000);
@@ -440,17 +438,19 @@ const ArticleResource = ({id}: {id: string}) => {
                 </div>
             ) : isLoading ? (
                 <div className="readPending" role="status" aria-label="正在加载文章">
-                    <SweepLoading />
+                    <img className="readPendingArt" src={articleLoading} alt="" aria-hidden="true"/>
                 </div>
             ) : (
                 <>
                     {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
                     <div className="readCover">
-                        <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
-                        {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
-                            alt="文章封面" loading="eager" pending={<SweepLoading/>}
-                            style={coverCropStyle(cropFromRow(article))}/>}
-                        <motion.div
+                        <div className="readCoverMedia" style={{aspectRatio: DETAIL_ASPECT}}>
+                            <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
+                            {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
+                                alt="文章封面" loading="eager" pending={<img className="readCoverLoading" src="/loading.svg" alt="" aria-hidden="true" width={40} height={40}/>}
+                                style={coverCropStyle(cropFromRow(article))}/>}
+                        </div>
+                        <motion.div className="readInfoFrame"
                             initial={{ opacity: 0, x: -30 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ duration: 1 }}

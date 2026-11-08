@@ -39,12 +39,9 @@ ok(/\.filter\(super::notes::public_condition\(\)\)/.test(rust('src/routes/search
 console.log('\n② 后台公开文章页签复用共享判据');
 {
     const notes = rust('src/routes/notes.rs');
-    ok(/pub only_public: Option<bool>/.test(notes),
-        '`SearchRequest` 里有 `only_public`（前端页签的入参）');
-    const m = notes.match(/if let Some\(true\) = payload\.only_public \{([\s\S]*?)\n    \}/);
-    ok(!!m, '  `only_public` 分支存在');
-    ok(/condition\s*=\s*condition\.add\(public_condition\(\)\)/.test(m?.[1] || ''),
-        '  分支把共享公开判据与既有条件 AND 组合');
+    const listing = rust('src/routes/notes/admin_list.rs');
+    ok(/Some\("public"\)\s*=>\s*query\s*=\s*query\.filter\(super::public_condition\(\)\)/.test(listing),
+        '服务端公开页签使用同一公开可见性判据');
     const predicate = notes.match(/fn public_condition\(\) -> Condition \{([\s\S]*?)\n\}/)?.[1] || '';
     ok(/Condition::all\(\)/.test(predicate), '  共享判据的各项是 AND 组合');
     ok(/IsPublic\.eq\(true\)/.test(predicate), '  共享判据有 `is_public = true`');

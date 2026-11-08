@@ -4,36 +4,42 @@ use sea_orm::{Database, MockDatabase, TransactionTrait};
 #[tokio::test]
 async fn paging_limits_and_invalid_folders_fail_before_querying() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
-    assert!(page(
-        &db,
-        7,
-        ListQuery {
-            limit: Some(101),
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
-    assert!(page(
-        &db,
-        7,
-        ListQuery {
-            folder_id: Some(-1),
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
-    for name in ["", "..", "a/b"] {
-        assert!(folders::create_in(
+    assert!(
+        page(
             &db,
-            folders::Create {
-                name: name.into(),
-                parent_id: 0
+            7,
+            ListQuery {
+                limit: Some(101),
+                ..Default::default()
             }
         )
         .await
-        .is_err());
+        .is_err()
+    );
+    assert!(
+        page(
+            &db,
+            7,
+            ListQuery {
+                folder_id: Some(-1),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err()
+    );
+    for name in ["", "..", "a/b"] {
+        assert!(
+            folders::create_in(
+                &db,
+                folders::Create {
+                    name: name.into(),
+                    parent_id: 0
+                }
+            )
+            .await
+            .is_err()
+        );
     }
 }
 
@@ -44,9 +50,11 @@ fn metadata_and_cover_changes_reject_unknown_or_unbounded_fields() {
         "version":"a".repeat(64),"imageUrl":"https://elsewhere.invalid/a.png"}))
         .is_err()
     );
-    assert!(serde_json::from_value::<covers::Change>(serde_json::json!({
+    assert!(
+        serde_json::from_value::<covers::Change>(serde_json::json!({
         "version":"a".repeat(64),"imageId":1,"imageVersion":"b".repeat(64),"fit":"unsafe"}))
-    .is_err());
+        .is_err()
+    );
     assert!(!valid_version("short"));
 }
 
@@ -122,6 +130,7 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
     assert_eq!(second.items[0].image_key, ids[0]);
     assert!(second.next_cursor.is_none());
     let image = read(&txn, uid, ids[0]).await.unwrap();
+    assert!(image.folder_name.is_none() && image.folder_parent_id.is_none());
     let original_url = image.image_url.clone();
     let saved = metadata::apply(
         &txn,
@@ -140,22 +149,36 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
     assert!(saved.changed);
     assert_eq!(saved.state.image_url, original_url);
     assert_eq!(saved.state.folder_id, child.id);
+    assert_eq!(saved.state.folder_name.as_deref(), Some("child"));
+    assert_eq!(saved.state.folder_parent_id, Some(folder.id));
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE image_folder SET name=$2 WHERE id=$1",
+        vec![child.id.into(), "renamed child".into()],
+    ))
+    .await
+    .unwrap();
+    let renamed = read(&txn, uid, ids[0]).await.unwrap();
+    assert_eq!(renamed.folder_name.as_deref(), Some("renamed child"));
+    assert_eq!(renamed.version, saved.state.version);
     assert!(saved.state.is_favorite);
     assert!(!read(&txn, uid + 100000, ids[0]).await.unwrap().is_favorite);
-    assert!(metadata::apply(
-        &txn,
-        uid,
-        ids[0],
-        metadata::Change {
-            version: image.version,
-            display_name: Some("stale".into()),
-            description: None,
-            folder_id: None,
-            is_favorite: None
-        }
-    )
-    .await
-    .is_err());
+    assert!(
+        metadata::apply(
+            &txn,
+            uid,
+            ids[0],
+            metadata::Change {
+                version: image.version,
+                display_name: Some("stale".into()),
+                description: None,
+                folder_id: None,
+                is_favorite: None
+            }
+        )
+        .await
+        .is_err()
+    );
     let filtered = page(
         &txn,
         uid,
@@ -210,19 +233,93 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
         Some(original_url.as_str())
     );
     assert_eq!(cover.state.fit.as_deref(), Some("contain"));
-    assert!(covers::apply(
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE note SET cover_focus_x=0.1,cover_focus_y=0.9,cover_zoom=2, \
+         carousel_fit='cover',carousel_focus_x=0.2,carousel_focus_y=0.8,carousel_zoom=3 \
+         WHERE id=$1 OR draft_of=$1",
+        vec![root.into()],
+    ))
+    .await
+    .unwrap();
+    let manual = covers::read_target(&txn, root).await.unwrap();
+    let reset = covers::apply(
         &txn,
         uid,
         root,
         covers::Change {
-            version: target.version,
+            version: manual.version.clone(),
             image_id: ids[0],
             image_version: read(&txn, uid, ids[0]).await.unwrap().version,
-            fit: crate::routes::notes::CoverFit::Cover
-        }
+            fit: crate::routes::notes::CoverFit::Contain,
+        },
     )
     .await
-    .is_err());
+    .unwrap();
+    assert!(
+        reset.changed,
+        "same image and fit must still reset customized crops"
+    );
+    assert_eq!(reset.before_version, manual.version);
+    assert_ne!(reset.state.version, reset.before_version);
+    let rows = txn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT cover_fit,carousel_fit,cover_focus_x,cover_focus_y,cover_zoom, \
+         carousel_focus_x,carousel_focus_y,carousel_zoom FROM note WHERE id=$1 OR draft_of=$1",
+            vec![root.into()],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row.try_get::<String>("", "cover_fit").unwrap(), "contain");
+        assert_eq!(
+            row.try_get::<String>("", "carousel_fit").unwrap(),
+            "contain"
+        );
+        for field in [
+            "cover_focus_x",
+            "cover_focus_y",
+            "carousel_focus_x",
+            "carousel_focus_y",
+        ] {
+            assert_eq!(row.try_get::<f64>("", field).unwrap(), 0.5);
+        }
+        for field in ["cover_zoom", "carousel_zoom"] {
+            assert_eq!(row.try_get::<f64>("", field).unwrap(), 1.0);
+        }
+    }
+    let unchanged = covers::apply(
+        &txn,
+        uid,
+        root,
+        covers::Change {
+            version: reset.state.version.clone(),
+            image_id: ids[0],
+            image_version: read(&txn, uid, ids[0]).await.unwrap().version,
+            fit: crate::routes::notes::CoverFit::Contain,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.state.version, reset.state.version);
+    assert!(
+        covers::apply(
+            &txn,
+            uid,
+            root,
+            covers::Change {
+                version: target.version,
+                image_id: ids[0],
+                image_version: read(&txn, uid, ids[0]).await.unwrap().version,
+                fit: crate::routes::notes::CoverFit::Cover
+            }
+        )
+        .await
+        .is_err()
+    );
     let rows=txn.query_all(Statement::from_sql_and_values(DatabaseBackend::Postgres,
         "SELECT content,status,is_public,cover FROM note WHERE id=$1 OR draft_of=$1 ORDER BY id",vec![root.into()])).await.unwrap();
     assert_eq!(

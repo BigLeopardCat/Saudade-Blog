@@ -1,6 +1,6 @@
 import SweepLoading from '../../../components/SweepLoading'
 import AssetImage from '../../../components/AssetImage'
-import {useEffect, useMemo, useState} from 'react'
+import {useEffect, useMemo, useRef, useState} from 'react'
 import {useDispatch} from 'react-redux'
 import {Alert, Breadcrumb, Button, Card, Checkbox, Empty, Input, Modal, Segmented, Space, Spin, Upload, message} from 'antd'
 import type {UploadProps, UploadFile} from 'antd'
@@ -41,18 +41,47 @@ export default function Albums() {
   const [uploadedFiles,setUploadedFiles]=useState<UploadFile[]>([])
   const [r2,setR2]=useState<R2Usage|null>(null)
   const query=galleryApi.useImagesInfiniteQuery({folderId,search:search||undefined,favorite:favorite||undefined})
+  const {currentData,hasNextPage,isFetching,isError,fetchNextPage}=query
+  const paginationSentinel=useRef<HTMLDivElement>(null)
+  const pendingPage=useRef<string|null>(null)
+  const queryKey=JSON.stringify([folderId??null,search,favorite])
   const foldersQuery=galleryApi.useFoldersQuery()
   const folders=foldersQuery.data??[]
   const [createFolder,{isLoading:creating}]=galleryApi.useCreateFolderMutation()
   const [deleteFolder]=galleryApi.useDeleteFolderMutation()
   const [updateImage]=galleryApi.useUpdateImageMutation()
-  const images=useMemo(()=>query.data?.pages.flatMap(page=>page.items)??[],[query.data])
+  const images=useMemo(()=>currentData?.pages.flatMap(page=>page.items)??[],[currentData])
   const paths=useMemo(()=>{
     const result=[]; let current=folders.find(f=>f.id===folderId)
     while(current){result.unshift(current);current=folders.find(f=>f.id===current?.parentId)}
     return result
   },[folders,folderId])
   useEffect(()=>{setSelected(new Set())},[folderId,search,favorite])
+  useEffect(()=>{
+    const target=paginationSentinel.current
+    if(!target||!currentData||!hasNextPage||isFetching||isError)return
+    let active=true
+    let observer:IntersectionObserver|undefined
+    const observe=()=>{
+      observer?.disconnect()
+      const main=target.closest<HTMLElement>('.dashboardPage')
+      const root=main&&/^(auto|scroll)$/.test(getComputedStyle(main).overflowY)?main:null
+      const next=new IntersectionObserver(entries=>{
+        if(!active||observer!==next||pendingPage.current===queryKey
+          ||!entries.some(entry=>entry.isIntersecting))return
+        pendingPage.current=queryKey
+        void fetchNextPage().unwrap().catch(()=>{ /* Query state exposes explicit retry. */ }).finally(()=>{
+          if(pendingPage.current===queryKey)pendingPage.current=null
+        })
+      },{root,rootMargin:'0px 0px 240px 0px'})
+      observer=next
+      observer.observe(target)
+    }
+    // Desktop scrolls inside main; narrow layouts use the document viewport.
+    observe()
+    window.addEventListener('resize',observe)
+    return ()=>{active=false;observer?.disconnect();window.removeEventListener('resize',observe)}
+  },[currentData,hasNextPage,isFetching,isError,fetchNextPage,queryKey])
   const loadR2=()=>getR2Usage().then(res=>{if(res.data?.code===200)setR2(res.data.data)}).catch(()=>{})
   useEffect(()=>{void loadR2()},[])
   const blocked=uploadBlocked(r2)
@@ -123,10 +152,8 @@ export default function Albums() {
         {r2&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'R2 存储'}
       </Button>
     </div>
-    <div className="albumWorkspace">
     <FolderNavigation folders={folders} selected={folderId} onSelect={chooseFolder}
       onDelete={setDeleteFolderTarget}/>
-    <div className="albumContents">
     <Breadcrumb items={[{title:<button type="button" onClick={()=>chooseFolder(undefined)}>全部图片</button>},
       ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>chooseFolder(folder.id)}>{folder.name}</button>})))]}/>
     <div className="albumBatchActions">
@@ -137,9 +164,13 @@ export default function Albums() {
         title={selected.size>GALLERY_ACTION_LIMIT?`每批最多删除 ${GALLERY_ACTION_LIMIT} 张图片`:undefined} onClick={()=>beginAction('delete')}>删除选中</Button>
       <Button type="text" disabled={!selected.size} onClick={()=>setSelected(new Set())}>清除选择</Button>
     </div>
-    {(query.isError||foldersQuery.isError)&&<Alert type="error" showIcon message={galleryError(query.error||foldersQuery.error)}
-      action={<Button onClick={()=>{void query.refetch();void foldersQuery.refetch()}}>重试</Button>}/>}
-    {query.isLoading?<Spin/>:!images.length?<Empty description="这里还没有图片"/>:
+    {((query.isError&&!query.isFetchNextPageError)||foldersQuery.isError)&&<Alert type="error" showIcon message={galleryError((!query.isFetchNextPageError&&query.error)||foldersQuery.error)}
+      action={<Button loading={isFetching||foldersQuery.isFetching} onClick={()=>{
+        if(query.isError&&!query.isFetchNextPageError)void query.refetch()
+        if(foldersQuery.isError)void foldersQuery.refetch()
+      }}>重试</Button>}/>}
+    {query.isLoading||(!currentData&&isFetching)?<Spin/>:!currentData?null:
+      !images.length?<Empty description="这里还没有图片"/>:
       <div className={view==='list'?'albumList':'albumGrid'}>
         {images.map(image=>{
           const name=image.displayName||assetDisplayName(image.imageUrl)
@@ -153,8 +184,13 @@ export default function Albums() {
           </Card>
         })}
       </div>}
-    {query.hasNextPage&&<div className="albumMore"><Button loading={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>加载更多</Button></div>}
-    </div></div>
+    <div ref={paginationSentinel} className="albumMore" role="status" aria-live="polite">
+      {query.isFetchNextPageError?<Alert type="error" showIcon message={galleryError(query.error)}
+        action={<Button loading={isFetching} onClick={()=>void fetchNextPage()}>重试</Button>}/>:<>
+        {query.isFetchingNextPage&&<Spin size="small" aria-label="正在加载更多图片"/>}
+        {currentData&&!hasNextPage&&images.length>0&&'已显示全部图片'}
+      </>}
+    </div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
     {!!deleteItems.length&&<ImageActionConfirmation action="delete" items={deleteItems} folders={folders}
