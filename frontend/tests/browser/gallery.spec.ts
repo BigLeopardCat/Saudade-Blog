@@ -3,8 +3,11 @@ import type {GalleryImage} from '../../src/apis/galleryApi'
 
 test.use({entry:'gallery',viewport:{width:1280,height:900}})
 
-test.beforeEach(async({page})=>{
-  await page.route('**/api/protect/gallery/transfers',route=>route.fulfill({json:{code:200,data:[]}}))
+test.beforeEach(async({page,sandboxURL})=>{
+  await page.route(`${sandboxURL}api/protect/gallery/transfers`,route=>{
+    expect(route.request().method()).toBe('GET')
+    return route.fulfill({json:{code:200,data:[]}})
+  })
 })
 
 test('gallery opens details, selects explicitly, uses two list columns and updates metadata',async({page,sandboxURL})=>{
