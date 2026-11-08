@@ -232,10 +232,8 @@ fn frame(doc: Document, query: ReadQuery) -> Result<Value, (StatusCode, &'static
     if query.view == View::Metadata {
         return Ok(
             json!({"view":"metadata","type":doc.kind,"id":doc.id,"title":doc.title,
-            "content":"","metadata":doc.metadata,"contentRevision":revision,
-            "sectionSchema":sections::SCHEMA,"readOffset":0,"nextOffset":null,
-            "totalChars":0,"readComplete":false,"sections":[],"sectionCount":0,
-            "sectionsOffset":0,"nextSectionsOffset":null,"source":null}),
+            "metadata":doc.metadata,"contentRevision":revision,
+            "sectionSchema":sections::SCHEMA,"readComplete":false,"source":null}),
         );
     }
     let rows = sections::outline(&doc.body, &doc.title);
