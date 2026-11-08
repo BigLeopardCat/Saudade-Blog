@@ -41,7 +41,7 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
         gallery::read(&db, uid, id).await.unwrap().image_url,
         original
     );
-    let row=db.query_one(sql("INSERT INTO note(title,content,cover,created_at,updated_at,is_public,status) VALUES($1,$2,$3,now(),now(),true,'public') RETURNING id",vec![label.clone().into(),format!("![cover]({})",storage::media_url(id)).into(),storage::media_url(id).into()])).await.unwrap().unwrap();
+    let row=db.query_one(sql("INSERT INTO note(title,content,cover,created_at,updated_at,is_public,status) VALUES($1,$2,$3,now(),now(),true,'public') RETURNING id",vec![label.clone().into(),format!("![cover]({original})").into(),original.clone().into()])).await.unwrap().unwrap();
     let article: i32 = row.try_get("", "id").unwrap();
     let mut copies = Vec::new();
     let mut jobs = Vec::new();
