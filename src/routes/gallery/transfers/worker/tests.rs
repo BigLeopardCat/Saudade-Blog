@@ -21,12 +21,25 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
     let data = b"\x89PNG\r\n\x1a\nfixture";
     tokio::fs::write(root.join(&file), data).await.unwrap();
     let original = format!("/api/protect/download/{file}");
-    let id = gallery::register_named_image(&db, &original, "fixture.png")
+    let id: i32 = db
+        .query_one(sql(
+            "INSERT INTO images(image_url) VALUES($1) RETURNING image_key",
+            vec![original.clone().into()],
+        ))
         .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "image_key")
         .unwrap();
+    db.execute(sql(
+        "INSERT INTO image_metadata(image_id,display_name) VALUES($1,'fixture.png')",
+        vec![id.into()],
+    ))
+    .await
+    .unwrap();
     assert_eq!(
         gallery::read(&db, uid, id).await.unwrap().image_url,
-        storage::media_url(id)
+        original
     );
     let row=db.query_one(sql("INSERT INTO note(title,content,cover,created_at,updated_at,is_public,status) VALUES($1,$2,$3,now(),now(),true,'public') RETURNING id",vec![label.clone().into(),format!("![cover]({})",storage::media_url(id)).into(),storage::media_url(id).into()])).await.unwrap().unwrap();
     let article: i32 = row.try_get("", "id").unwrap();
@@ -106,6 +119,9 @@ async fn postgres_local_copy_move_replay_and_reference_integrity() {
         .unwrap()
         .contains(&storage::media_url(id)));
     let tx = db.begin().await.unwrap();
+    assert!(gallery::references::guard_texts(&tx, &[&original])
+        .await
+        .is_err());
     assert!(
         gallery::references::first_use(&tx, &[gallery::read(&tx, uid, id).await.unwrap()])
             .await
