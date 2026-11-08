@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/backend_checks.sh"
+
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
 DEPLOY_PYTHON="${SAUDADE_DEPLOY_PYTHON:-${XDG_DATA_HOME:-$HOME/.local/share}/saudade/deploy-venv/bin/python}"
@@ -137,10 +139,8 @@ if [ -f saudade_blog_bin ]; then
   cp -f saudade_blog_bin target/release/saudade_blog_bin
   chmod +x target/release/saudade_blog_bin
   rm -f saudade_blog_bin
-  # 源码没变就不重启（判据取 git 历史里两版之间的 src/ 与 Cargo.*；取不到就老实重启）
-  if [ -n "$PREV_SHA" ] && [ "$PREV_SHA" != "$SHA" ] \
-     && git cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null \
-     && git diff --quiet "$PREV_SHA" "$SHA" -- src Cargo.toml Cargo.lock; then
+  # Both source revisions must be available before a no-restart decision.
+  if backend_unchanged "$PREV_SHA" "$SHA"; then
     echo "ℹ️ 与上一版（${PREV_SHA:0:12}）相比后端源码没变，跳过重启"
   else
     RESTART=1
@@ -149,22 +149,22 @@ else
   echo "⚠️ 部署包里没有后端二进制（这一步只构建了前端？）"
 fi
 
-alive() {
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/api/login || true)
-  [ -n "$code" ] && [ "$code" != "000" ]
-}
-if [ "$RESTART" = "1" ] || ! alive; then
-  [ "$RESTART" = "0" ] && echo "⚠️ 后端不响应（活着的进程掉了？），重启一次"
+if [ "$RESTART" = "1" ] || ! backend_ready; then
+  [ "$RESTART" = "0" ] && echo "⚠️ 后端未就绪，重启一次"
   sudo systemctl restart saudade-rust
-  for _ in $(seq 1 20); do alive && break; sleep 1; done
-  if alive; then
-    echo "✅ $(date '+%H:%M:%S') 后端已更新并重启（存活探测 HTTP $code）"
+  backend_is_ready=0
+  for _ in $(seq 1 20); do
+    if backend_ready; then backend_is_ready=1; break; fi
+    sleep 1
+  done
+  if [ "$backend_is_ready" = "1" ]; then
+    echo "✅ $(date '+%H:%M:%S') 后端已更新并重启（数据库就绪检查通过）"
   else
-    echo "❌ $(date '+%H:%M:%S') 后端重启后 20 秒仍不响应，部署失败"
+    echo "❌ $(date '+%H:%M:%S') 后端重启后 20 次就绪检查均未通过，部署失败"
     exit 1
   fi
 else
-  echo "✅ $(date '+%H:%M:%S') 后端无需变动（存活探测 HTTP $code）"
+  echo "✅ $(date '+%H:%M:%S') 后端无需变动（数据库就绪检查通过）"
 fi
 
 printf '{"sha":"%s","deployed_at":"%s"}\n' "$SHA" "$(date '+%Y-%m-%d %H:%M:%S%z')" \
