@@ -18,12 +18,13 @@ const tags = Array.from({length: 10}, (_, tagKey) => ({tagKey: tagKey + 1,
 const categories: CategoriesType[] = [{categoryKey: 1, key: 1, categoryTitle: '编程随笔',
     pathName: '', introduce: '', icon: '', noteCount: 12, color: '#735b91'}]
 const stamp = new Date('2026-01-01T00:00:00Z')
+const pendingCover = location.hash === '#loading-cover'
 createRoot(document.getElementById('root')!).render(<div className="ContentContainer">
-    <div className="allArticles">{Array.from({length: 12}, (_, index) => {
+    <div className="allArticles">{Array.from({length: pendingCover ? 1 : 12}, (_, index) => {
         const [noteTitle, description, n] = shapes[index % shapes.length]
         const item: NoteType = {key: String(index), noteKey: String(index), noteCategory: '1',
             noteTitle, description, noteTags: tags.slice(0, n).map(tag => tag.tagKey),
-            cover: '', createTime: stamp, updateTime: stamp, categories: '', isTop: false,
+            cover: pendingCover ? '/fixture/card-cover.svg' : '', createTime: stamp, updateTime: stamp, categories: '', isTop: false,
             content: '', status: 'public', authorName: '示例作者', authorAvatar: '',
             views: 128, likes: 36, favorites: 12, comments: 4}
         return <Article key={item.key} item={item} index={index} Categories={categories}

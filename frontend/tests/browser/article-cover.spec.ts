@@ -3,6 +3,10 @@ import {test, expect} from './sandbox'
 import type {Page} from '@playwright/test'
 
 test.use({entry: 'article-cover'})
+test.beforeEach(async ({page}) => {
+    await page.route('**/loading.svg', route => route.fulfill({contentType: 'image/svg+xml',
+        body: readFileSync(new URL('../../public/loading.svg', import.meta.url), 'utf8')}))
+})
 const portrait = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="900"><rect width="300" height="900" fill="pink"/><text x="10" y="30">TOP</text><text x="10" y="880">BOTTOM</text></svg>'
 async function article(page: Page, cover: string, fields = {}) {
     await page.route('**/api/public/notes/1', route => route.fulfill({json: {code: 200, data: {
@@ -131,9 +135,12 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
     })
     await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
     const cover = page.locator('.readCover')
-    const pending = cover.locator('.sweep-loading')
+    const pending = cover.locator('.asset-image-pending')
     await expect(pending).toBeVisible()
-    await expect(pending.locator('.sweep-loading__sprite')).toHaveCSS('animation-play-state', 'running')
+    await expect(pending.locator('img')).toHaveAttribute('src', '/loading.svg')
+    await expect(pending.locator('img')).toHaveCSS('width', '40px')
+    await expect(pending.locator('img')).toHaveCSS('height', '40px')
+    await expect(cover.locator('.sweep-loading')).toHaveCount(0)
     const bounds = await cover.boundingBox()
     releaseFailure()
     await expect(cover.getByRole('button', {name: '重新加载图片：文章封面'})).toBeVisible()
@@ -152,7 +159,7 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
         .filter(animation => animation instanceof CSSAnimation && animation.animationName === 'saudade-sweep-loading').length)).toBe(0)
 })
 
-test('article data loading uses scoped quiet art rather than the retired global animation', async ({page, sandboxURL}) => {
+test('article data loading preserves the Bongo Cat visual and unmounts when ready', async ({page, sandboxURL}) => {
     let release!: () => void
     const waiting = new Promise<void>(resolve => {release = resolve})
     await article(page, '')
@@ -164,9 +171,12 @@ test('article data loading uses scoped quiet art rather than the retired global 
     })
     await page.goto(sandboxURL, {waitUntil: 'domcontentloaded'})
     const status = page.getByRole('status', {name: '正在加载文章'})
-    await expect(status.locator('.sweep-loading')).toBeVisible()
+    const art = status.locator('.readPendingArt')
+    await expect(art).toBeVisible()
+    await expect(art).toHaveJSProperty('naturalWidth', 784)
+    await expect(status.locator('.sweep-loading')).toHaveCount(0)
     await expect(status).toHaveText('')
-    await expect(page.locator('#bongo-cat, .LoadingContainer')).toHaveCount(0)
+    expect(await art.evaluate(image => (image as HTMLImageElement).src)).toContain('image/svg+xml')
     release()
     await expect(page.getByRole('heading', {name: '等待后就绪'})).toBeVisible()
     await expect(status).toHaveCount(0)

@@ -11,7 +11,7 @@ import MarkdownNavbarDefault from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
 import { cjsDefault } from "../../../utils/cjsDefault";
 import AssetImage from "../../../components/AssetImage";
-import SweepLoading from "../../../components/SweepLoading";
+import articleLoading from "../../../assets/bongo-cat.svg";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { noteAuthor } from "../../../utils/noteAuthor";
 import { DETAIL_ASPECT, coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
@@ -255,7 +255,7 @@ const ArticleResource = ({id}: {id: string}) => {
 
     const content = article?.noteContent || '';
 
-    // Effect: mermaid 图 + 正文图片单击放大(委托,兼容 mermaid 异步渲染)
+    // Delegate image zoom to cover asynchronously rendered Mermaid output.
     useEffect(() => {
         if (isLoading) return;
         const content = document.getElementById("content");
@@ -268,7 +268,7 @@ const ArticleResource = ({id}: {id: string}) => {
         const content = document.getElementById("content");
         if (!content) return;
         decorateCodeBlocks(content);
-        // 只插入了标签栏自身（无删除）的变更 → 忽略,避免自己触发自己
+        // Ignore changes made by the code-block decorator itself.
         const onlyOwnHeads = (m: MutationRecord) =>
             m.addedNodes.length > 0 && m.removedNodes.length === 0
             && Array.from(m.addedNodes).every(
@@ -341,7 +341,7 @@ const ArticleResource = ({id}: {id: string}) => {
         
         const handleTocClick = () => {
             isClickingTocRef.current = true;
-            // Unlock after animation/scroll finishes (approx 1s safe buffer)
+            // Ignore observer-driven section changes until the scroll settles.
             setTimeout(() => {
                 isClickingTocRef.current = false;
             }, 1000);
@@ -438,7 +438,7 @@ const ArticleResource = ({id}: {id: string}) => {
                 </div>
             ) : isLoading ? (
                 <div className="readPending" role="status" aria-label="正在加载文章">
-                    <SweepLoading />
+                    <img className="readPendingArt" src={articleLoading} alt="" aria-hidden="true"/>
                 </div>
             ) : (
                 <>
@@ -447,7 +447,7 @@ const ArticleResource = ({id}: {id: string}) => {
                         <div className="readCoverMedia" style={{aspectRatio: DETAIL_ASPECT}}>
                             <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
                             {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
-                                alt="文章封面" loading="eager" pending={<SweepLoading/>}
+                                alt="文章封面" loading="eager" pending={<img className="readCoverLoading" src="/loading.svg" alt="" aria-hidden="true" width={40} height={40}/>}
                                 style={coverCropStyle(cropFromRow(article))}/>}
                         </div>
                         <motion.div className="readInfoFrame"
