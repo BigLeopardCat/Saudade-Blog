@@ -59,6 +59,7 @@ fn matches(pattern: &str, path: &str) -> bool {
                 actual.parse::<i32>().is_ok_and(|n| n > 0)
                     && actual.bytes().all(|b| b.is_ascii_digit())
             }
+            ":digest" => actual.len() == 64 && actual.bytes().all(|b| b.is_ascii_hexdigit()),
             ":job" => {
                 actual.len() == 36 && actual.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
             }
@@ -84,6 +85,9 @@ const READS: &[&str] = &[
     "/api/protect/images/r2",
     "/api/protect/gallery/images",
     "/api/protect/gallery/images/:id",
+    "/api/protect/gallery/images/:id/content",
+    "/api/protect/gallery/transfers",
+    "/api/protect/gallery/transfers/:digest",
     "/api/protect/gallery/folders",
     "/api/protect/gallery/articles/:id/cover",
     "/api/protect/image-generation/options",
@@ -160,6 +164,8 @@ const POSTS: &[&str] = &[
     "/api/protected/talk-actions/prepare",
     "/api/protected/notification-deletions",
     "/api/protected/notification-deletions/prepare",
+    "/api/protect/gallery/transfers",
+    "/api/protect/gallery/transfers/prepare",
     "/api/protect/gallery/image-actions",
     "/api/protect/gallery/image-actions/prepare",
     "/api/protect/gallery/folder-actions",
@@ -181,6 +187,33 @@ const DELETES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gallery_transfer_grants_are_typed_and_do_not_expand_background_writes() {
+        assert!(allows(
+            Scope::Tools,
+            &Method::GET,
+            "/api/protect/gallery/images/72/content"
+        ));
+        assert!(allows(
+            Scope::Tools,
+            &Method::GET,
+            &format!("/api/protect/gallery/transfers/{}", "a".repeat(64))
+        ));
+        for path in [
+            "/api/protect/gallery/transfers/prepare",
+            "/api/protect/gallery/transfers",
+        ] {
+            assert!(allows(Scope::Tools, &Method::POST, path));
+            assert!(!allows(Scope::Background, &Method::POST, path));
+        }
+        for suffix in ["short", "../private", "%61", "a/extra"] {
+            assert!(!allows(
+                Scope::Tools,
+                &Method::GET,
+                &format!("/api/protect/gallery/transfers/{suffix}")
+            ));
+        }
+    }
     #[test]
     fn raw_console_and_unknown_routes_are_denied() {
         for (method, path) in [

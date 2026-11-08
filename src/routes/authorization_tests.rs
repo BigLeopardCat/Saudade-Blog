@@ -17,6 +17,8 @@ async fn native_actions_require_authentication_before_reading_or_writing() {
         report_limiter: LoginRateLimiter::new(120, 60, 300),
     });
     for path in [
+        "/api/protect/gallery/transfers/prepare",
+        "/api/protect/gallery/transfers",
         "/api/protected/category-actions/prepare",
         "/api/protected/category-actions",
         "/api/protected/tag-actions/prepare",
