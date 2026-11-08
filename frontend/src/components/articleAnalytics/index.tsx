@@ -3,6 +3,7 @@ import CountUpDefault from "react-countup";
 import { cjsDefault } from "../../utils/cjsDefault";
 import './index.sass'
 import {useSelector} from "react-redux";
+import type {RootState} from "../../store";
 import {adminNotesApi} from "../../apis/adminNotesApi";
 import React from "react";
 import {useNavigate} from "react-router-dom";
@@ -10,9 +11,9 @@ import WordCloud from "../wordCloud";
 const CountUp = cjsDefault(CountUpDefault)
 
 const ArticleAnalytics = () => {
-    const tagCount = useSelector((state: {tags: any}) => state.tags.tagCount)
+    const tagCount = useSelector((state: RootState) => state.tags.tagCount)
     const notes = adminNotesApi.useAdminNoteCountQuery();
-    const categoryCount = useSelector((state) => state.categories.categoryCount)
+    const categoryCount = useSelector((state: RootState) => state.categories.categoryCount)
     const navigate = useNavigate();
     const list: {
         index: number

@@ -2,7 +2,7 @@ import SeoHelmet from '../../components/SeoHelmet';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import './index.css';
 import {Outlet, useLocation, useNavigate} from "react-router-dom";
-import {Card, Spin, Avatar, ConfigProvider, theme as antdTheme} from "antd";
+import {Card, Spin, Avatar, ConfigProvider, message, theme as antdTheme} from "antd";
 import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
 import SettingButton from "../../components/Buttons/SettingButton";
@@ -16,8 +16,8 @@ import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
-import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
-import { useViewerProfile } from "../../components/UserCenter/identity"; // 侧栏身份（登录用户头像/昵称）
+import Live2dAgent from "../../components/Live2dAgent";
+import { useViewerProfile } from "../../components/UserCenter/identity";
 import AnnouncementModal from "../../components/AnnouncementModal"; // 同上：公告弹窗也跟壳走，不跟页面走
 
 const NAV_FILL_SVG: Record<string, { viewBox: string; body: ReactNode }> = {
@@ -235,39 +235,12 @@ const Dashboard = () => {
     const seg = pathname.replace(/^\/dashboard\/?/, '').split('/')[0];
     const activeIndex = seg === 'usercontrol' ? 8 : (sidebar.find(i => i.to === seg)?.index ?? 1);
     const fullScreenRef = useRef<HTMLDivElement>(null);
-    const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
-
-    const toggleFullScreen = () => {
-        const elem = fullScreenRef.current;
-
-        if (!isFullScreen) {
-            if (elem?.requestFullscreen) {
-                elem.requestFullscreen();
-            } else { // @ts-ignore
-                if (elem?.mozRequestFullScreen) { /* Firefox */
-                    elem.mozRequestFullScreen();
-                            } else { // @ts-ignore
-                    if (elem?.webkitRequestFullscreen) { /* Chrome, Safari & Opera */
-                        elem.webkitRequestFullscreen();
-                                                } else { // @ts-ignore
-                        if (elem?.msRequestFullscreen) { /* IE/Edge */
-                            elem.msRequestFullscreen();
-                                                                        }
-                    }
-                }
-            }
-            setIsFullScreen(true);
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.mozCancelFullScreen) { /* Firefox */
-                document.mozCancelFullScreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) { /* IE/Edge */
-                document.msExitFullscreen();
-            }
-            setIsFullScreen(false);
+    const toggleFullScreen = async () => {
+        try {
+            if (document.fullscreenElement) await document.exitFullscreen();
+            else await fullScreenRef.current?.requestFullscreen();
+        } catch {
+            message.warning('当前浏览器未能切换全屏');
         }
     };
 
