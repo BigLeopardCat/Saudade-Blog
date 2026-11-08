@@ -10,7 +10,8 @@ use axum::{
 use futures::FutureExt;
 use saudade_blog::{auth_jwt, create_router, routes::gallery::transfers, AppState};
 use sea_orm::{
-    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
+    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend,
+    SqlxPostgresConnector, Statement,
 };
 use serde_json::{json, Value};
 use std::{
@@ -232,7 +233,9 @@ impl Fixture {
         let user = row(&db, "INSERT INTO \"user\"(username,nickname,password,role,status) VALUES('storage-e2e','storage-e2e','unused','admin',0) RETURNING id", vec![]).await;
         let uid: i32 = user.try_get("", "id").unwrap();
         let app = Server::start(create_router(AppState {
-            db: db.clone(),
+            db: SqlxPostgresConnector::from_sqlx_postgres_pool(
+                db.get_postgres_connection_pool().clone(),
+            ),
             rate_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(5, 60, 300),
             post_limiter: saudade_blog::risk::PostRateLimiter::new(),
             report_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(120, 60, 300),
@@ -430,7 +433,7 @@ impl Fixture {
         tokio::time::timeout(Duration::from_secs(5), tasks.wait())
             .await
             .unwrap();
-        self.db.clone().close().await.unwrap();
+        self.db.close().await.unwrap();
         execute(
             &self.admin,
             &format!("DROP SCHEMA {} CASCADE", self.schema),
@@ -518,7 +521,9 @@ async fn version_conflict_preserves_same_storage_source(ctx: &Fixture) {
     )
     .await;
     // Enqueue and edit before starting the real worker, so the version conflict is deterministic.
-    transfers::start(ctx.db.clone());
+    transfers::start(SqlxPostgresConnector::from_sqlx_postgres_pool(
+        ctx.db.get_postgres_connection_pool().clone(),
+    ));
     for attempt in 1..=5 {
         let job = ctx.retry_pending(job_id, attempt).await;
         assert_eq!(
