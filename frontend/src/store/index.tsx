@@ -5,7 +5,7 @@ import categoriesReducer from "./components/categories.tsx";
 import tagReducer from "./components/tags.tsx";
 import NoteReducer from "./components/note.tsx";
 import { setupListeners } from '@reduxjs/toolkit/query';
-import { AGENT_TURN_DONE_EVENT } from '../components/UserCenter/agentTurn';
+import { AGENT_TURN_DONE_EVENT, isConfirmationAttempt } from '../components/UserCenter/agentTurn';
 import { catalogApi } from './catalogApi';
 import {galleryApi} from '../apis/galleryApi';
 import {privateApi, FAVORITES_CHANGED_EVENT, UNREAD_CHANGED_EVENT} from '../apis/privateApi';
@@ -25,7 +25,8 @@ const store = configureStore({
 })
 
 setupListeners(store.dispatch);
-window.addEventListener(AGENT_TURN_DONE_EVENT, () => {
+window.addEventListener(AGENT_TURN_DONE_EVENT, event => {
+    if (!isConfirmationAttempt(event)) return;
     store.dispatch(catalogApi.util.invalidateTags(['Search']));
     store.dispatch(galleryApi.util.invalidateTags(['Images','Folders']));
     store.dispatch(privateApi.util.invalidateTags(['Favorites','FavoriteState','Unread']));
