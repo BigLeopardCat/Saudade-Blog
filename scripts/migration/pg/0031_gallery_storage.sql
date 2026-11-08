@@ -18,4 +18,5 @@ CREATE TABLE IF NOT EXISTS image_transfer (
     finished_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS image_transfer_due ON image_transfer(next_attempt_at) WHERE finished_at IS NULL;
+CREATE INDEX IF NOT EXISTS image_transfer_owner ON image_transfer(requested_by,created_at DESC);
 COMMIT;

@@ -29,7 +29,7 @@ export default function ImageActionConfirmation({action,items,folders,r2Availabl
         else setPreview(await prepare(deleting?{action:'delete',imageIds}:{action:'move',imageIds,folderId:target!}).unwrap())
       }else if(transfer){
         const job=await changeTransfer({version:transfer.version,expiresAt:transfer.expiresAt,intent:transfer.intent}).unwrap()
-        if(job.status==='failed')throw new Error(job.error||'传输失败，源文件保留')
+        if(job.status==='failed')throw new Error(job.error||'传输未完成，请核对图库状态')
         void message.success(['published','complete'].includes(job.status)?'图片已'+label:'已提交'+label+'任务，可以离开页面')
         onComplete()
       }else if(preview){

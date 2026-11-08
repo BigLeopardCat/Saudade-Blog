@@ -29,7 +29,7 @@ pub(crate) struct Location {
     pub key: String,
 }
 pub(crate) fn error() -> DbErr {
-    DbErr::Custom("图片存储不可用，请检查存储设置；源文件保持不变".into())
+    DbErr::Custom("图片存储暂不可用，请核对图库与存储设置".into())
 }
 fn key(value: &str) -> bool {
     !value.is_empty() && value.len() <= 1024 && value.split('/').all(deletions::safe_filename)

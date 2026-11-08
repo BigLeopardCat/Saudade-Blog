@@ -135,8 +135,17 @@ async fn deliver(db: &DatabaseConnection) -> Result<bool, DbErr> {
         if let Some(row) = current {
             let status: String = row.try_get("", "status")?;
             let failed = job.attempts >= 5 && status == "copying";
+            let message = if failed {
+                "本次传输未发布，请核对图库与存储设置后重新准备"
+            } else if status == "published" {
+                "图库已更新，源文件清理等待后台重试"
+            } else if status == "failed" {
+                "传输未发布，临时副本清理等待后台重试"
+            } else {
+                "传输暂未完成，后台将重试"
+            };
             db.execute(sql("UPDATE image_transfer SET status=CASE WHEN $3 THEN 'failed' ELSE status END,last_error=$4,next_attempt_at=now()+interval '30 seconds' WHERE id=$1 AND lease::text=$2",
-                vec![job.id.clone().into(),job.lease.clone().into(),failed.into(),"存储操作暂未完成，源文件保持不变；后台将重试".into()])).await?;
+                vec![job.id.clone().into(),job.lease.clone().into(),failed.into(),message.into()])).await?;
             tracing::warn!(event="gallery_transfer_retry",job_id=%job.id,attempt=job.attempts,status,"gallery transfer remains recorded");
         }
     }

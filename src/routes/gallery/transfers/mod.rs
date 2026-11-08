@@ -204,7 +204,7 @@ fn respond<T: Serialize>(result: Result<T, DbErr>) -> Response {
         Err(_) => (
             StatusCode::CONFLICT,
             Json(ApiResponse::<serde_json::Value>::error(
-                "图片或存储目标已变化，请刷新后重试；源文件未被删除",
+                "图片或存储目标暂不可确认，请刷新后重试",
             )),
         )
             .into_response(),
