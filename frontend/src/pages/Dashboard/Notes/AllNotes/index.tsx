@@ -41,6 +41,7 @@ import {resolveApiAssetUrl} from "../../../../utils/runtimeApi";
 import NoteTagSelect from "../../../../components/NoteTagSelect/index.tsx";
 import {joinNoteTags, parseNoteTags} from "../../../../utils/noteTags";
 import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
+import {isConfirmationAttempt} from "../../../../components/UserCenter/agentTurn";
 import {
     DEFAULT_LIST_QUERY,
     PAGE_SIZE_OPTIONS,
@@ -181,7 +182,7 @@ const AllNotes = () => {
     useEffect(() => { setSelectedRowKeys([]); }, [selectionScope]);
 
     const reloadList = (_background: boolean) => result.refetch().then(() => {});
-    useLiveRefresh(() => reloadList(true), { skip: () => isModalOpen || !!editRow });
+    useLiveRefresh(() => reloadList(true), { skip: () => isModalOpen || !!editRow, agentEvent: isConfirmationAttempt });
     const refreshNotes = () => dispatch(adminNotesApi.util.invalidateTags(['AdminNotes', 'AdminNoteCount']));
 
     const tableBoxRef = useRef<HTMLDivElement>(null);

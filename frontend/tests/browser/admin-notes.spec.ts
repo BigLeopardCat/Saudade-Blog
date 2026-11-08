@@ -75,3 +75,24 @@ test('late old-filter data cannot replace the current selection',async({page:bro
   await expect(browser.getByText('新结果2',{exact:true})).toBeVisible()
   await expect(browser.getByText('旧结果1',{exact:true})).toHaveCount(0)
 })
+
+
+test('chat and unapproved preparations do not reload articles; a confirmation attempt refreshes the same page',async({page:browser,sandboxURL})=>{
+  const calls=await mock(browser,async(route,url)=>{
+    await route.fulfill({json:page([row(9)],21,Number(url.searchParams.get('page')))})
+  })
+  await browser.goto(sandboxURL+'#query='+encodeURIComponent('?page=2'))
+  await expect(browser.getByText('文章9',{exact:true})).toBeVisible()
+  expect(calls).toHaveLength(1)
+  await browser.evaluate(()=>{
+    for(const detail of [undefined,{confirmationAttempted:false},{articleIdsToRefresh:[9]}])
+      window.dispatchEvent(new CustomEvent('agent-turn-done',{detail}))
+  })
+  // Flush browser effects; an ignored event must never enqueue a query.
+  await browser.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  expect(calls).toHaveLength(1)
+  await browser.evaluate(()=>window.dispatchEvent(new CustomEvent('agent-turn-done',{
+    detail:{confirmationAttempted:true,articleIdsToRefresh:[9]}})))
+  await expect.poll(()=>calls.length).toBe(2)
+  expect(calls[1].searchParams.get('page')).toBe('2')
+})

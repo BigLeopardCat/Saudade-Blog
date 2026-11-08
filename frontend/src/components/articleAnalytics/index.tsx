@@ -12,7 +12,10 @@ const CountUp = cjsDefault(CountUpDefault)
 
 const ArticleAnalytics = () => {
     const tagCount = useSelector((state: RootState) => state.tags.tagCount)
-    const notes = adminNotesApi.useAdminNoteCountQuery();
+    const notes = adminNotesApi.useAdminNoteCountQuery(undefined, {
+        pollingInterval: 60_000, skipPollingIfUnfocused: true,
+        refetchOnFocus: true, refetchOnMountOrArgChange: 60,
+    });
     const categoryCount = useSelector((state: RootState) => state.categories.categoryCount)
     const navigate = useNavigate();
     const list: {
