@@ -35,8 +35,8 @@ const head = read('src/frontHome/Head/index.tsx');
 const record = read('src/components/articleRecord/index.tsx');
 const userStore = read('src/store/components/user.tsx');
 
-console.log('① 后台壳自己把社媒设置拉回来（这次的修复点）');
-const dashEffect = effectBodyAfter(dash, '//初始渲染');
+console.log('① 后台壳挂载时读取社媒设置');
+const dashEffect = effectBodyAfter(dash, 'const Dashboard =');
 ok(dashEffect !== null, '取到了后台壳的挂载 effect 函数体', dashEffect);
 ok(dashEffect && dashEffect.includes('dispatch<any>(fetchUserInfo())'),
     '切片抓对了 effect（同一段里有 fetchUserInfo 这句锚）');
@@ -46,8 +46,6 @@ ok(/import\s*\{[^}]*\bfetchSocial\b[^}]*\}\s*from\s*["'][^"']*store\/components\
     'fetchSocial 是从 store/components/user 引进来（不是别处另写一份）');
 
 console.log('② 前台壳那一句仍在（两条入口各拉各的，不许二选一）');
-// 标记要取在 useEffect **之前**的那一行：`effectBodyAfter` 是从标记往后找 useEffect，
-// 拿 effect 体内的东西当标记会滑到下一段去（第一版就在这儿假红过）。
 const headEffect = effectBodyAfter(head, 'const blogTitle = useSelector');
 ok(headEffect !== null, '取到了前台壳的挂载 effect 函数体', headEffect);
 ok(headEffect && /dispatch<any>\(fetchSocial\(\)\)/.test(headEffect),
@@ -57,8 +55,6 @@ console.log('③ 消费侧：图的名字只从站点设置现取，没有第二
 ok(/state\.user\.social\?\.socialGithub/.test(record),
     'articleRecord 从 state.user.social.socialGithub 取名');
 ok(!/fetchSocial/.test(record), 'articleRecord 自己不拉数据（拉取的负责方是壳，不是卡片）');
-// 剥注释再找：这份文件的头注**故意**记着旧值 `ghchart.rshah.org/409ba5/BigLeopardCat`
-// （"这里以前写死过"是这段代码存在的理由），注释里的字不算数 —— 行注释也要剥。
 const recordCode = record.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 ok(!/BigLeopardCat/.test(recordCode), '代码（去注释后）里没有写死的用户名');
 ok(/ghchart\.rshah\.org\/409ba5\/\$\{/.test(record), '外链模板仍是 ghchart + 现取的用户名变量');

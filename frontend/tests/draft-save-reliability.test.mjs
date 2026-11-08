@@ -63,12 +63,14 @@ try {
             versionRef: ref(undefined), conflictedRef: ref(false),
         };
         const send = (data, kind) => {const d = deferred(); saves.push({data, kind, ...d}); return d.promise;};
+        const invalidations = [];
         const env = {
             dayjs: () => ({format: () => '2026-10-23 12:00:00'}),
             editorRef: ref({read: () => payload.noteContent}), noteContent: '旧正文', coverImg: '', coverCrop: {}, cropDirty: {}, coverCropCarousel: {}, aiContent: '',
             buildPayload: () => payload, message: {success: () => {}, error: () => {}},
             updateNote: (id, data) => {updates.push({id, data}); return Promise.resolve(response(Number(id)));},
-            dispatch: () => {}, fetchNoteList: () => {}, setOpen: () => {}, goBackToList: () => {}, errMsg: () => '保存失败',
+            dispatch: action => invalidations.push(action.payload),
+            adminNotesApi: {util: {invalidateTags: tags => ({type:'invalidate',payload:tags})}}, setOpen: () => {}, goBackToList: () => {}, errMsg: () => '保存失败',
             ...refs, getToken: () => token, setSaveState: v => states.push(v), setSavedAt: () => {}, setIsRevision: () => {},
             autosaveDraft: p => send(p, 'normal'), postDraftKeepalive: p => send(p, 'keepalive'), runtimeBaseURL: '',
             ok: r => r.status === 200 && r.data.code === 200, isBlank: s => !s.trim(),
@@ -76,7 +78,7 @@ try {
             useEffect: fn => fn(), window: target, document: {...target, hidden: false},
         };
         const api = new Function(...Object.keys(env), body)(...Object.values(env));
-        return {...api, refs, saves, updates, states, timers, events, edit: value => {payload = {...payload, noteContent: value}}, switchAccount: () => {token = 'different-account'}};
+        return {...api, refs, saves, updates, states, timers, events, invalidations, edit: value => {payload = {...payload, noteContent: value}}, switchAccount: () => {token = 'different-account'}};
     }
     {
         const s = scenario();
@@ -160,6 +162,7 @@ try {
         assert.equal(s.updates.length, 1, '同一提交仅发布一次');
         assert.equal(s.updates[0].id, '45', '发布采用在途首次创建返回的 id');
         assert.equal(s.refs.stopAutosaveRef.current, true);
+        assert.deepEqual(s.invalidations, [['AdminNotes','AdminNoteCount']], '确认发布后才失效列表与数量');
     }
     {
         const s = scenario(); s.flushAutosave();
@@ -167,6 +170,7 @@ try {
         s.saves[0].resolve(response(45,409));
         await publishing;
         assert.equal(s.updates.length,0,'在途自动保存发生冲突时不能继续发布');
+        assert.deepEqual(s.invalidations, [], '冲突不能发出发布成功的缓存更新');
         assert.equal(s.refs.stopAutosaveRef.current,false,'冲突后仍保留本地草稿');
     }
     console.log('draft-save-reliability: UTF-8、确认回执、单飞、恢复重试、账号与卸载隔离通过');
