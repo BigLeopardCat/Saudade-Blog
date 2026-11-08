@@ -1,5 +1,5 @@
 \set ON_ERROR_STOP on
--- Run outside a transaction; this is the online counterpart of 0010 and 0031.
+-- Run outside a transaction; this is the online counterpart of 0010 and 0033.
 SET lock_timeout = '2s';
 SET statement_timeout = '120s';
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chat_history_user_latest

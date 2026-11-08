@@ -45,6 +45,22 @@ class IndexContract(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.expected = db.make_contract(catalog(), SHA)
 
+    def test_schema_migrations_reject_duplicate_numbers_even_when_both_are_classified(self):
+        spec = importlib.util.spec_from_file_location(
+            "schema_files_fixture", ROOT / "scripts/migration/pg/ci_schema_files.py")
+        schema = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(schema)
+        with tempfile.TemporaryDirectory() as directory:
+            names = ["0001_alpha.sql", "0001_beta.sql"]
+            for name in names:
+                (Path(directory) / name).write_text("SELECT 1;")
+            with patch.object(schema, "HERE", Path(directory)), \
+                    patch.object(schema, "LOAD", names), patch.object(schema, "EXCLUDED", set()):
+                self.assertEqual(schema.self_test(), 1)
+                (Path(directory) / names[1]).unlink()
+                with patch.object(schema, "LOAD", names[:1]):
+                    self.assertEqual(schema.self_test(), 0)
+
     def test_private_connection_configuration_and_explicit_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             file = Path(directory) / "database-check.json"
@@ -219,7 +235,7 @@ class PostgreSQLContract(unittest.TestCase):
         self.sql(self.name, "CREATE TABLE chat_history(id integer PRIMARY KEY, user_id integer, conversation_id integer);"
             "CREATE TABLE chat_task_input(message_id integer);"
             "CREATE TABLE image_generation(image_id integer, retry_of uuid);")
-        for migration in ["0010_chat_latest_index.sql", "0031_deletion_reference_indexes.sql"]:
+        for migration in ["0010_chat_latest_index.sql", "0033_deletion_reference_indexes.sql"]:
             self.sql(self.name, (ROOT / "scripts/migration/pg" / migration).read_text())
         got = db.read_catalog(self.name)
         names = {i["name"] for i in got["indexes"]}

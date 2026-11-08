@@ -35,7 +35,7 @@ LOAD = [
     "0028_turn_cleanup.sql",
     "0029_image_job_lifecycle.sql",
     "0030_gallery_image_deletion.sql",
-    "0031_deletion_reference_indexes.sql",
+    "0033_deletion_reference_indexes.sql",
 ]
 
 EXCLUDED = {
@@ -63,7 +63,12 @@ def self_test() -> int:
     on_disk = sorted(f.name for f in HERE.glob("0[0-9][0-9][0-9]_*.sql"))
     known = classified()
 
+    versions: dict[str, str] = {}
     for name in on_disk:
+        version = name[:4]
+        if version in versions:
+            bad.append(f"迁移编号 {version} 重复：{versions[version]}、{name}")
+        versions[version] = name
         if name not in known:
             bad.append(f"{name} 未归类；加入 LOAD，或在 EXCLUDED 中说明排除原因")
 

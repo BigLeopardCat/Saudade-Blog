@@ -75,7 +75,7 @@ psql -X -v ON_ERROR_STOP=1 -d saudade_blog -f scripts/migration/pg/maintenance/r
 psql -X -v ON_ERROR_STOP=1 -d saudade_blog -f scripts/migration/pg/maintenance/analyze.sql
 ```
 
-`reconcile_indexes.sql` 是 `0010` 与 `0031` 的在线并发建索引版本；`IF NOT EXISTS` 不证明
+`reconcile_indexes.sql` 是 `0010` 与 `0033` 的在线并发建索引版本；`IF NOT EXISTS` 不证明
 已有定义正确，执行后必须用 CI 契约复核。普通新建库仍执行编号迁移，不在应用请求中执行 DDL。
 
 ### SQL 耗时观测
