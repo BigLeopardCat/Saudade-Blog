@@ -44,12 +44,12 @@ fn validate_url(url: &str) -> Result<(), DbErr> {
     Ok(())
 }
 
-async fn register(state: &Arc<AppState>, url: &str, name: Option<&str>) -> Result<(), DbErr> {
-    match name {
+async fn register(state: &Arc<AppState>, url: &str, name: Option<&str>) -> Result<String, DbErr> {
+    let id=match name {
         Some(name) => super::gallery::register_named_image(&state.db, url, name).await?,
         None => super::gallery::register_image(&state.db, url).await?,
     };
-    Ok(())
+    Ok(super::gallery::read(&state.db,0,id).await?.image_url)
 }
 
 async fn write_local(dir: &Path, name: &str, data: &[u8]) -> Result<String, DbErr> {
@@ -81,7 +81,7 @@ async fn registered_generation(
         .db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "SELECT i.image_url FROM images i WHERE i.image_url LIKE $1 \
+            "SELECT i.image_url FROM images i LEFT JOIN image_location l ON l.image_id=i.image_key WHERE (i.image_url LIKE $1 OR l.source_url LIKE $1) \
          AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key) \
          ORDER BY i.image_key DESC LIMIT 1",
             [format!("%/{prefix}%").into()],
@@ -134,7 +134,7 @@ fn normalize_file_name(raw: &str, sniffed: &str) -> String {
 }
 
 // Quota listing and PUT share a process-local critical section.
-static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 字节换算为面板使用的 GiB。
 fn gib(bytes: u64) -> f64 {
@@ -175,7 +175,7 @@ async fn try_r2_upload(
         return required.then(|| ApiResponse::error("R2 图库尚未完整配置，请检查存储设置"));
     }
     let Some(creds) = r2::load_creds() else {
-        return Some(ApiResponse::error("R2 图库缺少服务端凭据，请检查存储配置"));
+        return required.then(|| ApiResponse::error("R2 图库缺少服务端凭据，请检查存储配置"));
     };
     let key = format!("{}/{}", cfg.prefix, object);
     let url = r2::public_url(&cfg.public_base, &key);
@@ -209,14 +209,15 @@ async fn try_r2_upload(
         tracing::warn!("upload to R2 failed: {error}");
         return Some(ApiResponse::error("R2 上传未完成，请稍后重试"));
     }
-    if let Err(error) = register(state, &url, named.then_some(name)).await {
+    let registered=register(state, &url, named.then_some(name)).await;
+    if let Err(error) = &registered {
         // A failed commit response is ambiguous; never delete a possibly registered object.
         tracing::error!(storage_key = %key, "uploaded image registration failed: {error}");
         return Some(ApiResponse::error(
             "图片未完成图库登记，请刷新图库核对后重试",
         ));
     }
-    Some(ApiResponse::success(url))
+    Some(ApiResponse::success(registered.expect("registration succeeded")))
 }
 
 pub async fn upload_image(
@@ -315,7 +316,7 @@ pub async fn upload_image(
     }
     let result = async {
         let url = write_local(&upload_dir, &object, &data).await?;
-        register(&state, &url, Some(&file_name)).await?;
+        let url=register(&state, &url, Some(&file_name)).await?;
         Ok::<_, DbErr>(url)
     }
     .await;
@@ -616,6 +617,5 @@ pub(crate) async fn persist_generated(
         };
     }
     let url = write_local(&upload_dir(), &object, bytes).await?;
-    register(state, &url, None).await?;
-    Ok(url)
+    register(state, &url, None).await
 }

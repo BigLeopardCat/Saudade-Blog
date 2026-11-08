@@ -2,6 +2,12 @@ import {test,expect} from './sandbox'
 import type {GenerationJob} from '../../src/apis/imageGenerationApi'
 
 test.use({entry:'gallery',viewport:{width:1280,height:900}})
+test.beforeEach(async({page,sandboxURL})=>{
+  await page.route(`${sandboxURL}api/protect/gallery/transfers`,route=>{
+    expect(route.request().method()).toBe('GET')
+    return route.fulfill({json:{code:200,data:[]}})
+  })
+})
 test('image generation requires request approval and a separate visible-result acceptance',async({page,sandboxURL})=>{
   const id='6b9e2bf1-56af-428c-8177-e3ad0641e036'
   let job:GenerationJob|null=null

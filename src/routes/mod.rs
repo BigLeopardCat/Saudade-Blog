@@ -239,6 +239,7 @@ pub fn create_router(state: AppState) -> Router {
 
         .route("/api/monitor/log", post(monitor::report_log))
 
+        .route("/api/public/media/{id}", get(gallery::storage::media))
         .route("/api/public/graph/query", post(graph::graph_query))
         .route("/api/public/graph/manifest", get(graph::graph_manifest))
         // 文件名由 handler 白名单校验（`graph-<id>.js`），见 valid_artifact_name
@@ -263,7 +264,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/image-generation/jobs/{id}/approve", post(image_generation::approve))
         .route("/api/protect/image-generation/jobs/{id}/accept", post(image_generation::accept))
         .route("/api/protect/image-generation/jobs/{id}/reject", post(image_generation::reject))
+        .route("/api/protect/gallery/transfers/prepare", post(gallery::transfers::prepare))
+        .route("/api/protect/gallery/transfers", post(gallery::transfers::change).get(gallery::transfers::list))
+        .route("/api/protect/gallery/transfers/{id}", get(gallery::transfers::status))
         .route("/api/protect/gallery/images", get(gallery::list))
+        .route("/api/protect/gallery/images/{id}/content", get(gallery::storage::content))
         .route("/api/protect/gallery/images/{id}", get(gallery::detail).put(gallery::metadata::change))
         .route("/api/protect/gallery/folders", get(gallery::folders::list).post(gallery::folders::create))
         .route("/api/protect/gallery/folders/{id}", delete(gallery::folders::remove))

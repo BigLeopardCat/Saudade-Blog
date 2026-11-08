@@ -56,6 +56,7 @@ async fn main() {
         report_lockout_secs,
     );
 
+    saudade_blog::routes::gallery::transfers::start(SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone()));
     saudade_blog::routes::gallery::start_cleanup(SqlxPostgresConnector::from_sqlx_postgres_pool(
         pool.clone(),
     ));
@@ -85,6 +86,7 @@ async fn main() {
             saudade_blog::lifecycle::shutdown_signal().await;
             saudade_blog::routes::image_generation::stop_accepting();
             saudade_blog::routes::gallery::stop_cleanup();
+            saudade_blog::routes::gallery::transfers::stop();
         },
     )
     .await

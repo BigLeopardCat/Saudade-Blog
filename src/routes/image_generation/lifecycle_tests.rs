@@ -438,7 +438,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
     let copies: i64 = state
         .db
         .query_one(stmt(
-            "SELECT count(*)::bigint AS n FROM images WHERE image_url LIKE $1",
+            "SELECT count(*)::bigint AS n FROM images i JOIN image_location l ON l.image_id=i.image_key WHERE l.source_url LIKE $1",
             vec![format!("%/{storage_prefix}%").into()],
         ))
         .await
@@ -460,7 +460,10 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
             .is_ok(),
         "Deleting generation history must retain the accepted gallery image"
     );
-    let filename = url.strip_prefix("/api/protect/download/").unwrap();
+    assert!(crate::routes::gallery::storage::public_id(&url).is_some());
+    let image=crate::routes::gallery::read(&state.db,fixture.uid,image_id).await.unwrap();
+    let location=crate::routes::gallery::storage::resolve(&state.db,&image).await.unwrap();
+    let filename = location.key.as_str();
     assert!(filename.starts_with(&storage_prefix) && !filename.contains('/'));
     let path = crate::utils::upload_dir().join(filename);
     assert_eq!(tokio::fs::read(&path).await.unwrap(), bytes);

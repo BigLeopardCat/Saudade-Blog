@@ -147,9 +147,7 @@ pub fn username_reject(name: &str) -> Option<&'static str> {
     None
 }
 
-/// 上传件落盘目录。**没配 `UPLOAD_DIR` 时是仓库工作区里的 `./uploads`** ——
-/// 那是出厂默认（方便别人 clone 下来直接跑），生产应当显式把它指到工作区之外：
-/// 部署脚本哪天加上 `--delete` / `git clean`，这里是唯一会丢的东西（见 `.env.example`）。
+/// Local media defaults to ./uploads; production sets a persistent UPLOAD_DIR outside releases.
 pub fn upload_dir() -> PathBuf {
     if let Ok(dir) = env::var("UPLOAD_DIR") {
         return PathBuf::from(dir);

@@ -3,6 +3,13 @@ import type {GalleryImage} from '../../src/apis/galleryApi'
 
 test.use({entry:'gallery',viewport:{width:1280,height:900}})
 
+test.beforeEach(async({page,sandboxURL})=>{
+  await page.route(`${sandboxURL}api/protect/gallery/transfers`,route=>{
+    expect(route.request().method()).toBe('GET')
+    return route.fulfill({json:{code:200,data:[]}})
+  })
+})
+
 test('gallery opens details, selects explicitly, uses two list columns and updates metadata',async({page,sandboxURL})=>{
   let rows:GalleryImage[]=[1,2].map(id=>({imageKey:id,imageUrl:'/fixture/image-'+id+'.svg',
     displayName:'图片'+id,description:id===1?'清晨山景':'夕阳湖面',folderId:0,isFavorite:false,version:'a'.repeat(64)}))

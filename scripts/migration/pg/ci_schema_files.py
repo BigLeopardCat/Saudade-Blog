@@ -35,6 +35,8 @@ LOAD = [
     "0028_turn_cleanup.sql",
     "0029_image_job_lifecycle.sql",
     "0030_gallery_image_deletion.sql",
+    "0031_gallery_storage.sql",
+    "0032_gallery_public_ids.sql",
     "0033_deletion_reference_indexes.sql",
 ]
 

@@ -91,6 +91,10 @@ for(const mobile of [false,true]){
   })
 }
 
+test.beforeEach(async({page})=>{
+  await page.route('**/api/protect/gallery/transfers',route=>route.fulfill({json:{code:200,data:[]}}))
+})
+
 test('an underfilled first screen keeps fetching cursors without requiring a scroll event',async({page,sandboxURL})=>{
   await page.setViewportSize({width:1280,height:1400})
   const calls=await mockGallery(page,({before})=>before===null?{items:[image(3)],nextCursor:3}
