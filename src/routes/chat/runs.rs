@@ -288,6 +288,79 @@ mod tests {
     use super::*;
     use sea_orm::{Database, TransactionTrait};
 
+    fn state(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
+        Arc::new(AppState {
+            db,
+            rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
+            post_limiter: crate::risk::PostRateLimiter::new(),
+            report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+        })
+    }
+
+    #[tokio::test]
+    async fn execution_rejects_invalid_ticket_before_database_access() {
+        let state = state(sea_orm::MockDatabase::new(DbBackend::Postgres).into_connection());
+        let request = Request::builder()
+            .header("X-Chat-Run-Ticket", "invalid")
+            .body(Body::from("{}"))
+            .unwrap();
+        assert_eq!(
+            execute(State(state.clone()), request).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let db = Arc::try_unwrap(state).ok().unwrap().db;
+        assert!(db.into_transaction_log().is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_execution_rechecks_revocation_role_freeze_and_deleted_actor() {
+        if std::env::var("BLOG_DELEGATION_SECRET").is_err() {
+            return;
+        }
+        let body = r#"{"conversation_id":42,"message":"hello"}"#;
+        let ticket =
+            run_ticket::issue(7, 3, "user".into(), 42, "a".repeat(32), body.as_bytes()).unwrap();
+        for (status, version, role, exists) in [
+            (1, 3, "user", true),
+            (0, 4, "user", true),
+            (0, 3, "admin", true),
+            (0, 3, "user", false),
+        ] {
+            let actor = user::Model {
+                id: 7,
+                username: "fixture".into(),
+                nickname: "fixture".into(),
+                nickname_auto_renamed: 0,
+                avatar: None,
+                password: "fixture".into(),
+                role: role.into(),
+                status,
+                token_version: version,
+                chat_quota_used: 0,
+                muted_until: None,
+            };
+            let state = state(
+                sea_orm::MockDatabase::new(DbBackend::Postgres)
+                    .append_query_results([if exists { vec![actor] } else { vec![] }])
+                    .into_connection(),
+            );
+            let request = Request::builder()
+                .header("X-Chat-Run-Ticket", &ticket)
+                .body(Body::from(body))
+                .unwrap();
+            assert_eq!(
+                execute(State(state.clone()), request).await.status(),
+                StatusCode::UNAUTHORIZED
+            );
+            let db = Arc::try_unwrap(state).ok().unwrap().db;
+            assert_eq!(
+                db.into_transaction_log().len(),
+                1,
+                "no claim or business mutations"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn postgres_request_claim_rejects_replay_and_other_owners() {
         let Ok(url) = std::env::var("TEST_PG_URL") else {
