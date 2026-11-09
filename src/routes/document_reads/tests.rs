@@ -494,3 +494,33 @@ fn directory_continuations_reject_wrong_revision_and_invalid_combinations() {
         StatusCode::CONFLICT
     );
 }
+
+#[test]
+fn metadata_is_not_a_body_read_and_rejects_body_ranges() {
+    let mut doc = source("## Private looking text\nbody must not be returned");
+    doc.metadata = json!({"authorName":null,"description":"existing summary",
+        "authorNameTruncated":false,"descriptionTruncated":false});
+    let page = frame(
+        doc,
+        ReadQuery {
+            view: View::Metadata,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(page["metadata"]["description"], "existing summary");
+    assert!(page["metadata"]["authorName"].is_null());
+    assert!(page.get("content").is_none());
+    assert_eq!(page["readComplete"], false);
+    assert!(page["source"].is_null());
+    assert!(page.get("sections").is_none());
+    assert!(page.get("totalChars").is_none());
+    for input in [
+        json!({"view":"metadata","offset":1}),
+        json!({"view":"metadata","section":"title"}),
+        json!({"view":"metadata","limit":1}),
+    ] {
+        let query: ReadQuery = serde_json::from_value(input).unwrap();
+        assert!(frame(source("body"), query).is_err());
+    }
+}
