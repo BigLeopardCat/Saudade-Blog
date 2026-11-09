@@ -1,3 +1,5 @@
+pub mod runs;
+mod run_ticket;
 mod task_manager;
 pub use task_manager::{
     cancel as cancel_task_handler, cancel_schedule as cancel_schedule_handler,
@@ -419,8 +421,11 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
         )
             .into_response();
     }
-    let expected_version = crate::auth_jwt::claims_from_headers(req.headers())
-        .and_then(|c| c.ver)
+    let expected_version = req
+        .extensions()
+        .get::<run_ticket::Actor>()
+        .map(|actor| actor.version)
+        .or_else(|| crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver))
         .unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,

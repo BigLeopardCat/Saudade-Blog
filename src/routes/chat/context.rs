@@ -8,7 +8,11 @@ pub(super) async fn prepare_chat(
 ) -> Result<ChatCtx, (StatusCode, Json<ChatResponse>)> {
     // 先取链路追踪 id（headers 在 into_body 前可读）
     let trace_id = trace_id_of(&req);
-    let auth = auth_jwt::auth_uid(&state.db, req.headers()).await;
+    let auth = if let Some(actor) = req.extensions().get::<super::run_ticket::Actor>() {
+        Ok(actor.uid)
+    } else {
+        auth_jwt::auth_uid(&state.db, req.headers()).await
+    };
 
     // Bound inline images before forwarding the request.
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {

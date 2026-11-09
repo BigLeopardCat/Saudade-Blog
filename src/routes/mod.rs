@@ -217,6 +217,10 @@ pub fn create_router(state: AppState) -> Router {
         // Agent Chat
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/stream", post(chat::chat_stream_handler))
+        .route("/api/chat/runs", get(chat::runs::list).post(chat::runs::create))
+        .route("/api/chat/runs/execute", post(chat::runs::execute))
+        .route("/api/chat/runs/{run_id}/events", get(chat::runs::events))
+        .route("/api/chat/runs/{run_id}/cancel", post(chat::runs::cancel))
         .route("/api/chat/service/status", get(chat::service_status))
         .route("/api/chat/tasks", get(chat::tasks_handler))
         .route("/api/chat/tasks/cancel", post(chat::cancel_task_handler))

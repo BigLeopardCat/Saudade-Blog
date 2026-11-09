@@ -118,7 +118,8 @@ pub async fn create_chat_assertion(
     )
 }
 
-/// Only call after validating a real browser session against the current actor row.
+/// Only call after validating a browser session or its single-use chat-run ticket
+/// against the current actor row.
 /// Delegated credentials cannot reach chat/task proxy routes to renew themselves.
 pub(crate) fn create_tool_assertion(user_id: i32, role: Option<&str>, version: i32) -> String {
     let now = chrono::Utc::now().timestamp() as usize;
