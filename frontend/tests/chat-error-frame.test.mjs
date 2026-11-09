@@ -40,9 +40,10 @@ const errMsgSrc = sliceBetween(
 );
 
 /** 在桩环境里跑一遍真帧分支：给载荷，返回它抛出来的那个 error。 */
-const branch = new Function('type', 'data', branchSrc + '\nreturn null;');
-const handleFrame = (wire) => {
-  const parser = globalThis.__waifuChatProtocol.createStream(({type, data}) => branch(type, data));
+const branch = new Function('type', 'data', 'ctx', branchSrc + '\nreturn null;');
+const handleFrame = (wire, stoppedByUser = false) => {
+  const ctx = {state: {stoppedByUser}};
+  const parser = globalThis.__waifuChatProtocol.createStream(({type, data}) => branch(type, data, ctx));
   parser.feed(wire);
 };
 /** 在桩环境里跑一遍真 errMsg 取值。 */
@@ -95,6 +96,11 @@ if (nastyThrown) {
 const usedErr = new Error('这张确认卡片已经用过一次了');
 usedErr.userText = '这张确认卡片已经用过一次了';
 eq(errMsgOf(usedErr), '这张确认卡片已经用过一次了', '⑤ 与 409 先例同形：userText 优先于前缀');
+
+let stopped;
+try { handleFrame(frameOf(SERVER_TEXT), true); } catch (error) { stopped = error; }
+eq(stopped?.name, 'AbortError', '显式停止保留取消语义');
+eq(stopped?.userText, SERVER_TEXT, '停止后的服务端终态仍保留原文');
 
 console.log(`\n════ ${pass} 通过 / ${fail} 失败 ════`);
 process.exit(fail ? 1 : 0);
