@@ -45,7 +45,7 @@ pub(super) fn issue(
         role,
         conversation_id: cid,
         run_id,
-        digest: format!("{:x}", Sha256::digest(body)),
+        digest: hex::encode(Sha256::digest(body)),
         exp: (chrono::Utc::now().timestamp() + 900) as usize,
         aud: "blog-chat-run".into(),
     };
@@ -71,7 +71,7 @@ fn verify_with_key(ticket: &str, body: &[u8], key: &[u8]) -> Option<Actor> {
     (actor.uid > 0
         && actor.conversation_id > 0
         && valid_id(&actor.run_id)
-        && actor.digest == format!("{:x}", Sha256::digest(body)))
+        && actor.digest == hex::encode(Sha256::digest(body)))
     .then_some(actor)
 }
 
@@ -89,7 +89,7 @@ mod tests {
             role: "user".into(),
             conversation_id: 42,
             run_id: "a".repeat(32),
-            digest: format!("{:x}", Sha256::digest(body)),
+            digest: hex::encode(Sha256::digest(body)),
             exp: (chrono::Utc::now().timestamp() + 60) as usize,
             aud: "blog-chat-run".into(),
         };

@@ -145,13 +145,14 @@ pub async fn list(
         Ok(a) => a,
         Err(e) => return e,
     };
-    let mut request = transport::client().get(endpoint("")).header(
+    let path = query
+        .conversation_id
+        .map(|cid| format!("?conversation_id={cid}"))
+        .unwrap_or_default();
+    let request = transport::client().get(endpoint(&path)).header(
         "X-Agent-Assertion",
         auth_jwt::create_agent_assertion(actor.id, Some(&actor.role)),
     );
-    if let Some(cid) = query.conversation_id {
-        request = request.query(&[("conversation_id", cid)]);
-    }
     relay(request, false).await
 }
 
@@ -176,12 +177,14 @@ pub async fn events(
     }
     relay(
         transport::client()
-            .get(endpoint(&format!("/{run_id}/events")))
+            .get(endpoint(&format!(
+                "/{run_id}/events?offset={}",
+                query.offset
+            )))
             .header(
                 "X-Agent-Assertion",
                 auth_jwt::create_agent_assertion(actor.id, Some(&actor.role)),
-            )
-            .query(&[("offset", query.offset)]),
+            ),
         true,
     )
     .await
