@@ -295,27 +295,31 @@ mod tests {
         };
         let db = Database::connect(url).await.unwrap();
         let transaction = db.begin().await.unwrap();
-        let row = transaction.query_one(Statement::from_string(DbBackend::Postgres,
-            "INSERT INTO conversation(user_id,title) VALUES(2147483647,'background claim probe') RETURNING id"))
-            .await.unwrap().unwrap();
-        let cid: i32 = row.try_get("", "id").unwrap();
         let run_id = uuid::Uuid::new_v4().simple().to_string();
+        let row = transaction.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+            "INSERT INTO \"user\"(username,nickname,password,role) VALUES($1,$1,'fixture','user') RETURNING id",
+            [format!("run-{run_id}").into()])).await.unwrap().unwrap();
+        let uid: i32 = row.try_get("", "id").unwrap();
+        let row = transaction.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+            "INSERT INTO conversation(user_id,title) VALUES($1,'background claim probe') RETURNING id",
+            [uid.into()])).await.unwrap().unwrap();
+        let cid: i32 = row.try_get("", "id").unwrap();
         assert_eq!(
-            claim(&transaction, 2147483647, &run_id, cid)
+            claim(&transaction, uid, &run_id, cid)
                 .await
                 .unwrap()
                 .rows_affected(),
             1
         );
         assert_eq!(
-            claim(&transaction, 2147483647, &run_id, cid)
+            claim(&transaction, uid, &run_id, cid)
                 .await
                 .unwrap()
                 .rows_affected(),
             0
         );
         assert_eq!(
-            claim(&transaction, 7, &run_id, cid)
+            claim(&transaction, 0, &run_id, cid)
                 .await
                 .unwrap()
                 .rows_affected(),
