@@ -1,6 +1,7 @@
 //! Human approval owns paid generation and acceptance; Agent proposes only immutable jobs.
 mod acceptance;
 pub mod chat;
+pub mod tasks;
 mod errors;
 pub mod events;
 mod history;

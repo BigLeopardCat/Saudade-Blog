@@ -1,4 +1,4 @@
-/// 博主本人（uid=1）：后台全权。
+/// 后台管理员角色。
 pub const ROLE_ADMIN: &str = "admin";
 
 pub const ROLE_SUPERADMIN: &str = "superadmin";
@@ -17,8 +17,7 @@ pub fn is_known_role(role: &str) -> bool {
     KNOWN_ROLES.contains(&role)
 }
 
-/// 是不是超级管理员。判据只有三处用：后台账号列表/报表的过滤（不露脸）、
-/// 冻结与改角色的策略函数、以及 agent 侧的角色契约（同名同义）。
+/// 超级管理员拥有独立的账号管理边界。
 pub fn is_superadmin(role: &str) -> bool {
     role == ROLE_SUPERADMIN
 }
@@ -33,22 +32,13 @@ pub fn can_manage_credentials(op_uid: i32, op_role: &str, target_uid: i32, targe
         && check_freeze(op_uid, op_role, target_uid, target_role).is_ok()
 }
 
-/// 这个角色的账号能不能出现在**后台账号列表/报表**里。
-///
-/// 这就是需求原话「超级管理员账号密码不显示在后台」的落点，抽成函数是为了让它
-/// 可测：两个条件（已知角色 + 不是超管）中**少写一个都不会报错**——只写
-/// `is_known_role` 就是超管在后台露脸，只写 `!is_superadmin` 就是历史脏值账号
-/// 混进列表。它是三道防线里的第一道（见 `routes::temp_user::list_temp_users`），
-/// 而 agent 的账号名录读的是同一个接口 ⇒ 账号不出现在这里 = 那个账号在 agent 侧
-/// 结构上就按名字找不到。
+/// 账号名录仅展示已知的非超级管理员角色。
 pub fn is_listable_role(role: &str) -> bool {
     is_known_role(role) && !is_superadmin(role)
 }
 
 
-/// 冻结/解冻被拒的原因。变体对应**不同的话术**，所以不做成 bool。
-/// 解冻与冻结**共用**这一组判据（不分方向）：把一个被超管冻结的管理员解冻，等于
-/// 推翻超管的决定，两个方向不对称只会在"谁说了算"上留一个后门。
+/// 冻结与解冻使用相同层级校验，避免绕过上级管理员的决定。
 #[derive(Debug, PartialEq, Eq)]
 pub enum FreezeDenial {
     /// 发起人自己没有后台管理面权限
@@ -99,12 +89,11 @@ pub enum RoleChangeDenial {
     AdminAssignTier,
 }
 
-const ADMIN_TIERS: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
+const ADMIN_MANAGEABLE_ROLES: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
 
-/// 这个身份在不在管理员能动的那两档里。**判据只此一处**：
-/// 管理员能不能改、以及能改成什么，都问它。
-pub fn is_admin_tier(role: &str) -> bool {
-    ADMIN_TIERS.contains(&role)
+/// Role targets an administrator may manage; this does not authorize the caller.
+pub fn is_role_manageable_by_admin(role: &str) -> bool {
+    ADMIN_MANAGEABLE_ROLES.contains(&role)
 }
 
 pub fn check_role_change(
@@ -130,10 +119,10 @@ pub fn check_role_change(
         return Err(RoleChangeDenial::NotAssignable);
     }
         if !is_superadmin(op_role) {
-        if !is_admin_tier(target_role) {
+        if !is_role_manageable_by_admin(target_role) {
             return Err(RoleChangeDenial::AdminTargetTier);
         }
-        if !is_admin_tier(new_role) {
+        if !is_role_manageable_by_admin(new_role) {
             return Err(RoleChangeDenial::AdminAssignTier);
         }
     }
@@ -428,18 +417,16 @@ mod tests {
         }
     }
 
-    /// 低两档的定义只有一处（`is_admin_tier`）：判据与话术都从它来。
-    /// 单独锁一条是为了让"加一档到管理员授权范围"这件事**必须改到这里**，
-    /// 而不是在某个 handler 里顺手 `|| role == "..."` 加一格。
+    /// Managing lower roles must never imply console access for those roles.
     #[test]
     fn 管理员能动的是哪两档() {
-        assert!(is_admin_tier(ROLE_USER));
-        assert!(is_admin_tier(ROLE_ZAKO));
-        assert!(!is_admin_tier(ROLE_ADMIN));
-        assert!(!is_admin_tier(ROLE_SUPERADMIN));
-        assert!(!is_admin_tier("root"));
-        assert!(!is_admin_tier(""));
-        assert_eq!(ADMIN_TIERS.len(), 2);
+        assert!(is_role_manageable_by_admin(ROLE_USER));
+        assert!(is_role_manageable_by_admin(ROLE_ZAKO));
+        assert!(!is_role_manageable_by_admin(ROLE_ADMIN));
+        assert!(!is_role_manageable_by_admin(ROLE_SUPERADMIN));
+        assert!(!is_role_manageable_by_admin("root"));
+        assert!(!is_role_manageable_by_admin(""));
+        assert_eq!(ADMIN_MANAGEABLE_ROLES.len(), 2);
     }
 
     #[test]

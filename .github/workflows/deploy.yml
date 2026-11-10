@@ -329,13 +329,12 @@ jobs:
         env:
           PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 45000
         run: npx --no-install playwright install chromium
-      - run: npm run test:browser
       - name: Checkout fixed Agent stack fixture
         if: needs.check.outputs.backend_candidate == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: BigLeopardCat/saudade-blog-agent
-          ref: 0b78d657085b130ab0fab61c9301ec0986496e92
+          ref: 882223dd6aa44b3d0247c044daf07c5898db2d74
           path: _agent-stack
           persist-credentials: false
       - name: Setup stack Python
@@ -360,7 +359,7 @@ jobs:
           chmod +x '${{ runner.temp }}/chat-stack-bin/saudade_blog_bin'
           uv sync --locked --no-dev --project _agent-stack
           npm ci --ignore-scripts --prefix _agent-stack/frontend
-      - name: Real HTTP stack disconnect and checkpoint drill
+      - name: Real HTTP checkpoint and background completion drill
         if: needs.check.outputs.backend_candidate == 'true'
         timeout-minutes: 4
         working-directory: _agent-stack
@@ -380,6 +379,7 @@ jobs:
           path: ${{ runner.temp }}/chat-stack-logs
           retention-days: 7
           if-no-files-found: ignore
+      - run: npm run test:browser
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

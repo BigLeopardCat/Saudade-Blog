@@ -6,9 +6,9 @@ pub use task_manager::{
 mod weather;
 pub use weather::WeatherSnapshot;
 mod context;
+mod execution_history;
 mod input;
 mod transport;
-mod execution_history;
 use context::prepare_chat;
 use execution_history::*;
 mod control;
@@ -48,8 +48,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-pub use control::BrowserResult;
 use super::image_generation::chat::ImageEvent;
+pub use control::BrowserResult;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -368,7 +368,13 @@ fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Re
     if status == StatusCode::NO_CONTENT {
         return status.into_response();
     }
-    if status == StatusCode::NOT_FOUND || status == StatusCode::CONFLICT {
+    if matches!(
+        status,
+        StatusCode::UNAUTHORIZED
+            | StatusCode::FORBIDDEN
+            | StatusCode::NOT_FOUND
+            | StatusCode::CONFLICT
+    ) {
         return (status, Json(body)).into_response();
     }
     info!(stage = from, status = %status, "chat: early stream outcome");
@@ -431,8 +437,7 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
         .unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
-        // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：`e.into_response()`
-        // 会把 200 + JSON 原样吐给一个只认 SSE 的客户端
+        // Keep control status codes; normal early replies use named SSE events.
         Err((status, Json(body))) => return early_exit_response(status, body, "prepare_chat"),
     };
 
