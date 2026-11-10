@@ -149,6 +149,7 @@ impl Drop for Server {
 }
 
 struct Fixture {
+    uid: i32,
     admin: DatabaseConnection,
     db: DatabaseConnection,
     schema: String,
@@ -177,6 +178,8 @@ impl Fixture {
             "image_location",
             "image_deletion",
             "image_transfer",
+            "image_generation",
+            "image_generation_reference",
             "note",
             "note_comment",
             "announcement",
@@ -242,6 +245,7 @@ impl Fixture {
         }))
         .await;
         Self {
+            uid,
             admin,
             db,
             schema,
@@ -511,6 +515,7 @@ async fn http_storage_roundtrip_copy_replay_and_failure_preserve_sources() {
         std::panic::AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(90), async {
             version_conflict_preserves_same_storage_source(&ctx).await;
             roundtrip_and_rejected_upload(&ctx).await;
+            generated_result_keeps_locally_when_r2_is_unavailable(&ctx).await;
         }))
         .catch_unwind()
         .await;
@@ -519,6 +524,61 @@ async fn http_storage_roundtrip_copy_replay_and_failure_preserve_sources() {
         Ok(result) => result.expect("storage HTTP E2E exceeded its time budget"),
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+async fn generated_result_keeps_locally_when_r2_is_unavailable(ctx: &Fixture) {
+    use sha2::{Digest, Sha256};
+    let id = uuid::Uuid::new_v4().to_string();
+    let version = hex::encode(Sha256::digest(IMAGE));
+    let request = json!({"provider":"https://unused.invalid/v1", "prompt":"local acceptance",
+        "model":"fixture", "size":"1024x1024", "quality":"high", "references":[]});
+    execute(&ctx.db, "INSERT INTO image_generation(id,owner_id,request,request_hash,status,output,output_hash,origin) \
+        VALUES($1::uuid,$2,$3,$4,'review',$5,$6,'agent')",
+        vec![id.clone().into(),ctx.uid.into(),request.into(),"a".repeat(64).into(),
+             IMAGE.to_vec().into(),version.clone().into()]).await;
+    ctx.s3.0.lock().unwrap().reject_put = true;
+    let calls = ctx.s3.0.lock().unwrap().calls.clone();
+    let path = format!("/api/protect/image-generation/jobs/{id}");
+    ctx.api(
+        Method::POST,
+        &format!("{path}/accept"),
+        Some(&json!({"version":version})),
+    )
+    .await;
+    let saved = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let job = ctx.api(Method::GET, &path, None).await;
+            if job["status"] == "accepted" {
+                break job;
+            }
+            assert_ne!(job["status"], "review", "local acceptance failed: {job}");
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("acceptance must not wait for remote storage");
+    let image = ctx.image(saved["imageId"].as_i64().unwrap() as i32).await;
+    let url = image["imageUrl"].as_str().unwrap();
+    assert!(url.starts_with("/api/protect/download/"), "{image}");
+    assert_eq!(
+        ctx.s3.0.lock().unwrap().calls,
+        calls,
+        "acceptance contacted R2"
+    );
+    ctx.read_url(url).await;
+    let files = ctx.files().await;
+    ctx.api(
+        Method::POST,
+        &format!("{path}/accept"),
+        Some(&json!({"version":version})),
+    )
+    .await;
+    assert_eq!(
+        ctx.files().await,
+        files,
+        "acceptance replay duplicated local files"
+    );
+    ctx.s3.0.lock().unwrap().reject_put = false;
 }
 
 async fn version_conflict_preserves_same_storage_source(ctx: &Fixture) {
