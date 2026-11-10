@@ -1,6 +1,7 @@
 """Synthetic graph generation and publication; no Agent, HTTP or database required."""
 
 import importlib.util
+import hashlib
 import json
 import tempfile
 import unittest
@@ -65,7 +66,8 @@ class GraphBuildTests(unittest.TestCase):
         self.assertTrue(
             all(set(row["articles"]) <= {1, 2, 3} for row in source["words"])
         )
-        self.assertNotIn("embedding", json.dumps(source))
+        for field in ("embedding", "api_key", "base_url"):
+            self.assertNotIn(field, source)
         self.assertIn("rust", {row["word"] for row in source["words"]})
         self.assertTrue(any("协程" in row["word"] for row in source["words"]))
 
@@ -90,6 +92,57 @@ class GraphBuildTests(unittest.TestCase):
         snapshot, _, vectors = self.fixture()
         with self.assertRaisesRegex(ValueError, "currently public"):
             builder.build(snapshot, [], vectors, "blog-public", 40)
+
+    def test_custom_profile_requires_its_exact_exported_contract_and_tokenizer(self):
+        snapshot, rows, vectors = self.fixture()
+        raw = b"fixture tokenizer"
+        digest = hashlib.sha256(raw).hexdigest()
+        identity = dict(
+            schema_version=1,
+            tokenizer_sha256=digest,
+            max_tokens=512,
+            query_prefix="Q: ",
+            add_special_tokens=True,
+            model_revision="fixture;llama-test;",
+        )
+        payload = json.dumps(identity, sort_keys=True)
+        snapshot["space"] = {"profile": hashlib.sha256(payload.encode()).hexdigest()}
+        contract = dict(
+            schema_version=1,
+            signature_payload=payload,
+            tokenization_protocol="llama.cpp-tokenize-v1",
+        )
+        with self.assertRaisesRegex(ValueError, "verified query contract"):
+            builder.build(snapshot, rows, vectors, "blog-public", 40)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / "query-contract.json"
+            path.write_text(json.dumps(contract))
+            tokenizer = root / f"tokenizer-{digest}.json"
+            tokenizer.write_bytes(raw)
+            self.assertEqual(builder.query_contract(path, snapshot), (contract, raw))
+            graph, source = builder.build(
+                snapshot, rows, vectors, "blog-public", 40, contract
+            )
+            with self.assertRaisesRegex(ValueError, "Matching query tokenizer"):
+                builder.publish(
+                    root / "published", graph, source, "https://example.test"
+                )
+            manifest = builder.publish(
+                root / "published", graph, source, "https://example.test", raw
+            )
+            self.assertEqual(source["embedding_profile"], contract)
+            self.assertEqual((root / "published" / tokenizer.name).read_bytes(), raw)
+            self.assertEqual(manifest["v"], source["version"])
+            path.write_text(
+                json.dumps({**contract, "signature_payload": payload + " "})
+            )
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                builder.query_contract(path, snapshot)
+            path.write_text(json.dumps(contract))
+            tokenizer.write_bytes(b"changed")
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                builder.query_contract(path, snapshot)
 
     def test_no_agent_configuration_is_needed_for_build_logic(self):
         with patch.dict("os.environ", {}, clear=True):

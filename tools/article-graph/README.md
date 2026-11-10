@@ -37,9 +37,14 @@ source 绑定向量快照指纹、维度、公开文章版本及词到文章的�
 这表示相关文档的语义匹配，不宣称每个词都有独立生成的词向量。
 
 没有向量库、服务失败、快照已变化或 embedding 空间不匹配时，响应显式标为 `mode=lexical`，
-前端展示关键词匹配。包含非空自定义 embedding profile 的空间当前不执行在线语义查询，
-以免漏掉 tokenizer、指令前缀或 Unicode 正规化；已有 BGE 向量仍用于构建布局，查询按词法降级。
-不要求手填 profile hash，也不把未经核验的配置标记为语义兼容。
+前端展示关键词匹配。自定义 profile 需模型部署导出的查询契约：在模型资产准备时执行
+`python -m scripts.prepare_embedding_assets --directory /opt/embedding --model bge-q8 --verify-only --export-query-contract /opt/embedding/query`。
+该离线命令来自嵌入模型部署工具，博客运行和构建均不导入 Agent。
+构图时通过 `--embedding-contract /opt/embedding/query/query-profile-<摘要>.json`
+或 `GRAPH_EMBEDDING_CONTRACT` 指向命令实际输出的路径，无须手填摘要、prefix 或 tokenizer 版本。
+工具核验原始 canonical payload 摘要与 PG profile 相同、tokenizer SHA 相同，再与图谱同代发布。
+Rust 使用该契约添加查询前缀、按需 NFC 正规化，通过同一 llama.cpp `/tokenize` 计算包括特殊 token 的真实预算，
+通过后才调用 embeddings。计数端点失败或不兼容则明确降级，不擅自省略 profile 校验。
 
 ## 测试
 

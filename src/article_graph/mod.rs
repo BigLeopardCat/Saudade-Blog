@@ -1,5 +1,6 @@
 //! Optional graph artifacts derived from a published PostgreSQL vector snapshot.
 
+mod profile;
 mod vectors;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySelect};
@@ -24,6 +25,8 @@ pub struct Source {
     pub article_ids: Vec<i32>,
     pub article_versions: HashMap<String, String>,
     pub words: Vec<Word>,
+    #[serde(default)]
+    pub embedding_profile: Option<profile::Contract>,
 }
 
 #[derive(Serialize, Clone, Debug)]

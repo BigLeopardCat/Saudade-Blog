@@ -34,6 +34,7 @@ eventsource-stream = "=0.2.3"
 futures = "0.3"
 async-stream = "0.3"
 jieba-rs = { version = "=0.10.3", default-features = false, features = ["default-dict"] }
+unicode-normalization = "=0.1.25"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

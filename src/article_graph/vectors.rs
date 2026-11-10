@@ -55,13 +55,6 @@ fn embedding_request(space: &Value) -> Result<(String, String, String), &'static
     {
         return Err("embedding_space_mismatch");
     }
-    if space
-        .get("profile")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.is_empty())
-    {
-        return Err("embedding_profile_unsupported");
-    }
     let url = reqwest::Url::parse(&base).map_err(|_| "embedding_not_configured")?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
@@ -114,7 +107,8 @@ pub async fn rank(source: &Source, query: &str) -> Result<Vec<(i32, f64)>, &'sta
             .build()
             .expect("static HTTP settings")
     });
-    let mut body = serde_json::json!({"model":model,"input":[query]});
+    let input = super::profile::prepare(source, &space, query, &CLIENT, &url, &key).await?;
+    let mut body = serde_json::json!({"model":model,"input":[input]});
     if let Some(dim) = space
         .get("dim")
         .and_then(Value::as_u64)

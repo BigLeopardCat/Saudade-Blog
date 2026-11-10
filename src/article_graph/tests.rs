@@ -11,6 +11,7 @@ fn source() -> Source {
             ("1".into(), "2026-11-10T00:00:00.000000".into()),
             ("2".into(), "2026-11-10T00:00:00.000000".into()),
         ]),
+        embedding_profile: None,
         words: vec![
             Word {
                 word: "Rust".into(),

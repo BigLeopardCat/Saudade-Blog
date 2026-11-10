@@ -186,11 +186,45 @@ def derive(articles, vectors, maximum):
     )
 
 
-def build(snapshot, articles, vectors, collection, maximum):
+def query_contract(path, snapshot):
+    """Verify an exported model contract against the active publication."""
+    if not path or not path.is_file() or path.stat().st_size > 16384:
+        raise ValueError("A verified embedding query contract is required")
+    contract = json.loads(path.read_text())
+    payload = contract.get("signature_payload", "")
+    if (
+        contract.get("schema_version") != 1
+        or contract.get("tokenization_protocol") != "llama.cpp-tokenize-v1"
+        or hashlib.sha256(payload.encode()).hexdigest() != snapshot["space"]["profile"]
+    ):
+        raise ValueError(
+            "Embedding query contract does not match the vector publication"
+        )
+    identity = json.loads(payload)
+    digest = identity.get("tokenizer_sha256", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Invalid tokenizer identity")
+    tokenizer = path.parent / f"tokenizer-{digest}.json"
+    if not tokenizer.is_file() or tokenizer.stat().st_size > 8 * 1024 * 1024:
+        raise ValueError("Missing bounded query tokenizer")
+    data = tokenizer.read_bytes()
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError("Query tokenizer SHA-256 mismatch")
+    return contract, data
+
+
+def build(snapshot, articles, vectors, collection, maximum, contract=None):
     if not articles:
         raise ValueError(
             "No currently public article intersects the published vector snapshot"
         )
+    profile = snapshot.get("space", {}).get("profile", "")
+    if profile and (
+        not contract
+        or hashlib.sha256(contract.get("signature_payload", "").encode()).hexdigest()
+        != profile
+    ):
+        raise ValueError("The vector publication requires its verified query contract")
     nodes, edges, words, variance = derive(articles, vectors, maximum)
     metrics = (("views", 1), ("likes", 3), ("favorites", 3), ("comments", 4))
     heat = {
@@ -237,6 +271,7 @@ def build(snapshot, articles, vectors, collection, maximum):
         "article_ids": [row["id"] for row in articles],
         "article_versions": {str(row["id"]): row["revision"] for row in articles},
         "words": words,
+        "embedding_profile": contract,
     }
     identity = json.dumps(
         {"graph": graph, "source": source}, sort_keys=True, ensure_ascii=False
@@ -259,8 +294,17 @@ def atomic_file(path, content, *, private=False):
             temp.unlink(missing_ok=True)
 
 
-def publish(root, graph, source, site):
+def publish(root, graph, source, site, query_tokenizer=None):
     root.mkdir(parents=True, exist_ok=True)
+    if source.get("embedding_profile"):
+        identity = json.loads(source["embedding_profile"]["signature_payload"])
+        digest = identity["tokenizer_sha256"]
+        if (
+            query_tokenizer is None
+            or hashlib.sha256(query_tokenizer).hexdigest() != digest
+        ):
+            raise ValueError("Matching query tokenizer is required for publication")
+        atomic_file(root / f"tokenizer-{digest}.json", query_tokenizer, private=True)
     name = f"graph-{graph['v']}.js"
     body = (
         "export default "
@@ -290,6 +334,9 @@ def main(argv=None):
         "--collection", default=os.getenv("GRAPH_VECTOR_COLLECTION", "blog-public")
     )
     parser.add_argument("--max-nodes", type=int, default=400)
+    parser.add_argument(
+        "--embedding-contract", type=Path, default=os.getenv("GRAPH_EMBEDDING_CONTRACT")
+    )
     args = parser.parse_args(argv)
     if not 4 <= args.max_nodes <= 600 or not args.site.startswith(
         ("https://", "http://")
@@ -300,11 +347,20 @@ def main(argv=None):
         parser.error("GRAPH_VECTOR_DSN and DATABASE_URL are required for this command")
     snapshot, vectors = read_vectors(dsn, args.collection)
     articles = read_articles(blog, vectors)
+    contract, tokenizer = (
+        query_contract(args.embedding_contract, snapshot)
+        if snapshot.get("space", {}).get("profile")
+        else (None, None)
+    )
     with threadpool_limits(limits=1):
         graph, source = build(
-            snapshot, articles, vectors, args.collection, args.max_nodes
+            snapshot, articles, vectors, args.collection, args.max_nodes, contract
         )
-    print(json.dumps(publish(args.out, graph, source, args.site), ensure_ascii=False))
+    print(
+        json.dumps(
+            publish(args.out, graph, source, args.site, tokenizer), ensure_ascii=False
+        )
+    )
 
 
 if __name__ == "__main__":
