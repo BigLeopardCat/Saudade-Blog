@@ -49,7 +49,7 @@ async fn call(
         .no_proxy()
         .build()
         .map_err(|_| failure(StatusCode::BAD_GATEWAY, "agent_unavailable"))?;
-    let url = format!("{}/{}", super::super::graph::agent_base_url(), path);
+    let url = format!("{}/{}", crate::ai_services::agent_base_url(), path);
     let req = if let Some(body) = body {
         client.post(url).json(&body)
     } else {
@@ -86,7 +86,7 @@ async fn call(
 pub async fn service_status() -> Response {
     let ready = match reqwest::Client::builder().no_proxy().build() {
         Ok(client) => match client
-            .get(format!("{}/ready", super::super::graph::agent_base_url()))
+            .get(format!("{}/ready", crate::ai_services::agent_base_url()))
             .timeout(Duration::from_secs(3))
             .send()
             .await
