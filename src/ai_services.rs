@@ -6,10 +6,15 @@ pub(crate) fn review_endpoint() -> Option<String> {
     endpoint(explicit.as_deref(), agent.as_deref(), "/review")
 }
 
-pub(crate) fn graph_endpoint(path: &str) -> Option<String> {
-    let explicit = std::env::var("GRAPH_SERVICE_URL").ok();
-    let agent = std::env::var("AGENT_URL").ok();
-    endpoint(explicit.as_deref(), agent.as_deref(), path)
+pub(crate) fn agent_base_url() -> String {
+    let raw = std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".into());
+    let value = raw.trim_end_matches('/');
+    value
+        .strip_suffix("/chat/stream")
+        .or_else(|| value.strip_suffix("/chat"))
+        .unwrap_or(value)
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn endpoint(explicit: Option<&str>, agent: Option<&str>, path: &str) -> Option<String> {
@@ -59,10 +64,6 @@ mod tests {
                 "/review"
             ),
             Some("http://moderator/v1/review".into())
-        );
-        assert_eq!(
-            endpoint(Some("http://retrieval/"), None, "/graph/query"),
-            Some("http://retrieval/graph/query".into())
         );
         for url in [
             "http://agent/chat",

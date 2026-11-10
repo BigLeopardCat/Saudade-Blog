@@ -1,6 +1,4 @@
-/** 图谱产物的数据结构——由 saudade-blog-agent/scripts/build_word_graph.py 生成，
- *  契约见 docs/word-graph.md。字段名故意用单字母：节点 400 个、边 778 条，
- *  短键名让产物从 49KB 降到 36KB。 */
+/** Content-addressed visualization derived by the optional blog-owned graph builder. */
 
 export interface GraphNode {
     /** 下标（= 在 nodes 数组中的位置，边和向量都按它索引） */
@@ -50,6 +48,5 @@ export interface GraphData {
     stats: GraphStats;
 }
 
-/** 查询定位的结果：命中词 + 权重（真 embedding 与本地兜底产出同一种形状，
- *  下游 locate() 完全一致，所以降级对 UI 不可见） */
+/** Word hits share one presentation shape; the response mode identifies their source. */
 export interface LocateHit { w: string; s: number }

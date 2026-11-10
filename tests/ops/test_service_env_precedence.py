@@ -51,7 +51,7 @@ class ServiceConfiguration(unittest.TestCase):
             self.assertIn("Restart=no", maintenance)
             rust = (root / "saudade-rust.service").read_text()
             self.assertIn("TimeoutStopSec=360", rust)
-            self.assertIn("-/var/lib/saudade-agent/data/word_graph/web", rust)
+            self.assertNotIn("saudade-agent/data/word_graph", rust)
             self.assertTrue((root / "saudade-agent-maintenance.timer").is_file())
 
     def test_existing_output_is_not_mixed_with_generated_configuration(self):

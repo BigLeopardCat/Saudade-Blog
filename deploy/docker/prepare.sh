@@ -347,7 +347,7 @@ HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || HOST_IP=""
 step "落地：generated/ 与 $DATA_DIR"
 mkdir_p "$GEN_DIR" "$GEN_DIR/ssl"
 mkdir_p "$DATA_DIR" "$DATA_DIR/uploads" "$DATA_DIR/logs/frontend" "$DATA_DIR/traces" \
-        "$DATA_DIR/agent-data" "$DATA_DIR/agent-data/word_graph/web"
+        "$DATA_DIR/agent-data" "$DATA_DIR/article-graph"
 
 # ① compose 插值用的 .env。**只有 compose 自己要用的键**：站点身份要传进前端构建参数，
 #    数据目录/属主要拼挂载路径，MySQL 那个 root 口令是官方镜像唯一的入口。

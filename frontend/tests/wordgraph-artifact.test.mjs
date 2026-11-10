@@ -3,8 +3,7 @@
 // 建图脚本自己有一道质量门（fidelity / len_sim_rho / 节点数），这里是从**产物**
 // 反着再验一遍：契约（manifest → 带 hash 的文件名 → export default）、几何合法性、
 // 图的连通性、以及那条最容易静默失效的 nginx immutable 文件名规则。
-import { readFileSync, statSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
+import { readFileSync, statSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -25,7 +24,7 @@ const WORLD_R = 1.6;
 
 console.log('== manifest ==');
 if (!existsSync(path.join(GRAPH_DIR, 'manifest.json'))) {
-    console.log('  ✗ 找不到 public/graph/manifest.json——先跑 scripts/build_word_graph.py');
+    console.log('  ✗ 找不到 public/graph/manifest.json——先跑 tools/article-graph/build.py');
     process.exit(1);
 }
 const m = JSON.parse(readFileSync(path.join(GRAPH_DIR, 'manifest.json'), 'utf8'));
@@ -119,56 +118,19 @@ console.log('== 质量指标 ==');
     ok(stats.n_nodes === nodes.length, 'stats.n_nodes 与实际节点数一致', { stats: stats.n_nodes, real: nodes.length });
 }
 
-// 后台重建的产物（存在才验）
-// 上面那一整段验的是**仓库里 committed 的种子**：从没重建过的站点走的就是它。
-// 重建过的站点走另一份（agent 的 data/word_graph/web/，由 Rust 供出）——那份不在
-// 版本控制里、本机也不一定有（没重建过就整个目录不存在），所以整段按"存在才验"。
-// ⚠️ CI 上永远不存在（agent 是另一个仓库、这个目录也 gitignore）⇒ 这一段只在
-// 生产机上跑得到，它守的是"这台机器当前供出去的那份产物"。
-const AGENT_WEB = process.env.GRAPH_ARTIFACT_DIR
-    || path.resolve(here, '../../saudade-blog-agent/data/word_graph/web');
-const prodManifestPath = path.join(AGENT_WEB, 'manifest.json');
-console.log('== 生产产物（后台重建）==');
-if (!existsSync(prodManifestPath)) {
-    console.log(`  · 跳过：${AGENT_WEB} 下没有 manifest.json（这台机器还没在后台重建过）`);
-} else {
-    const pm = JSON.parse(readFileSync(prodManifestPath, 'utf8'));
-    truthy(FILE_RE.test(pm.file), '生产 manifest.file 符合同一条命名规则', pm.file);
-    truthy(FILE_RE.test(`graph-${pm.v}.js`) && pm.file === `graph-${pm.v}.js`,
-        '生产 manifest.file 与 v 一致（graph-<v>.js）', pm);
-    // 归属站点是这个文件存在的全部意义：重建任务把它当参数收下来（页面传浏览器的 origin），
-    // 没有它前端就永远判"不是本站"⇒ 展品显示"尚未为本站点生成"。
-    truthy(typeof pm.site === 'string' && pm.site.trim() !== '',
-        '生产 manifest 写了 site（否则首页永远认不出这是本站的图）', pm);
-    const pPath = path.join(AGENT_WEB, pm.file);
-    if (existsSync(pPath)) {
-        eq(statSync(pPath).size, pm.bytes, '生产 manifest.bytes 与实际文件大小一致');
-        // ⚠️ **不能直接 import 这个路径**：Node 按**最近的 package.json** 决定 `.js` 是不是
-        //    ESM，而 `saudade-blog-agent/` 下没有 package.json（种子那份能直接 import，
-        //    只是因为 `frontend/package.json` 里写了 `"type": "module"`）——直接 import 会
-        //    按 CommonJS 解析，`export default` 当场语法错，**整段崩在断言之前**：
-        //    连一行 FAIL 都打不出来，进程带栈退出（CI 上这段恒跳过，所以只有生产机上看得见）。
-        //    但"它必须是合法的 ES module"这条本身要验（浏览器里 `loader.ts` 就是
-        //    `await import(url)` 拿它的）⇒ 复制成 `.mjs` 再 import：既真验了 ESM 可解析性，
-        //    又不被周边 package.json 左右。
-        const tmp = mkdtempSync(path.join(tmpdir(), 'wg-prod-'));
-        const tmpFile = path.join(tmp, 'prod.mjs');
-        writeFileSync(tmpFile, readFileSync(pPath));
-        let pg;
-        try {
-            pg = (await import(pathToFileURL(tmpFile).href)).default;
-        } finally {
-            rmSync(tmp, { recursive: true, force: true });
-        }
-        ok(Array.isArray(pg?.nodes) && pg.nodes.length > 0, '生产产物有节点', pg?.nodes?.length);
-        // 热度是"按文章热度画大小"的**唯一数据来源**：没有 h 就只能退回 tf-idf 重要度，
-        // 用户要的那个效果就不存在（而这种缺失在页面上看不出来——图照画，只是大小没意义）。
-        ok(typeof pg?.nodes?.[0]?.h === 'number', '生产产物带热度字段 h（否则大小退回 tf-idf 重要度）',
-            pg?.nodes?.[0]);
-        console.log(`   生产产物 ${pm.file}（${pm.bytes} 字节，site=${pm.site}）`);
-    } else {
-        ok(false, '生产 manifest 指向的产物文件存在', pm.file);
-    }
+// Operator fixtures are explicit; ordinary tests never inspect deployment data.
+const artifactRoot = process.env.SAUDADE_GRAPH_ARTIFACT_DIR;
+if (artifactRoot) {
+    const manifest=JSON.parse(readFileSync(path.join(artifactRoot,'manifest.json'),'utf8'));
+    truthy(FILE_RE.test(manifest.file),'operator artifact has a bounded module name');
+    eq(manifest.file,`graph-${manifest.v}.js`,'operator artifact version matches manifest');
+    const bytes=readFileSync(path.join(artifactRoot,manifest.file));
+    eq(bytes.length,manifest.bytes,'operator artifact byte count matches manifest');
+    const graph=(await import('data:text/javascript;base64,'+bytes.toString('base64'))).default;
+    eq(graph.v,manifest.v,'loaded operator artifact has the declared version');
+    truthy(graph.nodes?.length>0,'operator artifact has nodes');
+    truthy(graph.nodes.every(node=>[node.x,node.y,node.z].every(Number.isFinite)),
+        'operator artifact coordinates are finite');
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-artifact: ${passed} passed, ${failed} failed`);
