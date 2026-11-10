@@ -594,7 +594,7 @@ mod tests {
     }
 }
 
-/// The acceptance job serializes callers; registered outputs are reused without rewriting bytes.
+/// Keep generated pixels locally; remote relocation is an explicit gallery transfer.
 pub(crate) async fn persist_generated(
     state: &Arc<AppState>,
     name: &str,
@@ -609,13 +609,6 @@ pub(crate) async fn persist_generated(
         return Ok(url);
     }
     let object = object_name(&prefix, ext);
-    if let Some(response) = try_r2_upload(state, name, &object, bytes, false, false).await {
-        return if response.code == 200 {
-            Ok(response.data)
-        } else {
-            Err(DbErr::Custom(response.message))
-        };
-    }
     let url = write_local(&upload_dir(), &object, bytes).await?;
     register(state, &url, None).await
 }
