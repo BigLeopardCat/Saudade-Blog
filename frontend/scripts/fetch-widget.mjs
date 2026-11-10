@@ -14,17 +14,16 @@ const CHECK_ONLY = argv.includes('--check');
 const destArg = argv.indexOf('--dest');
 const DEST = destArg >= 0 ? path.resolve(argv[destArg + 1] ?? '') : path.join(FRONTEND, 'public');
 
-// 整树替换时**保留**的子目录：它由 `npm run vendor:live2d` 生成，不属于 agent 仓的源码。
+// Preserve locally vendored runtime assets when replacing pinned source trees.
 const PRESERVE = ['vendor'];
 
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const kb = (n) => (n / 1024).toFixed(1) + 'KB';
 
-// 本仓 `.gitignore` 把 *.bak / *.orig 当"编辑中途的手工备份"（见那里的注释）。
-// 这类文件既不是 pin 的、也不是脚本的 ⇒ **就地留着，一概不处置**。
+// Leave editor backup files untouched.
 const isLocalBackup = (f) => /\.(bak|orig)$/.test(path.basename(f)) || /\.bak\./.test(path.basename(f));
 
-// 跨设备的 rename 会抛 EXDEV（仓库与 /tmp 常常不在同一个文件系统上）。
+// Copy and unlink when staging and destination use different filesystems.
 const moveOut = (from, to) => {
   mkdirSync(path.dirname(to), { recursive: true });
   try { renameSync(from, to); }
@@ -44,8 +43,7 @@ if (!existsSync(LOCK_PATH)) {
   process.exit(1);
 }
 const lock = JSON.parse(readFileSync(LOCK_PATH, 'utf8'));
-// repo 可被环境变量覆盖：fork 的人把自己的 agent 仓地址填进 WIDGET_REPO 即可，
-// 不用改这个被 git 跟踪的文件（CI 上也可以用仓库 Variable 注入）。
+// Forks may override the source repository through WIDGET_REPO.
 const REPO = process.env.WIDGET_REPO || lock.repo;
 const SHA = lock.sha;
 const BASE = lock.base ?? 'frontend/public';
@@ -60,8 +58,7 @@ if (paths.length === 0) {
   console.error('❌ widget.lock.json 的 trees 是空的 —— 没有要取的东西');
   process.exit(1);
 }
-// 每一条 tree 的 key 必须落在 base 下：目标路径就是把它去掉 base 前缀后的那一段。
-// 这条断言防的是"锁里写了个 base 之外的路径"，那种情况下落点会算到 frontend/public 外面去。
+// Reject pinned paths outside the declared source subtree.
 const rels = paths.map((p) => {
   if (!p.startsWith(BASE + '/')) {
     console.error(`❌ trees 里的 ${p} 不在 base（${BASE}）之下`);
@@ -80,8 +77,7 @@ function git(args, cwd) {
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'saudade-widget-'));
 try {
-  // `--filter=blob:none`：只拉 commit+tree，blob 按需取 ⇒ 稀疏检出两棵子树时不会把
-  // 整个 agent 仓的历史内容拖下来（本机到 GitHub 的全量克隆会卡在传输）。
+  // Sparse blob filtering limits transfer to the required widget subtrees.
   let r = git(['clone', '--filter=blob:none', '--no-checkout', '-q', REPO, tmp]);
   if (!r.ok) {
     bad(`克隆 agent 仓失败：${r.err}\n      ${REPO}\n      （离线/网络不通时先手动准备，或设 WIDGET_REPO 指到可达的镜像）`);
@@ -96,8 +92,7 @@ try {
     throw new Error('checkout');
   }
 
-  // 强判据：HEAD 与两棵子树的 tree sha 必须逐条相符
-  // 一次抓住三件事：pin 挪了、锥配错了、agent 仓那一侧被改写了。
+  // Verify the exact pinned commit and subtree trees.
   r = git(['rev-parse', 'HEAD'], tmp);
   const headGot = r.ok ? r.out : '(取不到)';
   if (headGot !== SHA) bad(`检出的 HEAD 是 ${headGot}，不是锁里的 ${SHA}`);
@@ -147,7 +142,7 @@ try {
       const dstDir = path.join(DEST, rel);
       const isPreserved = (f) => PRESERVE.some((k) => f === k || f.startsWith(k + '/'));
       const isBackup = (f) => isLocalBackup(f);
-      // 保留 vendor/：把它挪进新树，再整树换过去（见文件头注的顺序说明）。
+      // Move vendored assets into staging before replacing the destination.
       const kept = PRESERVE.filter((name) => existsSync(path.join(dstDir, name)));
       const staging = dstDir + '.fetch-new';
       rmSync(staging, { recursive: true, force: true });
@@ -165,7 +160,7 @@ try {
         moveOut(path.join(dstDir, f), path.join(orphansDir, rel, f));
         orphaned++;
       }
-      // ⚠️ 得**搬进 staging**，不能只 `continue`：下面整目录 rmSync 会把留在原地的一并带走。
+      // Move backups into staging so destination replacement preserves them.
       for (const f of carry) {
         moveOut(path.join(dstDir, f), path.join(staging, f));
         console.log(`  = 留着 ${rel}/${f}（手工备份：既不是 pin 的、也不是脚本的，原地不动）`);
@@ -174,7 +169,7 @@ try {
       renameSync(staging, dstDir);
       placed += listFiles(dstDir).filter((f) => !isPreserved(f) && !isBackup(f)).length;
       if (kept.length === 0 && rel === 'live2d-widgets') {
-        // 不是错误（CI 上本来就没有），但顺序反了的话这里是唯一的提示——见文件头注。
+        // Vendored assets are optional during CI source verification.
         console.log('  ℹ live2d-widgets/vendor/ 不存在：若你接下来要本地跑 dev，记得再跑 npm run vendor:live2d');
       }
     }
@@ -187,9 +182,9 @@ try {
     console.log(`  ✅ 落位 ${placed} 份文件 ${kb(bytes)} → ${path.relative(process.cwd(), DEST) || '.'}`);
   }
 } catch {
-  /* 具体原因已经打过了，下面统一收尾 */
+  // Failures are reported at their source.
 } finally {
-  rmSync(tmp, { recursive: true, force: true });
+  rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 if (failed) {

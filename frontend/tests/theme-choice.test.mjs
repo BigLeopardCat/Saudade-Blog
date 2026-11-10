@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
-import { mkdtempSync, readFileSync } from 'fs';
+import { runtime, frame, sse } from './helpers/widget-runtime.mjs';
+import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,7 +9,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const out = mkdtempSync(path.join(tmpdir(), 'thm-'));
 
-// 假钟：theme.ts 读 new Date()（isNightHour）与 Date.now()（currentThemeDay）
 const RealDate = Date;
 let NOW = 0;
 class FakeDate extends RealDate {
@@ -16,10 +16,9 @@ class FakeDate extends RealDate {
     static now() { return NOW; }
 }
 globalThis.Date = FakeDate;
-/** 把钟面拨到 2026-09-15 起的第 day 天的 h:m（本地时区，与 theme 的判据同源） */
+
 const at = (h, m = 0, day = 15) => { NOW = new RealDate(2026, 8, day, h, m, 0).getTime(); };
 
-// 假 localStorage
 const store = new Map();
 globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -28,8 +27,6 @@ globalThis.localStorage = {
     clear: () => store.clear(),
 };
 
-// ⚠️ 这里**不能**加 --packages=external：临时包落在 /tmp，node 从那里解析不到
-// frontend/node_modules，react 必须一起打进来。
 function bundle(rel, name) {
     const file = path.join(out, name);
     execFileSync(path.join(root, 'node_modules/.bin/esbuild'), [
@@ -48,8 +45,6 @@ const ok = (cond, name, detail) => {
 };
 const eq = (got, want, name) => ok(got === want, name, { got, want });
 
-// 把 App.tsx 的分钟 ticker 复刻成一个可单步的驱动器：只有返回非 null 才"真的切了"，
-// 并把新状态写回存储（真实链路里这一步是 darkmode-change 事件的监听者做的）。
 function tick(now) {
     const next = theme.autoThemeDecision(now);
     if (next !== null) localStorage.setItem('isDarkMode', JSON.stringify(next));
@@ -67,9 +62,6 @@ console.log('== 23:00 进窗：自动切夜，且只切一次 ==');
     eq(tick(new Date()), true, '23:00 进窗：自动切夜一次');
     eq(dark(), true, '状态已落到夜间');
 
-    // 边界是"一次事件"：接着每分钟跑，不能再动作（否则窗口内访客的改动会被反复顶掉）
-    // ⚠️ 日期必须显式给：`at()` 的 day 默认 15，`[0, 15]` 这种写法会**把钟往回拨**
-    //    （15 日 00:15 早于 15 日 23:00）⇒ 主题日倒退，绑主题日的闩会被判成"新窗"。
     for (const m of [[23, 1, 15], [23, 2, 15], [23, 30, 15], [0, 15, 16], [5, 58, 16], [5, 59, 16]]) {
         at(m[0], m[1], m[2]);
         eq(tick(new Date()), null, `${String(m[0]).padStart(2, '0')}:${String(m[1]).padStart(2, '0')} 窗内不再动作`);
@@ -79,14 +71,14 @@ console.log('== 23:00 进窗：自动切夜，且只切一次 ==');
 
 console.log('== 窗口内访客自己改：让位，本窗口不再自动改 ==');
 {
-    // 进窗时已是夜间（比如访客白天就开着）：入窗不重复动作，但边界照样算"处理过"
+
     store.clear(); at(23, 30);
     localStorage.setItem('isDarkMode', '"true"');
     eq(tick(new Date()), null, '已夜间 → 入窗不动作');
-    theme.recordUserChoice('light');                 // 访客当场切浅色（Head/index.tsx）
+    theme.recordUserChoice('light');
     localStorage.setItem('isDarkMode', '"false"');
     let cur = false;
-    // 跨到次日凌晨，仍在同一夜窗内（日期显式给，别让 at() 把钟往回拨）
+
     for (const m of [[23, 31, 15], [0, 15, 16], [3, 40, 16], [5, 59, 16]]) {
         at(m[0], m[1], m[2]);
         const d = tick(new Date());
@@ -95,7 +87,7 @@ console.log('== 窗口内访客自己改：让位，本窗口不再自动改 =='
     eq(cur, false, '窗内切浅色后每分钟都不再被顶回夜间');
 }
 {
-    // 反过来：进窗那一刻访客的意愿就已经在了（先表态、边界后到）→ 边界不动作
+
     store.clear(); at(22, 50);
     localStorage.setItem('isDarkMode', '"false"');
     theme.recordUserChoice('dark');
@@ -103,7 +95,7 @@ console.log('== 窗口内访客自己改：让位，本窗口不再自动改 =='
     eq(tick(new Date()), null, '进窗前已有的意愿 → 边界让位，不改成夜间');
 }
 {
-    // 窗口内切夜间：意愿存在（recordUserChoice 不变），且本来就已经是夜间
+
     store.clear(); at(2, 0);
     localStorage.setItem('isDarkMode', '"false"');
     theme.recordUserChoice('dark');
@@ -127,16 +119,15 @@ console.log('== 06:00 出窗：切回白天 + 清意愿与闩 ==');
     at(6, 1, 16);
     eq(tick(new Date()), null, '出窗后不再动作');
 
-    // 闩复位 ⇒ 当晚 23:00 还能自动切夜（不会被"今天已经处理过"卡住）
     at(23, 0, 16);
     eq(tick(new Date()), true, '次日 23:00 又能自动切夜（闩已复位）');
 }
 {
-    // 出窗时本来就是白天：不动作，但仍要清意愿与闩
+
     store.clear(); at(23, 30, 15);
     localStorage.setItem('isDarkMode', '"true"');
     eq(tick(new Date()), null, '入窗：已夜间 → 不动作');
-    theme.recordUserChoice('light');                 // 访客窗内切成浅色
+    theme.recordUserChoice('light');
     localStorage.setItem('isDarkMode', '"false"');
     at(6, 0, 16);
     eq(tick(new Date()), null, '出窗时已是白天 → 不重复切');
@@ -158,12 +149,12 @@ console.log('== 06:00-23:00 完全遵循访客：旧 bug 的防线 ==');
     eq(cur, true, '连跑 3 分钟仍是夜间');
 
     store.clear(); at(14, 0);
-    localStorage.setItem('darkModeUserChoice', 'dark');   // 假设上一晚留下的标记
+    localStorage.setItem('darkModeUserChoice', 'dark');
     localStorage.setItem('darkModeChoiceDay', theme.currentThemeDay());
     theme.recordUserChoice('light');
     ok(!theme.userChoiceActive(), '白天切浅色 → 标记被清（不否掉当晚的自动切夜）');
     eq(tick(new Date()), null, '白天 + 浅色：不动');
-    // 于是当晚 23:00 照常自动切夜
+
     at(23, 0);
     eq(tick(new Date()), true, '当晚 23:00 照常自动切夜');
 }
@@ -173,7 +164,7 @@ console.log('== 页面整夜关着 / 窗口内才打开 ==');
     store.clear(); at(23, 0, 15);
     localStorage.setItem('isDarkMode', '"false"');
     eq(tick(new Date()), true, '睡前 23:00 切夜');
-    at(9, 0, 16);                                    // 整夜没 tick，直接到早上打开
+    at(9, 0, 16);
     eq(tick(new Date()), false, '开机第一次 tick 补上出窗：切回白天');
     eq(dark(), false, '状态已回日间');
     ok(!theme.userChoiceActive(), '意愿也清了');
@@ -181,7 +172,7 @@ console.log('== 页面整夜关着 / 窗口内才打开 ==');
     eq(tick(new Date()), null, '之后不再动作');
 }
 {
-    // 窗口内首次打开（没进过窗，闩为空）：切夜一次
+
     store.clear(); at(2, 0);
     localStorage.setItem('isDarkMode', '"false"');
     eq(tick(new Date()), true, '窗口内首次打开 → 切夜一次');
@@ -189,8 +180,7 @@ console.log('== 页面整夜关着 / 窗口内才打开 ==');
     eq(tick(new Date()), null, '下一分钟不再动作');
 }
 {
-    // 前半夜关机、天亮后才开：**从没进过窗**（闩为空）→ 出窗动作不存在，完全不动。
-    // 别把这条写成"跟随系统偏好"——语义是"06:00-23:00 只认访客"。
+
     store.clear(); at(22, 0, 15);
     localStorage.setItem('isDarkMode', '"true"');
     at(8, 0, 16);
@@ -198,103 +188,95 @@ console.log('== 页面整夜关着 / 窗口内才打开 ==');
     eq(dark(), true, '仍是访客选择的夜间');
 }
 
-console.log('== 陈旧闩不许吃掉下一晚的入场（20261013 修）==');
+console.log('== 跨主题日的边界状态独立生效 ==');
 {
-    // 闩只在 06:00-23:00 的**白天分支**里被清，所以"整夜在窗内、当天白天再没打开过页面"
-    // 的访客会把它原样留到下一个夜窗。旧代码闩存裸 '1'、判据是 `=== '1'` ⇒ 下一晚
-    // 23:00 直接 return null，**整晚不切夜**；现在闩绑主题日，新窗的主题日必不等于旧窗的。
+
     store.clear(); at(23, 10, 15);
     localStorage.setItem('isDarkMode', '"true"');
     eq(tick(new Date()), null, '昨夜入窗：已是夜间 → 不动作（但闩已按昨夜的主题日置位）');
     eq(store.get('darkModeInWindow'), theme.currentThemeDay(), '闩记的是主题日，不是裸 \'1\'');
-    theme.recordUserChoice('light');                       // 访客窗内切成浅色
+    theme.recordUserChoice('light');
     localStorage.setItem('isDarkMode', '"false"');
-    // 白天完全没打开过页面（没有 tick 去清它）⇒ 闩与那条意愿一起留到今晚
+
     at(23, 10, 16);
     eq(tick(new Date()), true, '今晚 23:10：陈旧闩不生效，照常自动切夜');
     eq(dark(), true, '状态落到夜间');
     eq(tick(new Date()), null, '今晚同一个夜窗内仍只处理一次（闩现在绑的是今晚）');
 }
 {
-    // 存量自愈：老访客存储里那个裸 '1' 与任何主题日都不相等 ⇒ 按陈旧处理，无需迁移。
+
     store.clear(); at(23, 10, 16);
     localStorage.setItem('darkModeInWindow', '1');
     localStorage.setItem('isDarkMode', '"false"');
     eq(tick(new Date()), true, '存量裸 \'1\' 闩：今晚照常切夜（自愈）');
 }
 {
-    // 反向：**同一晚**的第二分钟绝不能被切第二次（这是"边界一次性"的本体，
-    // 绑主题日不能把它破掉——主题日在 23:00→06:00 整段是一个值）。
+
     store.clear(); at(23, 0, 15);
     localStorage.setItem('isDarkMode', '"false"');
     eq(tick(new Date()), true, '23:00 切夜');
     for (const h of [0, 3, 5]) {
-        at(h, 30, 16);                                     // 跨到次日凌晨，主题日仍未翻篇
+        at(h, 30, 16);
         eq(tick(new Date()), null, `${String(h).padStart(2, '0')}:30 仍在同一主题日 → 不重复入场`);
     }
 }
 
-console.log('== 旧版残留 / agent 侧的值 ==');
+console.log('== 存储值归一化与组件命令 ==');
 {
     store.clear(); at(23, 30);
     localStorage.setItem('darkModeUserChoice', 'true');
-    ok(!theme.userChoiceActive(), '无日期的旧标记不生效（20260908 语义）');
+    ok(!theme.userChoiceActive(), '无日期的旧标记不生效');
     eq(tick(new Date()), true, '夜间无有效意愿 → 进窗自动切夜');
 }
 {
     store.clear(); at(22, 0);
     localStorage.setItem('isDarkMode', '"true"');
-    theme.recordUserChoice('true');       // chat-stream.js markVisitorChoice(true) 写的值
+    theme.recordUserChoice('true');
     ok(theme.userChoiceActive(), "'true' 与 'dark' 等价（agent 开夜间也守住）");
 }
 {
     store.clear(); at(22, 0);
-    theme.recordUserChoice('false');      // chat-stream.js markVisitorChoice(false)，窗口外
+    theme.recordUserChoice('false');
     ok(!theme.userChoiceActive(), "窗口外 'false' 与 'light' 等价（不记）");
 }
 
 console.log('== 与 chat-stream.js 的 markVisitorChoice 对齐 ==');
 {
-    const streamSrc = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
-    const grab = (name) => {
-        const decl = 'const ' + name + ' = ';
-        const i = streamSrc.indexOf(decl);
-        if (i < 0) throw new Error(`chat-stream.js 里找不到 ${name}（改名了？测试要同步）`);
-        const start = streamSrc.indexOf('{', i);          // 箭头函数体起始
-        let depth = 0, j = start;
-        for (; j < streamSrc.length; j++) {
-            if (streamSrc[j] === '{') depth++;
-            else if (streamSrc[j] === '}') { depth--; if (depth === 0) break; }
+    let enabled = false;
+    const widget = runtime({ clock: FakeDate, respond: () => sse(
+        frame('command', { kind: 'darkmode', mode: enabled ? 'on' : 'off' }) + frame('text', '已切换') + frame('done', {})) });
+    const markVisitorChoice = async on => {
+        enabled = on;
+        widget.win.localStorage.removeItem('darkModeUserChoice');
+        widget.win.localStorage.removeItem('darkModeChoiceDay');
+        await widget.send('切换主题');
+        for (const key of ['darkModeUserChoice', 'darkModeChoiceDay']) {
+            const value = widget.win.localStorage.getItem(key);
+            if (value === null) store.delete(key); else store.set(key, value);
         }
-        if (depth !== 0) throw new Error(`${name} 花括号不配平，抽取失败`);
-        // 从 `= ` 之后整段取（含 `() =>`），不是从 `{` 起
-        return `const ${name} = ${streamSrc.slice(i + decl.length, j + 1)};`;
     };
-    // Date 作为形参遮蔽全局，把假钟喂进去（函数体里用的是 new Date() / Date.now()）
-    const markVisitorChoice = new Function('localStorage', 'Date',
-        grab('choiceDay') + grab('markVisitorChoice') + 'return markVisitorChoice;')(localStorage, FakeDate);
+    try {
 
-    // 值拼写不同（theme 写 'dark'/'light'，chat 写 'true'/'false'），但 userChoiceActive
-    // 只认"在不在 + 哪天"——所以对齐的是这个归一化结果，不是原始字符串。
-    for (const c of [
-        { name: '白天切夜间', h: 22, m: 10, theme: 'dark', chat: true },
-        { name: '白天切浅色', h: 14, m: 0, theme: 'light', chat: false },
-        { name: '夜间切浅色', h: 23, m: 30, theme: 'light', chat: false },
-        { name: '夜间切夜间', h: 2, m: 0, theme: 'dark', chat: true },
-    ]) {
-        at(c.h, c.m); store.clear();
-        theme.recordUserChoice(c.theme);
-        const viaTheme = theme.userChoiceActive();
-        at(c.h, c.m); store.clear();
-        markVisitorChoice(c.chat);
-        const viaChat = theme.userChoiceActive();
-        eq(viaChat, viaTheme, `${c.name}：theme.ts 与 chat-stream.js 同判（都 ${viaTheme ? '记' : '不记'}）`);
-        if (viaChat) eq(store.get('darkModeChoiceDay'), theme.currentThemeDay(), `${c.name}：主题日也写成同一天`);
-    }
-    // 反证抽出来的不是空壳：它真的往存储里写了东西
-    store.clear(); at(22, 10);
-    markVisitorChoice(true);
-    eq(store.get('darkModeUserChoice'), 'true', '抽取的函数确实落了存储（不是空壳）');
+        for (const c of [
+            { name: '白天切夜间', h: 22, m: 10, theme: 'dark', chat: true },
+            { name: '白天切浅色', h: 14, m: 0, theme: 'light', chat: false },
+            { name: '夜间切浅色', h: 23, m: 30, theme: 'light', chat: false },
+            { name: '夜间切夜间', h: 2, m: 0, theme: 'dark', chat: true },
+        ]) {
+            at(c.h, c.m); store.clear();
+            theme.recordUserChoice(c.theme);
+            const viaTheme = theme.userChoiceActive();
+            at(c.h, c.m); store.clear();
+            await markVisitorChoice(c.chat);
+            const viaChat = theme.userChoiceActive();
+            eq(viaChat, viaTheme, `${c.name}：theme.ts 与 chat-stream.js 同判（都 ${viaTheme ? '记' : '不记'}）`);
+            if (viaChat) eq(store.get('darkModeChoiceDay'), theme.currentThemeDay(), `${c.name}：主题日也写成同一天`);
+        }
+
+        store.clear(); at(22, 10);
+        await markVisitorChoice(true);
+        eq(store.get('darkModeUserChoice'), 'true', '实际组件命令写入主题选择');
+    } finally { widget.close(); }
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} theme-choice: ${passed} passed, ${failed} failed`);

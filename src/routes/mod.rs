@@ -1,5 +1,6 @@
 pub mod auth;
 mod health;
+mod diagnostics;
 pub mod notes;
 pub mod document_visibility;
 pub mod document_reads;
@@ -225,7 +226,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/task/inputs/status", post(chat::task_input_status_handler))
         .route("/api/chat/task/confirmation", post(chat::task_confirmation_handler))
         .route("/api/chat/confirmation/cancel", post(chat::cancel_handler))
-        // 对话历史（DB 权威源，前端转跳/多窗口恢复；handler 内手写鉴权）
+        // Conversation handlers validate ownership against persisted history.
         .route("/api/chat/history/text", get(own_reads::history::list))
         .route("/api/protected/my/board/page", get(own_reads::board::list))
         .route("/api/chat/history", get(chat::chat_history_handler))
@@ -234,7 +235,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/conversations", get(conversation::list_conversations).post(conversation::create_conversation))
         .route("/api/chat/conversations/{id}", delete(conversation::delete_conversation).patch(conversation::update_conversation))
         
-        // Knowledge Base (GET public for agent)
+        // Public knowledge entries.
         .route("/api/knowledge", get(knowledge::list_knowledge))
 
         .route("/api/monitor/log", post(monitor::report_log))
@@ -374,7 +375,7 @@ pub fn create_router(state: AppState) -> Router {
              .put(talks::update_talk)
         )
 
-        // 留言管理（后台）：河灯留言列表/删除/内容审核（审核机制预留，暂未启用）
+        // Administrator guestbook moderation.
         .route("/api/protect/board", get(talks::list_board_admin))
         .route("/api/protected/moderation/summary", get(moderation::overview))
         .route("/api/protect/board/{id}", delete(talks::delete_board))
@@ -401,6 +402,7 @@ pub fn create_router(state: AppState) -> Router {
             post(quota::review_quota_request),
         )
         
+        .route("/api/protected/diagnostics", get(diagnostics::read))
         .route("/api/protected/stats/users", get(stats::user_stats))
         .route("/api/protected/stats/notes", get(note_stats::note_report))
         .route("/api/protected/stats/notes/periods", get(note_stats::note_period_report))

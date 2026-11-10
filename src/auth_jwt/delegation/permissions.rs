@@ -72,6 +72,7 @@ fn matches(pattern: &str, path: &str) -> bool {
     parts.next().is_none()
 }
 const READS: &[&str] = &[
+    "/api/protected/diagnostics",
     "/api/protected/profile",
     "/api/category",
     "/api/tagone",

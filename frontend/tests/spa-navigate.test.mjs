@@ -1,6 +1,5 @@
-// SPA navigation preserves the chat panel and rejects retired or external routes.
-// Run: node tests/spa-navigate.test.mjs
 import * as esbuild from 'esbuild';
+import { runtime, widgetSource } from './helpers/widget-runtime.mjs';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -14,8 +13,7 @@ await esbuild.build({
     entryPoints: [path.join(root, 'src/router/spaNavigate.ts')],
     bundle: true, format: 'esm', platform: 'node', outfile: file, logLevel: 'error',
 });
-// 假 window：`spaNavTarget` 不传 base/host 时读它（桥挂上后就是这条默认路，
-// 也是浏览器里唯一的路）——本机 node 没有 window，必须先装好再调桥。
+
 globalThis.window = {
     location: { href: 'https://saudade.site/article/16', host: 'saudade.site' },
 };
@@ -40,10 +38,9 @@ console.log('\n① 该接管的：同源 + 站内白名单 ⇒ 给出站内相�
     eq(target('https://saudade.site/dashboard/notes'), '/dashboard/notes', '同源绝对地址 → 只留 path');
     eq(target('/article/16?from=chat#top'), '/article/16?from=chat#top', 'query 与 hash 不被丢掉');
     eq(target('/category/3'), '/category/3', '文章/分类/后台都在白名单');
-    // http 与 https 同 host 都算站内（与 chat-stream.js 既有的 hostOk 同口径）——
-    // 否则站内一条 http 链接会退化成整页跳转，用户看到的"面板没保住"会随机复现
+
     eq(reason('http://saudade.site/talk'), null, '同 host 的 http 地址也算站内');
-    // 相对基线：base 是当前页（文章页）⇒ 拼接结果交给 router 的仍是站内绝对路径
+
     eq(target('../../guestbook'), '/guestbook', '相对路径按当前页解析（base 生效）');
 }
 
@@ -77,8 +74,6 @@ console.log('\n③ 桥的接线：挂上 window.__spaNavigate，命中才 true�
     eq(calls.length, 1, '  拒绝的目标一次都没进 router');
     eq(sink.__spaNavigate('/device-console/'), false, '静态控制台 ⇒ false');
 
-    // 路由跳失败（不该发生）⇒ 必须返回 false，让调用方回落整页跳转；
-    // 返回 true 就成了"静默吞掉一次跳转"——用户点了链接什么都没发生
     const warns = [];
     const origWarn = console.warn;
     console.warn = (...a) => warns.push(a.join(' '));
@@ -87,7 +82,7 @@ console.log('\n③ 桥的接线：挂上 window.__spaNavigate，命中才 true�
         M.registerSpaNavigate({ navigate: () => { throw new Error('boom'); } }, sink2);
         eq(sink2.__spaNavigate('/guestbook'), false, 'router.navigate 抛错 ⇒ false（回落整页，不静默吞）');
         ok(warns.some((w) => w.includes('[spa-nav]')), '  留一条 warn 便于排障', { warns });
-        // 幂等：重复注册只是覆盖同一个函数
+
         M.registerSpaNavigate({ navigate: (to) => calls.push(to) }, sink2);
         eq(sink2.__spaNavigate('/talk'), true, '重复注册后仍可用（幂等）');
     } finally {
@@ -98,10 +93,8 @@ console.log('\n③ 桥的接线：挂上 window.__spaNavigate，命中才 true�
 console.log('\n④ 源码契约：两份白名单不许漂移（差集必须恰好是 device-console 那一条）');
 {
     const ts = readFileSync(path.join(root, 'src/router/spaNavigate.ts'), 'utf8');
-    const widget = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
+    const widget = widgetSource('chat-stream.js');
 
-    // 从源码里读正则字面量的**源文本**（`/…/ ` 之间那一段），不 eval——
-    // 比的是两份清单写的是不是同一批字符串
     const sourcesOf = (src, name) => {
         const m = src.match(new RegExp('(?:const\\s+' + name + '|' + name + ')[^=]*=\\s*\\[([\\s\\S]*?)\\]'));
         if (!m) return null;
@@ -114,19 +107,15 @@ console.log('\n④ 源码契约：两份白名单不许漂移（差集必须恰�
     const onlyWidget = (widgetList || []).filter((s) => !(bridgeList || []).includes(s));
     const onlyBridge = (bridgeList || []).filter((s) => !(widgetList || []).includes(s));
     ok(onlyBridge.length === 0, '桥的白名单是 widget 那份的子集（桥不许自己偷偷多认页面）', { onlyBridge });
-    // 差集只许有 device-console 一条（它归桥的 deny 管：nginx 直服的静态页，SPA 里没有对应路由）。
-    // 这里按**含义**比而不是按字面比：widget 那份写作 `/^\/device-console\/?/`（没有 `$`，
-    // 是前缀匹配），桥的 deny 是 `$` 锚定的 `/^\/device-console\/?$/`。两者都拦——
-    // 桥多出的那个 `$` 只是更严（`/device-console/x` 落到 off-whitelist 一样是拒绝），
-    // 行为等价由 ② 直接验过。
+
     eq(onlyWidget.length, 1, '两份清单的差集只有一条', { onlyWidget });
     ok(/device-console/.test(onlyWidget[0] || ''), '  那一条就是 device-console', { onlyWidget });
 }
 
 console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接委托、兜底判据仍在');
 {
-    const widget = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
-    // 检查实际可执行行，避免注释中的示例被当成有效分支
+    const widget = widgetSource('chat-stream.js');
+
     const live = widget.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
     ok(!live.includes("navConfirm.classList.add('active')"),
@@ -136,33 +125,51 @@ console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接�
     ok(!live.includes('泠月喵建议跳转到'),
         '卡面文案不再出现在活代码里（用户点名不要这句）');
 
-    // 直达分支先走桥，桥说 false 才整页跳转；两行 sessionStorage 标记只在整页那条路上才有意义
     ok(/window\.__spaNavigate && window\.__spaNavigate\(navUrl\)/.test(live),
         'AUTO_NAVIGATE 直达先问桥');
     ok(/window\.location\.href = navUrl/.test(live), '  桥拒绝时仍回落整页跳转（跨域/静态页那条路没断）');
     ok(/window\.__spaNavigate\(url\)/.test(live), '卡上的「确定」也走桥（休眠代码，一行恢复即用）');
-    // 纵深防御：白名单自校验与"非博客页面"注记都还在（桥是第二道，不是唯一一道）
+
     ok(/BLOG_ROUTES\.some\(/.test(live) && /navOk/.test(live), 'widget 自己的白名单自校验保留');
     ok(/nav-skip-note/.test(live) && /hostOk/.test(live), '跨域/非白名单的注记与 host 校验保留');
 
-    // 气泡里的站内超链接（"用超链接跳转"那条路的最后一米）
     ok(/messages\.addEventListener\('click'/.test(live), '消息容器上挂了 click 委托');
     ok(/closest\('a\[href\]'\)/.test(live), '  只认 a[href]');
     ok(/e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey/.test(live),
         '  带修饰键的点击放行（那是用户明确要开新标签页）');
 
-    // 停用 ≠ 删除：卡面标记与样式留着，恢复只需去掉注释
     const render = readFileSync(path.join(root, 'public/live2d-widgets/chat-render.js'), 'utf8');
     ok(render.includes('id="chat-nav-confirm"') && render.includes('id="nav-yes"') && render.includes('id="nav-no"'),
         '卡面 DOM（#chat-nav-confirm / #nav-yes / #nav-no）仍由 chat-render.js 注入');
     ok(/chat-nav-confirm/.test(readFileSync(path.join(root, 'public/live2d-widgets/widget.css'), 'utf8')),
         'widget.css 里的卡片样式保留');
 
-    // 桥必须在路由模块里注册（不注册 = 所有跳转都退回整页）
     const router = readFileSync(path.join(root, 'src/router/index.tsx'), 'utf8');
     ok(/import\s*\{\s*registerSpaNavigate\s*\}\s*from\s*["']\.\/spaNavigate\.ts["']/.test(router),
         'router/index.tsx 引了 registerSpaNavigate');
     ok(/registerSpaNavigate\(router\)/.test(router), '  并且在 createBrowserRouter 之后调用了一次');
+}
+
+{
+    const f = runtime();
+    try {
+        const destinations = [];
+        f.win.__spaNavigate = url => {
+            const target = M.spaNavTarget(url, f.win.location.href, f.win.location.host);
+            if (!target) return false;
+            destinations.push(target); return true;
+        };
+        for (const [href, options, prevented] of [
+            ['/guestbook', {}, true], ['/talk', {ctrlKey:true}, false],
+            ['https://other.invalid/guestbook', {}, false],
+        ]) {
+            const a = f.doc.createElement('a'); a.href=href; f.ctx.dom.messages.appendChild(a);
+            const event = new f.win.MouseEvent('click', {bubbles:true,cancelable:true,button:0,...options});
+            a.dispatchEvent(event);
+            eq(event.defaultPrevented,prevented,'实际消息链接委托保留修饰键和跨域规则');
+        }
+        eq(destinations.join(','),'/guestbook','只有合法站内普通点击进入路由');
+    } finally {f.close();}
 }
 
 console.log('\n⑥ 组件缓存版本来自锁文件并传播给子资源');
