@@ -487,6 +487,56 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
 }
 
 #[tokio::test]
+async fn task_list_preserves_job_state_ownership_and_interrupted_save_errors() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let pending = fixture.seed("pending", "dashboard", &request(vec![])).await;
+    for status in [
+        "generating",
+        "saving",
+        "review",
+        "failed",
+        "unknown",
+        "accepted",
+        "rejected",
+    ] {
+        let id = fixture.seed(status, "dashboard", &request(vec![])).await;
+        fixture
+            .state
+            .db
+            .execute(stmt(
+                "UPDATE image_generation SET approved_at=now()-interval '6 minutes', \
+             reviewed_at=now()-interval '6 minutes' WHERE id::text=$1",
+                vec![id.clone().into()],
+            ))
+            .await
+            .unwrap();
+        let actual = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+        let tasks = tasks::list(&fixture.state, fixture.uid).await.unwrap();
+        let shown = tasks.iter().find(|row| row.id == id).unwrap();
+        assert_eq!(shown.status, actual.status);
+        assert_eq!(shown.error, actual.error);
+        assert_eq!(shown.image_removed, actual.image_removed);
+        assert_eq!(shown.event_version, actual.event_version);
+        assert!(
+            !shown.report_pending,
+            "Dashboard jobs do not create chat reports"
+        );
+        assert!(!tasks.iter().any(|row| row.id == pending));
+        if status == "saving" {
+            assert_eq!(shown.status, "review");
+            assert!(shown.error.is_some());
+        }
+    }
+    assert!(tasks::list(&fixture.state, fixture.uid + 1)
+        .await
+        .unwrap()
+        .is_empty());
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
 async fn completion_reports_are_owned_versioned_and_caught_up_from_the_durable_list() {
     let Some(fixture) = Fixture::new().await else {
         return;

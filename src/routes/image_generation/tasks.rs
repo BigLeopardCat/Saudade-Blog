@@ -20,14 +20,14 @@ pub async fn list(state: &AppState, uid: i32) -> Result<Vec<ImageTask>, DbErr> {
         format!("SELECT id::text AS id,conversation_id, \
             left(request->>'prompt',80) AS title,{} AS status,created_at::text AS created_at, \
             {} AS event_version,(conversation_id IS NOT NULL AND reported_version \
-                IS DISTINCT FROM {}) AS report_pending,error, \
+                IS DISTINCT FROM {}) AS report_pending,{} AS error, \
             (status='accepted' AND (image_id IS NULL OR EXISTS(SELECT 1 FROM image_deletion d \
                 WHERE d.image_id=image_generation.image_id))) AS image_removed \
             FROM image_generation WHERE owner_id=$1 \
             AND (status IN ('generating','saving','review','unknown') \
                  OR status IN ('accepted','failed','rejected') AND created_at>now()-interval '1 day') \
             ORDER BY CASE WHEN status IN ('generating','saving','review','unknown') \
-                THEN 0 ELSE 1 END,created_at DESC LIMIT 21", jobs::STATUS, chat::VERSION, chat::VERSION),
+                THEN 0 ELSE 1 END,created_at DESC LIMIT 21", jobs::STATUS, chat::VERSION, chat::VERSION, jobs::ERROR),
         vec![uid.into()],
     )).all(&state.db).await
 }

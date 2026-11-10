@@ -24,9 +24,10 @@ struct Row {
     save_storage: String,
 }
 pub(super) const STATUS: &str = "CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN 'review' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END";
+pub(super) const ERROR: &str = "CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END";
 
 pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
-    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status,conversation_id,save_storage,{} AS event_version, \
+    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,{ERROR} AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status,conversation_id,save_storage,{} AS event_version, \
         (status='accepted' AND (image_id IS NULL OR EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=image_generation.image_id))) AS image_removed, \
         (SELECT i.image_url FROM images i WHERE i.image_key=image_generation.image_id \
          AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key)) AS gallery_url \
