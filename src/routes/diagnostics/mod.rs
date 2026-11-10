@@ -113,10 +113,8 @@ pub(super) async fn read(State(state): State<Arc<AppState>>) -> Response {
         Ok(Ok(Ok(value))) => value,
         _ => return failure(StatusCode::SERVICE_UNAVAILABLE, "measurements_unavailable"),
     };
-    let agent_endpoint = std::env::var("AGENT_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|_| format!("{}/ready", crate::ai_services::agent_base_url()));
+    let configured_agent = std::env::var("AGENT_URL").ok();
+    let agent_endpoint = crate::ai_services::agent_ready_endpoint(configured_agent.as_deref());
     let (database, agent) = tokio::join!(database_state(&state), agent_state(agent_endpoint));
     let result = Diagnostics {
         schema_version: 1,
