@@ -447,11 +447,12 @@ async fn early_exit_never_sends_an_empty_error_frame() {
     );
 }
 
-/// **两条例外必须原地不动**：前端按状态码特判它们（还原输入 / 结算确认卡），
-/// 改成 SSE 帧等于把那两段打成死代码。
+/// Control errors retain HTTP status so clients can stop or recover correctly.
 #[tokio::test]
 async fn early_exit_keeps_status_code_exceptions_as_json() {
     for (st, code) in [
+        (StatusCode::UNAUTHORIZED, "unauthorized"),
+        (StatusCode::FORBIDDEN, "image_event_forbidden"),
         (StatusCode::NOT_FOUND, "conversation_not_found"),
         (StatusCode::CONFLICT, "confirm_already_used"),
     ] {
