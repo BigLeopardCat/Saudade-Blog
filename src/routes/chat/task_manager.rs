@@ -118,7 +118,7 @@ pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     .await
     {
         Ok(v) => v,
-        Err(r) => return r,
+        Err(_) => json!({"items":[],"unavailable":true}),
     };
     let schedules = if crate::authz::can_access_console(&role) {
         // The scheduling service is optional; a failure is exposed, never an empty success.
@@ -137,8 +137,24 @@ pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     } else {
         json!({"items":[]})
     };
+    let images = if crate::authz::can_access_console(&role) {
+        match crate::routes::image_generation::tasks::list(&state, uid).await {
+            Ok(mut items) => {
+                let has_more = items.len() > 20;
+                items.truncate(20);
+                json!({"items":items,"has_more":has_more})
+            }
+            Err(error) => {
+                tracing::warn!(%error, uid, "image task list unavailable");
+                json!({"items":[],"unavailable":true})
+            }
+        }
+    } else {
+        json!({"items":[]})
+    };
     success(
-        json!({"paused":paused,"schedules":schedules,"server_time":chrono::Utc::now().to_rfc3339()}),
+        json!({"paused":paused,"schedules":schedules,"images":images,
+                   "server_time":chrono::Utc::now().to_rfc3339()}),
     )
 }
 
