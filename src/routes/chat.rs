@@ -20,8 +20,6 @@ pub use task_inputs::{
 mod pending;
 mod persistence;
 use persistence::{save_execution_log, PERSISTENCE_ERROR};
-#[cfg(test)]
-use persistence::save_assistant_reply;
 mod protocol;
 mod synchronous;
 pub use synchronous::chat_handler;
