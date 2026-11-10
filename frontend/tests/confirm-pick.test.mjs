@@ -1,107 +1,72 @@
-// 当前确认交互的来源、撤销、选项与模块边界回归。
-import { readFileSync } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { JSDOM } from 'jsdom';
+import assert from 'node:assert/strict';
+import { flush, frame, runtime, sse } from './helpers/widget-runtime.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const raw = ['chat-stream.js', 'chat-approval.js'].map(file =>
-    readFileSync(path.join(here, '../public/live2d-widgets', file), 'utf8')).join('\n');
-const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
-    .map((l) => { const i = l.indexOf('//'); return i >= 0 ? l.slice(0, i) : l; })
-    .join('\n');
-const code = strip(raw);
-
-function verifySelectableRestoration() {
-    const dom = new JSDOM('<main><section id="ask"><div id="question"></div><div id="buttons"></div></section></main>',
-        { url: 'https://fixture.invalid', runScripts: 'outside-only' });
-    const win = dom.window, doc = win.document;
+const card = () => ({ id: 'batch', token: 'fixture-only', q: '选择待办', exp: Date.now() / 1000 + 600,
+    opts: [{ value: 'yes', label: '确认' }, ...[0, 1, 2].map(i => ({ value: 'pick:' + i, label: '待办 ' + i })),
+        { value: 'other', label: '修改' }, { value: 'no', label: '取消' }] });
+const show = f => { f.approval.receive(card(), 42, null); f.approval.syncAsk(); };
+for (const value of ['yes', 'pick:1']) {
+    const f = runtime({ respond: () => sse(frame('text', '执行结果') + frame('done', {})) });
     try {
-        win.localStorage.setItem('tokenKey', 'a.' + win.btoa(JSON.stringify({sub: 1})) + '.b');
-        win.eval(readFileSync(path.join(here, '../public/live2d-widgets/chat-approval.js'), 'utf8'));
-        const ctx = {dom: {messages: doc.querySelector('main'), askBox: doc.querySelector('#ask'),
-            askQuestion: doc.querySelector('#question'), askBtns: doc.querySelector('#buttons')},
-            state: {conv: 42, isSending: false, remoteRounds: {}},
-            render: {applyMsg: (node, text) => { node.textContent = text; }}};
-        const approval = win.__waifuApproval(ctx, {scrollToBottom: () => {}});
-        const card = {id: 'batch', token: 'fixture-only', q: '选择待办', opts: [
-            {value:'yes',label:'确认'}, ...[0,1,2].map(i => ({value:'pick:'+i,label:'待办 '+i})),
-            {value:'no',label:'取消'}]};
-        approval.receive(card, 42, null); approval.syncAsk();
-        const inputs = () => [...ctx.dom.askBtns.querySelectorAll('input[type="checkbox"]')];
-        ok(inputs().length === 4, '批次渲染全选与三项真实勾选控件');
-        inputs()[2].click();
-        ok(ctx.dom.askBtns.querySelector('[data-ask-submit]').dataset.askValue === 'pick:0,2',
-            '取消勾选中间项只提交两项的明确选择');
-        ctx.dom.askBox.dataset.askState = ''; approval.syncAsk();
-        ok(inputs().slice(1).map(input => input.checked).join(',') === 'true,false,true',
-            '强制重建后保留部分选择，不退回全选');
-        inputs()[0].click(); inputs()[0].click();
-        ok(ctx.dom.askBtns.querySelector('[data-ask-submit]').disabled,
-            '全不选时禁止确认执行');
-        ok(!win.localStorage.getItem('saudade-chat-approvals:1:42').includes('fixture-only'),
-            '选项恢复缓存不保存确认凭据');
-    } finally { win.close(); }
+        show(f);
+        if (value === 'pick:1') {
+            const inputs = f.ctx.dom.askBtns.querySelectorAll('input[type="checkbox"]');
+            inputs[1].click(); inputs[3].click();
+        } else {
+            // The same approval control also supports a non-batch yes/no proposal.
+            f.ctx.state.pendingAsk.opts = card().opts.filter(option => !option.value.startsWith('pick:'));
+            f.ctx.dom.askBox.dataset.askState = ''; f.approval.syncAsk();
+        }
+        const activeSubmit = f.ctx.dom.askBtns.querySelector(`[data-ask-value="${value}"]`);
+        assert.ok(activeSubmit);
+        activeSubmit.click(); await f.idle();
+        assert.equal(f.calls.length, 1);
+        assert.equal(f.calls[0].body.message, '');
+        assert.equal(f.calls[0].body.confirm_token, 'fixture-only');
+        assert.equal(f.calls[0].body.confirm_pick, value === 'yes' ? undefined : value);
+        assert.equal(f.ctx.state.items.some(item => item.type === 'user'), false);
+        assert.equal(f.settlements[0][0], '确认中…');
+        assert.equal(f.settlements.at(-1)[0], '已确认，结果见后续回复');
+    } finally { f.close(); }
 }
-
-let pass = 0, fail = 0;
-const ok = (cond, name, extra) => {
-    if (cond) { pass++; return; }
-    fail++;
-    console.log('  ✗ ' + name + (extra ? '\n      ' + extra : ''));
-};
-
-{
-    ok(/if \(value === 'no'\)/.test(code), "取消判据是 `value === 'no'`");
-    ok(!/value !== 'yes'/.test(code), '  旧判据「不等于 yes 就算取消」已不在代码里',
-       '它会把「只办第 i 件」当成取消：卡片写已取消、系统一件都不办');
-    ok(!/value != 'yes'/.test(code), '  同一条的宽松写法也没留下');
-    ok(/if \(value === 'no'\) \{ cancelAsk\(ask\); return; \}/.test(code),
-       '取消分支请求服务端撤销后早退，不进入确认执行');
-    const start = code.indexOf('const cancelAsk = async');
-    const end = code.indexOf('const handleAskChoice', start);
-    const cancellation = code.slice(start, end);
-    ok(cancellation.includes("fetch('/api/chat/confirmation/cancel'"), '撤销必须请求服务端');
-    ok(cancellation.indexOf('body.cancelled !== true') < cancellation.indexOf("askSettle('已撤销"),
-       '服务端确认撤销后才能显示已撤销');
-
+const partial = runtime();
+try {
+    show(partial);
+    const inputs = () => [...partial.ctx.dom.askBtns.querySelectorAll('input[type="checkbox"]')];
+    assert.equal(inputs().length, 4);
+    inputs()[2].click();
+    assert.equal(partial.ctx.dom.askBtns.querySelector('[data-ask-submit]').dataset.askValue, 'pick:0,2');
+    partial.ctx.dom.askBox.dataset.askState = ''; partial.approval.syncAsk();
+    assert.deepEqual(inputs().slice(1).map(input => input.checked), [true, false, true]);
+    inputs()[0].click(); inputs()[0].click();
+    assert.equal(partial.ctx.dom.askBtns.querySelector('[data-ask-submit]').disabled, true);
+    assert.ok(!partial.win.localStorage.getItem('saudade-chat-approvals:7:42').includes('fixture-only'));
+    await partial.choose('other');
+    assert.equal(partial.calls.length, 0);
+    assert.equal(partial.settlements.length, 0);
+    assert.equal(partial.ctx.dom.askOther.classList.contains('active'), true);
+    assert.equal(partial.doc.activeElement, partial.ctx.dom.askOtherInput);
+    assert.ok(partial.ctx.state.pendingAsk);
+} finally { partial.close(); }
+for (const accepted of [true, false]) {
+    let release;
+    const f = runtime({ respond: () => new Promise(resolve => { release = resolve; }) });
+    try {
+        show(f); await f.choose('no');
+        assert.equal(f.calls[0].url, '/api/chat/confirmation/cancel');
+        assert.equal(f.calls[0].body.token, 'fixture-only');
+        assert.equal(f.settlements.at(-1)[0], '撤销中…');
+        assert.equal(f.settlements.some(values => values[0].includes('已撤销')), false);
+        release(Response.json({ cancelled: accepted })); await flush(); await flush();
+        if (accepted) assert.equal(f.settlements.at(-1)[0], '已撤销，未执行改动');
+        else assert.ok(f.ctx.state.pendingAsk, 'Unverified cancellation must restore the card');
+        assert.equal(f.calls.length, 1, 'Cancellation must never enter confirmation execution');
+    } finally { f.close(); }
 }
-
-{
-    ok(/confirmPick: \(value === 'yes' \? '' : String\(value\)\)/.test(code),
-       "挑选值原样带进 sendMessage（`confirmPick`），「全部办」传空串");
-    const iPick = code.indexOf('confirmPick:');
-    const hidden = code.slice(code.lastIndexOf('sendMessage({', iPick), code.indexOf('});', iPick));
-    ok(hidden.includes('confirmToken: ask.token') && hidden.includes("message: ''"),
-       '隐藏批准携带凭据与选择，不添加合成用户发言');
-    ok(/opts\.confirmPick/.test(code), '  请求体按 `opts.confirmPick` 透传（空串不传字段）');
-    ok(/'confirm_pick'|confirm_pick:/.test(code), '  字段名与 Python/Rust 侧一致：`confirm_pick`');
-    const iBody = code.indexOf('confirm_pick');
-    const iGuard = code.lastIndexOf('silent && opts.confirmToken', iBody);
-    ok(iGuard > 0 && iBody - iGuard < 400, '  且由 `silent && opts.confirmToken` 把着（普通发言不带）');
-}
-
-{
-    ok(/b\.setAttribute\('data-ask-value', op\.value \|\| 'yes'\)/.test(code),
-       '按钮的 data-ask-value 取自帧里的 opts（不是写死两枚）');
-    verifySelectableRestoration();
-}
-
-{
-    ok(/if \(value === 'other'\)/.test(code), "改口的拦截支在场（`value === 'other'`）");
-    const iOther = code.indexOf("if (value === 'other')");
-    const iSettle = code.indexOf("askSettle('确认中…'");
-    const iPick = code.indexOf('confirmPick:');
-    ok(iOther > 0 && iSettle > iOther && iPick > iOther,
-       '  且排在「确认中…」结算与 confirmPick 隐藏请求**之前**',
-       '排在后面 = 卡片结算了、服务端 fail-closed 拒掉、零执行');
-    ok(code.indexOf("if (value === 'no')") > iOther,
-       '  「取消」那一支仍在它之后（两个早退的相对次序没被换过）');
-    const seg = code.slice(iOther, code.indexOf('return;', iOther));
-    ok(seg.length > 0 && !/askSettle\(/.test(seg),
-       '  拦截支内没有任何结算调用（此刻卡片仍 live）');
-    ok(/reveal/i.test(seg), '  它做的是"露出输入行"（reveal），不是别的');
-}
-
-console.log(`\n${pass} 项通过` + (fail ? `、${fail} 项失败` : ''));
-process.exit(fail ? 1 : 0);
+const ordinary = runtime();
+try {
+    await ordinary.send('普通发言');
+    assert.equal(ordinary.calls[0].body.confirm_token, undefined);
+    assert.equal(ordinary.calls[0].body.confirm_pick, undefined);
+} finally { ordinary.close(); }
+console.log('Confirmation selections, hidden approvals, amendment and acknowledged cancellation stay distinct.');
