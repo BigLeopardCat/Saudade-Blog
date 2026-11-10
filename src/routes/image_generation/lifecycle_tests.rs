@@ -487,7 +487,7 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
 }
 
 #[tokio::test]
-async fn task_list_preserves_job_state_ownership_and_interrupted_save_errors() {
+async fn task_list_contains_only_owned_running_work_and_removes_terminal_states() {
     let Some(fixture) = Fixture::new().await else {
         return;
     };
@@ -506,15 +506,26 @@ async fn task_list_preserves_job_state_ownership_and_interrupted_save_errors() {
             .state
             .db
             .execute(stmt(
-                "UPDATE image_generation SET approved_at=now()-interval '6 minutes', \
-             reviewed_at=now()-interval '6 minutes' WHERE id::text=$1",
+                "UPDATE image_generation SET approved_at=now(),reviewed_at=now() WHERE id::text=$1",
                 vec![id.clone().into()],
             ))
             .await
             .unwrap();
         let actual = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
         let tasks = tasks::list(&fixture.state, fixture.uid).await.unwrap();
-        let shown = tasks.iter().find(|row| row.id == id).unwrap();
+        let shown = tasks.iter().find(|row| row.id == id);
+        if !matches!(status, "generating" | "saving") {
+            assert!(
+                shown.is_none(),
+                "Ended jobs belong to history, not active tasks"
+            );
+            assert_eq!(
+                actual.status, status,
+                "Removing a task must not mutate its record"
+            );
+            continue;
+        }
+        let shown = shown.unwrap();
         assert_eq!(shown.status, actual.status);
         assert_eq!(shown.error, actual.error);
         assert_eq!(shown.image_removed, actual.image_removed);
@@ -524,16 +535,68 @@ async fn task_list_preserves_job_state_ownership_and_interrupted_save_errors() {
             "Dashboard jobs do not create chat reports"
         );
         assert!(!tasks.iter().any(|row| row.id == pending));
+        fixture
+            .state
+            .db
+            .execute(stmt(
+                "UPDATE image_generation SET approved_at=now()-interval '6 minutes', \
+             reviewed_at=now()-interval '6 minutes' WHERE id::text=$1",
+                vec![id.clone().into()],
+            ))
+            .await
+            .unwrap();
+        let stale = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+        assert_eq!(
+            stale.status,
+            if status == "saving" {
+                "review"
+            } else {
+                "unknown"
+            }
+        );
         if status == "saving" {
-            assert_eq!(shown.status, "review");
-            assert!(shown.error.is_some());
+            assert!(stale.error.is_some());
         }
+        assert!(
+            !tasks::list(&fixture.state, fixture.uid)
+                .await
+                .unwrap()
+                .iter()
+                .any(|row| row.id == id),
+            "Effective timeout state must be applied before the task list limit"
+        );
     }
     let owned = tasks::list(&fixture.state, fixture.uid).await.unwrap();
     let other = tasks::list(&fixture.state, fixture.uid + 1).await.unwrap();
     assert!(other
         .iter()
         .all(|row| owned.iter().all(|mine| mine.id != row.id)));
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+async fn image_history_cannot_crowd_running_work_out_of_the_task_page() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let running = fixture
+        .seed("generating", "dashboard", &request(vec![]))
+        .await;
+    fixture.state.db.execute(stmt(
+        "UPDATE image_generation SET created_at=now()-interval '1 day',approved_at=now() WHERE id::text=$1",
+        vec![running.clone().into()],
+    )).await.unwrap();
+    for _ in 0..25 {
+        fixture.seed("review", "dashboard", &request(vec![])).await;
+    }
+    let listed = tasks::list(&fixture.state, fixture.uid).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, running);
+    assert!(!tasks::list(&fixture.state, fixture.uid + 1)
+        .await
+        .unwrap()
+        .iter()
+        .any(|row| row.id == running));
     fixture.cleanup().await;
 }
 
