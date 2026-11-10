@@ -162,3 +162,35 @@ async fn complete_router_requires_administrator_for_both_new_endpoints() {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
+
+#[tokio::test]
+async fn exact_account_lookup_distinguishes_missing_ambiguous_and_database_failure() {
+    let intent: Intent =
+        serde_json::from_value(json!({"action":"freeze","target":{"username":"missing"}})).unwrap();
+    for (rows, expected) in [
+        (vec![], "未找到该完整账号名对应的账号"),
+        (
+            vec![row(2, "user"), row(3, "user")],
+            "完整账号名匹配多个账号",
+        ),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([rows])
+            .into_connection();
+        assert!(targets::resolve(&db, &intent)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains(expected));
+        assert_eq!(db.into_transaction_log().len(), 1);
+    }
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal(
+            "offline".into(),
+        ))])
+        .into_connection();
+    assert!(matches!(
+        targets::resolve(&db, &intent).await,
+        Err(sea_orm::DbErr::Conn(_))
+    ));
+}

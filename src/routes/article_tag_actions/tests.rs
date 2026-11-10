@@ -176,3 +176,37 @@ async fn postgres_atomic_tag_changes_preserve_identity_and_reject_stale() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn missing_article_is_a_domain_error_but_database_failure_stays_unknown() {
+    use sea_orm::{DbErr, MockDatabase, RuntimeErr};
+    let wanted = intent(json!({"add":["example"]}));
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<crate::entity::note::Model>::new()])
+        .into_connection();
+    let error = targets::prepare(&db, 999, &wanted, false)
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        matches!(&error, DbErr::Custom(message) if message.contains("未找到该编号的可管理文章"))
+    );
+    let Json(reply) = response::<()>(Err(error));
+    let value = serde_json::to_value(reply).unwrap();
+    assert!(value.to_string().contains("未找到该编号的可管理文章"));
+    assert_eq!(db.into_transaction_log().len(), 1);
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Conn(RuntimeErr::Internal(
+            "credential-canary".into(),
+        ))])
+        .into_connection();
+    let error = targets::prepare(&db, 999, &wanted, false)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(&error, DbErr::Conn(_)));
+    let Json(reply) = response::<()>(Err(error));
+    let rendered = serde_json::to_string(&reply).unwrap();
+    assert!(rendered.contains("文章或标签读取失败"));
+    assert!(!rendered.contains("credential-canary") && !rendered.contains("未找到"));
+}
