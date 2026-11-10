@@ -26,17 +26,6 @@ pub(crate) fn graph_endpoint(path: &str) -> Option<String> {
     endpoint(explicit.as_deref(), agent.as_deref(), path)
 }
 
-pub(crate) fn agent_base_url() -> String {
-    let raw = agent_chat_url();
-    let value = raw.trim_end_matches('/');
-    value
-        .strip_suffix("/chat/stream")
-        .or_else(|| value.strip_suffix("/chat"))
-        .unwrap_or(value)
-        .trim_end_matches('/')
-        .to_string()
-}
-
 fn endpoint(explicit: Option<&str>, agent: Option<&str>, path: &str) -> Option<String> {
     // An explicitly blank override disables the integration, including the agent fallback.
     if let Some(value) = explicit {
