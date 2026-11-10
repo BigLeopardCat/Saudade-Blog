@@ -112,7 +112,14 @@ pub(super) async fn prepare<C: ConnectionTrait>(
     lock: bool,
 ) -> Result<Prepared, DbErr> {
     intent.validate()?;
-    let article = article_actions::read(db, id, lock).await?;
+    let article = article_actions::read(db, id, lock)
+        .await
+        .map_err(|error| match error {
+            DbErr::RecordNotFound(_) => {
+                failure("未找到该编号的可管理文章，文章不存在或属于编辑副本；请核对文章编号")
+            }
+            other => other,
+        })?;
     let parent = match &intent.parent_tag {
         Some(name) => Some(
             named(db, name, Some(1), None, lock)

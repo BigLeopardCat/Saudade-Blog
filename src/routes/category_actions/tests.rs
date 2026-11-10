@@ -324,3 +324,35 @@ async fn postgres_scheduled_change_replays_atomically_and_rejects_stale_or_revok
     );
     txn.rollback().await.unwrap();
 }
+
+#[tokio::test]
+async fn exact_category_lookup_distinguishes_missing_ambiguous_and_database_failure() {
+    use sea_orm::{DbErr, MockDatabase, RuntimeErr};
+    let wanted = intent(json!({"action":"delete","target":{"name":"candidate"}}));
+    let row = |id| category::Model {
+        id,
+        name: "candidate".into(),
+        introduce: None,
+        path_name: None,
+        icon: None,
+        color: None,
+    };
+    for (rows, expected) in [
+        (vec![], "未找到指定分类"),
+        (vec![row(1), row(2)], "分类名字不唯一"),
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([rows])
+            .into_connection();
+        let result = targets::prepare(&db, &wanted, false).await;
+        assert!(result.err().unwrap().to_string().contains(expected));
+        assert_eq!(db.into_transaction_log().len(), 1);
+    }
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Conn(RuntimeErr::Internal("offline".into()))])
+        .into_connection();
+    assert!(matches!(
+        targets::prepare(&db, &wanted, false).await,
+        Err(DbErr::Conn(_))
+    ));
+}

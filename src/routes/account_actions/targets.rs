@@ -165,8 +165,11 @@ pub(super) async fn resolve<C: ConnectionTrait>(db: &C, intent: &Intent) -> Resu
         .limit(2)
         .all(db)
         .await?;
-    if rows.len() != 1 {
-        return Err(failure("完整账号名未命中唯一账号，请明确唯一编号"));
+    if rows.is_empty() {
+        return Err(failure("未找到该完整账号名对应的账号，请核对账号名或编号"));
+    }
+    if rows.len() > 1 {
+        return Err(failure("完整账号名匹配多个账号，请明确唯一编号"));
     }
     Ok(rows[0].id)
 }
