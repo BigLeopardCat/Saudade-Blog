@@ -1,4 +1,4 @@
-/// 博主本人（uid=1）：后台全权。
+/// 后台管理员角色。
 pub const ROLE_ADMIN: &str = "admin";
 
 pub const ROLE_SUPERADMIN: &str = "superadmin";
@@ -17,8 +17,7 @@ pub fn is_known_role(role: &str) -> bool {
     KNOWN_ROLES.contains(&role)
 }
 
-/// 是不是超级管理员。判据只有三处用：后台账号列表/报表的过滤（不露脸）、
-/// 冻结与改角色的策略函数、以及 agent 侧的角色契约（同名同义）。
+/// 超级管理员拥有独立的账号管理边界。
 pub fn is_superadmin(role: &str) -> bool {
     role == ROLE_SUPERADMIN
 }
@@ -33,22 +32,13 @@ pub fn can_manage_credentials(op_uid: i32, op_role: &str, target_uid: i32, targe
         && check_freeze(op_uid, op_role, target_uid, target_role).is_ok()
 }
 
-/// 这个角色的账号能不能出现在**后台账号列表/报表**里。
-///
-/// 这就是需求原话「超级管理员账号密码不显示在后台」的落点，抽成函数是为了让它
-/// 可测：两个条件（已知角色 + 不是超管）中**少写一个都不会报错**——只写
-/// `is_known_role` 就是超管在后台露脸，只写 `!is_superadmin` 就是历史脏值账号
-/// 混进列表。它是三道防线里的第一道（见 `routes::temp_user::list_temp_users`），
-/// 而 agent 的账号名录读的是同一个接口 ⇒ 账号不出现在这里 = 那个账号在 agent 侧
-/// 结构上就按名字找不到。
+/// 账号名录仅展示已知的非超级管理员角色。
 pub fn is_listable_role(role: &str) -> bool {
     is_known_role(role) && !is_superadmin(role)
 }
 
 
-/// 冻结/解冻被拒的原因。变体对应**不同的话术**，所以不做成 bool。
-/// 解冻与冻结**共用**这一组判据（不分方向）：把一个被超管冻结的管理员解冻，等于
-/// 推翻超管的决定，两个方向不对称只会在"谁说了算"上留一个后门。
+/// 冻结与解冻使用相同层级校验，避免绕过上级管理员的决定。
 #[derive(Debug, PartialEq, Eq)]
 pub enum FreezeDenial {
     /// 发起人自己没有后台管理面权限
