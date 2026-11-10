@@ -92,6 +92,20 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     const s3 = renderBlogMarkdown(':比心: :困困: :躺平: :嫌弃:');
     ok(['bixin-cardigan', 'kunkun-hoodie', 'tangping-hoodie', 'xianqi-jacket'].every((f) => s3.includes(`/stickers/v2/${f}.webp`)),
         '比心、困困、躺平、嫌弃均使用新版图片', s3);
+    const selected = renderBlogMarkdown('![贴贴](:贴贴:) ![比心](:比心:)');
+    ok((selected.match(/class="sticker"/g) || []).length === 2
+        && selected.includes('/stickers/v2/tietie-hoodie.webp')
+        && selected.includes('/stickers/v2/bixin-cardigan.webp'),
+        'Markdown 图片地址中的已知短码也渲染为实际图片', selected);
+    const catalog = renderBlogMarkdown(':全部表情:');
+    ok((catalog.match(/class="sticker"/g) || []).length === 24 && !catalog.includes(':全部表情:'),
+        '完整目录短码渲染全部24张图片', catalog);
+    const code = renderBlogMarkdown('`:全部表情:`\n\n```\n![贴贴](:贴贴:)\n```');
+    ok(!code.includes('<img') && code.includes(':全部表情:') && code.includes(':贴贴:'),
+        '代码中的目录与图片短码保持原文', code);
+    const external = renderBlogMarkdown('![图](https://example.test/:贴贴:)');
+    ok(external.includes('https://example.test/') && !external.includes('/stickers/v2/'),
+        '外部图片路径不按子串重写', external);
 }
 {
     // 未知的 :xx: 原样保留（stickers.ts 的既定语义），不该被当成表情

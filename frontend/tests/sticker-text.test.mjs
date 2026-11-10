@@ -24,7 +24,7 @@ await esbuild.build({
     entryPoints: [path.join(root, 'src/utils/stickers.ts')],
     bundle: true, format: 'esm', platform: 'node', outfile: file, logLevel: 'error',
 });
-const { splitStickers, remarkStickers, STICKERS, STICKER_NAMES } = await import(pathToFileURL(file).href);
+const { splitStickers, remarkStickers, STICKERS, STICKER_NAMES, STICKER_CATALOG } = await import(pathToFileURL(file).href);
 
 /** mdast 侧跑一遍，数产出多少个 image 节点（走的正是 remark 插件那条路） */
 const mdastImages = (value) => {
@@ -60,6 +60,10 @@ console.log('\n── splitStickers ──');
         '紧挨着的两个表情各自独立（第一刀的 : 不被第二个吃掉）');
 
     eq(splitStickers('a:b:c').map((p) => p.kind), ['text'], '半截冒号对（名字为空/含冒号）不误判');
+    eq(splitStickers(STICKER_CATALOG).map(piece => piece.name), STICKER_NAMES,
+        '完整目录短码从唯一清单展开，不由模型枚举图片');
+    eq(splitStickers(':constructor: :toString:').map(piece => piece.kind), ['text'],
+        '对象原型属性不是表情别名');
 }
 
 // 二、清单本身：每个名字都能双向命中
@@ -94,7 +98,7 @@ console.log('\n── mdast 侧 ⇄ 片段侧 ──');
     const samples = [
         ':头疼:', '晚安 :头疼: 好梦', ':头疼::比耶:', '前后都贴着文字:比心:尾巴',
         ':不存在的: 与 :smile:', '', 'a:b:c', ':1234567890123:', '换行\n:委屈:\n第二行',
-        `五个：:头疼::委屈::害羞::比耶::犯错:`,
+        `五个：:头疼::委屈::害羞::比耶::犯错:`, STICKER_CATALOG,
     ];
     const mismatch = samples.filter((s) => mdastImages(s).length !== stickerCount(s));
     eq(mismatch, [], '同一段文本：mdast 的 image 节点数 == 片段层的 sticker 数（10 个样本）');

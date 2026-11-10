@@ -35,12 +35,13 @@ export const STICKERS: Record<string, string> = {
 }
 
 export const STICKER_NAMES: string[] = Object.keys(STICKERS)
+export const STICKER_CATALOG = ':全部表情:'
 
 const STICKER_RE = /:([^:\s]{1,12}):/g
 
 /**
  * remark 插件（attacher 模式）：返回 transformer，把 :名字: 文本节点拆分为
- * text + image 节点序列。自写递归遍历（不用 unist-util-visit：v4 的 visitor
+ * text + image 节点序列；图片地址中的完整短码也使用同一清单。自写递归遍历（不用 unist-util-visit：v4 的 visitor
  * 返回约定与原地 splice 组合会破坏其迭代）；
  * 跳过代码块/行内代码（代码里的 :xx: 不应转表情）。
  */
@@ -56,6 +57,10 @@ export function remarkStickers(this: unknown) {
           const pieces = splitStickerText(child.value)
           // A single sticker replaces one text node too; unmatched text stays unchanged.
           if (pieces.length !== 1 || pieces[0] !== child.value) children.splice(i, 1, ...pieces)
+        } else if (child?.type === 'image' && typeof child.url === 'string'
+                   && /^:[^:\s]{1,12}:$/.test(child.url)) {
+          const pieces = splitStickerText(child.url)
+          if (pieces[0] !== child.url) children.splice(i, 1, ...pieces)
         }
         // 非文本节点继续下钻（inlineCode/code 是叶子，无 children 自动跳过）
         transform(child)
@@ -65,7 +70,7 @@ export function remarkStickers(this: unknown) {
   }
 }
 
-/** 扫出所有**命中清单**的 `:名字:` 位置。
+/** 扫出命中清单的 `:名字:` 及完整目录短码。
  *  两个渲染器（mdast 侧与 React 片段侧）共用这一遍扫描：同一份正则、同一条
  *  "未知名字原样保留为文本"的判据 ⇒ 改匹配规则只有这一处。 */
 function matchStickers(value: string): RegExpExecArray[] {
@@ -73,33 +78,23 @@ function matchStickers(value: string): RegExpExecArray[] {
   STICKER_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = STICKER_RE.exec(value)) !== null) {
-    if (STICKERS[m[1]]) matches.push(m)
+    if (STICKER_NAMES.includes(m[1]) || m[0] === STICKER_CATALOG) matches.push(m)
   }
   return matches
 }
 
 /** 把一段文本拆成 text/image 交替节点；无命中时原样返回 [原文] */
 function splitStickerText(value: string): any[] {
-  const matches = matchStickers(value)
-  if (matches.length === 0) return [value]
-
-  const pieces: any[] = []
-  let cursor = 0
-  for (const match of matches) {
-    const idx = match.index
-    if (idx > cursor) pieces.push({ type: 'text', value: value.slice(cursor, idx) })
-    pieces.push({
+  const pieces = splitStickers(value)
+  if (!pieces.some(piece => piece.kind === 'sticker')) return [value]
+  return pieces.map(piece => piece.kind === 'text' ? { type: 'text', value: piece.text } : ({
       type: 'image',
-      url: STICKERS[match[1]],
-      alt: match[1],
+      url: piece.url,
+      alt: piece.name,
       title: null,
       // hProperties 是 remark-rehype 的标准透传口：给 <img> 加 class="sticker"
       data: { hProperties: { className: ['sticker'] } },
-    })
-    cursor = idx + match[0].length
-  }
-  if (cursor < value.length) pieces.push({ type: 'text', value: value.slice(cursor) })
-  return pieces
+    }))
 }
 
 /** 把一段**纯文本**拆成 text/sticker 交替的片段；无命中（含空串）时返回一个纯文本片段。
@@ -118,7 +113,8 @@ export function splitStickers(value: string): StickerPiece[] {
   for (const match of matches) {
     const idx = match.index
     if (idx > cursor) pieces.push({ kind: 'text', text: value.slice(cursor, idx) })
-    pieces.push({ kind: 'sticker', name: match[1], url: STICKERS[match[1]] })
+    const names = match[0] === STICKER_CATALOG ? STICKER_NAMES : [match[1]]
+    pieces.push(...names.map(name => ({ kind: 'sticker' as const, name, url: STICKERS[name] })))
     cursor = idx + match[0].length
   }
   if (cursor < value.length) pieces.push({ kind: 'text', text: value.slice(cursor) })
