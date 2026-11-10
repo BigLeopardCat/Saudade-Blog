@@ -10,7 +10,7 @@ export interface LocateResult {
 
 const QUERY_MAX = 64;
 
-// Allow the service proxy to finish its six-second timeout before local fallback.
+// The optional embedding request has a bounded server deadline.
 const TIMEOUT_MS = 7000;
 
 const FALLBACK_TOP = 8;
@@ -19,11 +19,12 @@ export async function locate(raw: string, g: GraphData, signal?: AbortSignal): P
     const q = raw.trim().slice(0, QUERY_MAX);
     if (!q) return { hits: [], source: 'local' };
     if (hasToken()) {
-        const hits = await queryVector(q, signal);
+        const result = await queryVector(q, g.v, signal);
+        const hits = result?.hits;
         if (hits) {
             const words = new Set(g.nodes.map(node => wordKey(node.w)));
             const valid = hits.filter(hit => words.has(wordKey(hit.w)));
-            if (!hits.length || valid.length) return { hits: valid, source: 'vector' };
+            if (!hits.length || valid.length) return { hits: valid, source: result!.source };
         }
     }
     signal?.throwIfAborted();
@@ -34,7 +35,7 @@ function hasToken(): boolean {
     try { return !!localStorage.getItem('tokenKey'); } catch { return false; }
 }
 
-async function queryVector(q: string, signal?: AbortSignal): Promise<LocateHit[] | null> {
+async function queryVector(q: string, version: string, signal?: AbortSignal): Promise<{hits: LocateHit[]; source: 'vector' | 'local'} | null> {
     signal?.throwIfAborted();
     const ac = new AbortController();
     const cancel = () => ac.abort();
@@ -47,7 +48,7 @@ async function queryVector(q: string, signal?: AbortSignal): Promise<LocateHit[]
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${localStorage.getItem('tokenKey') || ''}`,
             },
-            body: JSON.stringify({ q }),
+            body: JSON.stringify({ q, version }),
             signal: ac.signal,
         });
         if (!res.ok) return null;
@@ -59,7 +60,8 @@ async function queryVector(q: string, signal?: AbortSignal): Promise<LocateHit[]
                 out.push({ w: it.w, s: it.s });
             }
         }
-        return out;
+        if (j.version !== version || !['document_vectors', 'lexical'].includes(j.mode)) return null;
+        return {hits: out, source: j.mode === 'document_vectors' ? 'vector' : 'local'};
     } catch {
         return null;
     } finally {

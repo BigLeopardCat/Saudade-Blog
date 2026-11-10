@@ -125,7 +125,7 @@ export default function ArticleGraph({ query, composing = false, onOpenArticle }
         <div className="articleGraphStatus" role="status">
             {busy ? '正在定位相关关键词…' : result?.source === 'local'
                 ? result.reason === 'login_required' ? '当前使用关键词匹配，登录后可使用语义检索。' : '语义检索暂不可用，当前显示关键词匹配结果。'
-                : result ? '已按语义关联定位；图中距离仅供探索参考。' : '输入问题，探索相关关键词和文章。'}
+                : result ? '已按相关文章的向量关联定位；图中距离仅供探索参考。' : '输入问题，探索相关关键词和文章。'}
             {result && !result.hits.length && !busy && ' 未找到匹配内容。'}
         </div>
         {!!result?.hits.length && <div className="articleGraphKeywords" aria-label="相关关键词">

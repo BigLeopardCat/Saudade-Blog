@@ -20,12 +20,6 @@ pub(crate) fn review_endpoint() -> Option<String> {
     endpoint(explicit.as_deref(), agent.as_deref(), "/review")
 }
 
-pub(crate) fn graph_endpoint(path: &str) -> Option<String> {
-    let explicit = std::env::var("GRAPH_SERVICE_URL").ok();
-    let agent = std::env::var("AGENT_URL").ok();
-    endpoint(explicit.as_deref(), agent.as_deref(), path)
-}
-
 pub(crate) fn agent_base_url() -> String {
     let raw = agent_chat_url();
     let value = raw.trim_end_matches('/');
@@ -103,10 +97,6 @@ mod tests {
                 "/review"
             ),
             Some("http://moderator/v1/review".into())
-        );
-        assert_eq!(
-            endpoint(Some("http://retrieval/"), None, "/graph/query"),
-            Some("http://retrieval/graph/query".into())
         );
         for url in [
             "http://agent/chat",

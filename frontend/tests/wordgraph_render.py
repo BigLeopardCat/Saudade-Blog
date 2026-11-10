@@ -123,7 +123,7 @@ EDGE_HOT_RGB = "255, 232, 168"
 def main() -> int:
     mf = GRAPH_DIR / "manifest.json"
     if not mf.exists():
-        print("找不到 public/graph/manifest.json——先跑 scripts/build_word_graph.py")
+        print("找不到 public/graph/manifest.json——先跑 tools/article-graph/build.py")
         return 1
     manifest = json.loads(mf.read_text(encoding="utf-8"))
     artifact = (GRAPH_DIR / manifest["file"]).read_text(encoding="utf-8")

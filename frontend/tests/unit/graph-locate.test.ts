@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { locate } from '../../src/components/ArticleGraph/locate'
 import type { GraphData } from '../../src/components/ArticleGraph/types'
-const data = {nodes:[{i:0,w:'Python',x:0,y:0,z:0,n:1,a:0,a2:0}],articles:[],edges:[]} as unknown as GraphData
+const data = {v:'fixture',nodes:[{i:0,w:'Python',x:0,y:0,z:0,n:1,a:0,a2:0}],articles:[],edges:[]} as unknown as GraphData
 const response = (json: unknown) => new Response(JSON.stringify(json), {status:200})
 describe('optional semantic graph lookup', () => {
-  it('does not call the agent for anonymous queries', async () => {
+  it('keeps anonymous lookup local', async () => {
     const fetch = vi.fn();vi.stubGlobal('fetch',fetch)
     const result = await locate('Python',data)
     expect(result.source).toBe('local');expect(result.reason).toBe('login_required')
@@ -12,9 +12,9 @@ describe('optional semantic graph lookup', () => {
   })
   it('labels unavailable services and rejects mismatched nodes', async () => {
     localStorage.setItem('tokenKey','fixture')
-    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,words:[{w:'wrong-version',s:1},{w:'Python',s:'bad'}]})))
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,mode:'document_vectors',version:'fixture',words:[{w:'wrong-version',s:1},{w:'Python',s:'bad'}]})))
     expect((await locate('Python',data)).reason).toBe('service_unavailable')
-    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,words:[{w:'python',s:0.9}]})))
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,mode:'document_vectors',version:'fixture',words:[{w:'python',s:0.9}]})))
     expect(await locate('Python',data)).toEqual({source:'vector',hits:[{w:'python',s:0.9}]})
   })
   it('cancels work without silently producing local results', async () => {
@@ -36,4 +36,12 @@ it('rejects corrupt graph coordinates and dangling references before rendering',
   expect(isGraphData({...valid,nodes:[{...data.nodes[0],a:7}]})).toBe(false)
   expect(isGraphData({...valid,nodes:[{...data.nodes[0],x:NaN}]})).toBe(false)
   expect(isGraphData({...valid,edges:[[0,1,0.5]]})).toBe(false)
+})
+
+it('labels server lexical fallback and rejects a different artifact generation', async () => {
+  localStorage.setItem('tokenKey','fixture')
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,mode:'lexical',version:'fixture',words:[{w:'Python',s:1}]})))
+  expect((await locate('Python',data)).source).toBe('local')
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({ok:true,mode:'document_vectors',version:'other',words:[{w:'Python',s:1}]})))
+  expect((await locate('Python',data)).reason).toBe('service_unavailable')
 })

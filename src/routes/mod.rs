@@ -407,9 +407,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/stats/notes", get(note_stats::note_report))
         .route("/api/protected/stats/notes/periods", get(note_stats::note_period_report))
 
-        .route("/api/protected/graph/rebuild", post(graph::rebuild_start))
-        .route("/api/protected/graph/rebuild/status", get(graph::rebuild_status))
-        .route("/api/protected/graph/rebuild/cancel", post(graph::rebuild_cancel))
 
         // WebSettings
         .route("/api/protected/websetting",

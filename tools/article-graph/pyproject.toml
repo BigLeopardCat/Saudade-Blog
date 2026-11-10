@@ -1,0 +1,5 @@
+[project]
+name = "saudade-article-graph"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["numpy==2.5.4", "scikit-learn==1.9.1", "psycopg[binary]==3.3.6", "jieba==0.42.1"]

@@ -104,7 +104,7 @@ services:
     environment:
       # 容器里的坐标（宿主路径由挂载决定，见 volumes）
       UPLOAD_DIR: /data/uploads
-      GRAPH_ARTIFACT_DIR: /data/word_graph/web
+      GRAPH_ARTIFACT_DIR: /data/article-graph
       # 监控日志要**绝对路径**：`src/routes/monitor.rs` 打不开父目录时也返回 200（静默失败），
       # 而镜像里 /srv/logs/frontend 已经建好了 ⇒ 只有写死绝对路径才保证落进挂载的那个目录。
       SAUDADE_MONITOR_LOG: /srv/logs/frontend/monitor.log
@@ -113,7 +113,7 @@ services:
       - ${SAUDADE_DATA_DIR}/uploads:/data/uploads
       # 只读：图谱由 agent 侧写（`rag/graph_build.py`），后端只是另一个读它的人。
       # 两边挂载点不同、宿主目录同一个 —— 这就是它们交换那份产物的方式。
-      - ${SAUDADE_DATA_DIR}/agent-data/word_graph/web:/data/word_graph/web:ro
+      - ${SAUDADE_DATA_DIR}/article-graph:/data/article-graph:ro
       - ${SAUDADE_DATA_DIR}/logs/frontend:/srv/logs/frontend
     depends_on:
       db-init:

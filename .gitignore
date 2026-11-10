@@ -46,3 +46,6 @@ frontend/public/cubism5/
 
 # CI-generated database contract is carried inside release artifacts.
 /database-indexes.json
+
+/data/article-graph/
+/tools/article-graph/.venv/

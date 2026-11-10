@@ -149,7 +149,7 @@ async fn control(
     let response = match client
         .post(format!(
             "{}/{endpoint}",
-            crate::routes::graph::agent_base_url()
+            crate::ai_services::agent_base_url()
         ))
         .header(
             "X-Agent-Assertion",

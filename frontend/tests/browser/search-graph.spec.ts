@@ -3,11 +3,12 @@ test.use({ entry: 'public-header' })
 const graph = {v: 'fixture20261104', model: 'fixture', dim: 2, built: '', stats: {},
   nodes: [{i: 0, w: 'Python', x: 0, y: 0, z: 0, n: 1, h: 1, a: 0, a2: 0}], edges: [],
   articles: [{id: 5, t: 'Python 入门', g: ['Python'], c: '编程'}]}
-for (const {width, signedIn, available} of [
-  {width:375,signedIn:false,available:false}, {width:1440,signedIn:false,available:false},
-  {width:1440,signedIn:true,available:false}, {width:1440,signedIn:true,available:true},
+for (const {width, signedIn, available, lexical} of [
+  {width:375,signedIn:false,available:false,lexical:false}, {width:1440,signedIn:false,available:false,lexical:false},
+  {width:1440,signedIn:true,available:false,lexical:false}, {width:1440,signedIn:true,available:true,lexical:false},
+  {width:1440,signedIn:true,available:false,lexical:true},
 ]) {
-  test(`one search input at ${width}px, signed in=${signedIn}, semantic=${available}`, async ({page, sandboxURL}) => {
+  test(`one search input at ${width}px, signed in=${signedIn}, semantic=${available}, lexical=${lexical}`, async ({page, sandboxURL}) => {
     await page.setViewportSize({width, height: 900})
     if (signedIn) await page.addInitScript(() => {
       const claims=btoa(JSON.stringify({sub:4,role:'user',exp:Date.now()/1000+600}))
@@ -18,7 +19,7 @@ for (const {width, signedIn, available} of [
       const path = new URL(route.request().url()).pathname
       if (path.endsWith('/graph/manifest')) return route.fulfill({json: {v: graph.v, file: `graph-${graph.v}.js`, site: sandboxURL}})
       if (path.endsWith(`/graph/artifact/graph-${graph.v}.js`)) return route.fulfill({contentType: 'text/javascript', body: `export default ${JSON.stringify(graph)}`})
-      if (path.endsWith('/graph/query')) { vectorCalls++; return route.fulfill({json: available ? {ok:true,words:[{w:'python',s:.9}]} : {ok: false, reason: 'service_unavailable', words: []}}) }
+      if (path.endsWith('/graph/query')) { vectorCalls++; return route.fulfill({json: available ? {ok:true,mode:'document_vectors',version:graph.v,words:[{w:'python',s:.9,document_ids:[5]}]} : lexical ? {ok:true,mode:'lexical',version:graph.v,reason:'embedding_unavailable',words:[{w:'python',s:1,document_ids:[5]}]} : {ok: false, reason: 'service_unavailable', words: []}}) }
       if (path.endsWith('/search')) { searchCalls++; return route.fulfill({json: {code: 200, data: {total: 0, counts: {note:0,talk:0,board:0,comment:0}, notes:[],talks:[],board:[],comments:[],terms:[],hasMore:false}}}) }
       return route.fulfill({json: {code:200,data: path.endsWith('/user') ? {blogTitle:'博客'} : {}}})
     })
@@ -34,7 +35,7 @@ for (const {width, signedIn, available} of [
     await expect(mode).toHaveAttribute('aria-pressed','true')
     await expect(input).toHaveValue('Python')
     await expect(page.getByLabel('相关文章', {exact:true}).getByRole('link', {name:'Python 入门'})).toBeVisible()
-    await expect(page.getByText(!signedIn ? '当前使用关键词匹配，登录后可使用语义检索。' : available ? '已按语义关联定位；图中距离仅供探索参考。' : '语义检索暂不可用，当前显示关键词匹配结果。')).toBeVisible()
+    await expect(page.getByText(!signedIn ? '当前使用关键词匹配，登录后可使用语义检索。' : available ? '已按相关文章的向量关联定位；图中距离仅供探索参考。' : '语义检索暂不可用，当前显示关键词匹配结果。')).toBeVisible()
     expect(vectorCalls).toBe(signedIn ? 1 : 0)
     expect(searchCalls).toBe(1)
     await expect(page.locator('.articleGraph canvas')).toBeVisible()

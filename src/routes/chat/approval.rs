@@ -76,7 +76,7 @@ pub async fn cancel_handler(
     let sent = client
         .post(format!(
             "{}/confirmation/cancel",
-            crate::routes::graph::agent_base_url()
+            crate::ai_services::agent_base_url()
         ))
         .header(
             "X-Agent-Assertion",

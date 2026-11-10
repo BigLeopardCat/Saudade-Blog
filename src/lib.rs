@@ -18,3 +18,5 @@ pub mod checkpoint_cleanup;
 mod ai_services;
 
 pub mod lifecycle;
+
+pub mod article_graph;
