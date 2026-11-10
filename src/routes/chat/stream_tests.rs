@@ -38,6 +38,7 @@ async fn transcript(state: Arc<AppState>, uid: i32, wire: String) -> Vec<Frame> 
         Some("user".into()),
         "fixture-task".into(),
         "stream-test".into(),
+        None,
         upstream,
     );
     let response = Sse::new(stream).into_response();
@@ -369,6 +370,7 @@ async fn host_keeps_client_alive_while_the_agent_has_no_application_event() {
         None,
         "fixture-task".into(),
         "keepalive-test".into(),
+        None,
         upstream,
     );
     let mut body = agent_sse_response(forwarded).into_body().into_data_stream();
@@ -393,6 +395,7 @@ async fn stalled_upstream_emits_one_error_and_never_saves_partial_reply() {
         Some("user".into()),
         "idle-test".into(),
         "idle-test".into(),
+        None,
         upstream,
     ))
     .into_response();
@@ -422,6 +425,7 @@ async fn active_stream_can_exceed_one_idle_window() {
         None,
         "long-test".into(),
         "long-test".into(),
+        None,
         upstream,
     ))
     .into_response();

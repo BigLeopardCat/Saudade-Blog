@@ -119,6 +119,34 @@ pub(super) async fn prepare_chat(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
+    if let Some(event) = &payload.image_event {
+        let verified = if role.as_deref().is_some_and(crate::authz::is_admin_tier) {
+            crate::routes::image_generation::chat::verify(state, uid, conversation_id, event).await
+        } else {
+            Err(sea_orm::DbErr::Custom("image event forbidden".into()))
+        };
+        match verified {
+            Ok(true) => {
+                payload.task_id = event.turn_id();
+                payload.turn_id = payload.task_id.clone();
+            }
+            result => {
+                return Err((
+                    if result.is_ok() {
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::CONFLICT
+                    },
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: result.is_ok(),
+                        error: result.err().map(|_| "image_event_deferred".into()),
+                    }),
+                ))
+            }
+        }
+    }
+
     if payload.resume_task.is_empty() && !is_confirm {
         if payload.turn_id.is_empty() {
             payload.turn_id = if payload.task_id.is_empty() {
@@ -152,7 +180,6 @@ pub(super) async fn prepare_chat(
         let source = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::ConversationId.eq(conversation_id))
-            .filter(chat_history::Column::Role.eq("user"))
             .filter(chat_history::Column::TurnId.is_not_null())
             .order_by_desc(chat_history::Column::Id)
             .one(&state.db)
@@ -233,43 +260,44 @@ pub(super) async fn prepare_chat(
         Some(_) => format!("{}\n[图片]", payload.message),
         None => payload.message.clone(),
     };
-    let user_msg_id = if is_confirm || !payload.resume_task.is_empty() {
-        None
-    } else {
-        match chat_context::append_user(
-            &state.db,
-            uid,
-            conversation_id,
-            role.as_deref(),
-            &payload.turn_id,
-            &stored_content,
-        )
-        .await
-        {
-            Ok(Some(id)) => Some(id),
-            Ok(None) => {
-                return Err((
-                    StatusCode::CONFLICT,
-                    Json(ChatResponse {
-                        reply: String::new(),
-                        success: false,
-                        error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
-                    }),
-                ))
+    let user_msg_id =
+        if is_confirm || !payload.resume_task.is_empty() || payload.image_event.is_some() {
+            None
+        } else {
+            match chat_context::append_user(
+                &state.db,
+                uid,
+                conversation_id,
+                role.as_deref(),
+                &payload.turn_id,
+                &stored_content,
+            )
+            .await
+            {
+                Ok(Some(id)) => Some(id),
+                Ok(None) => {
+                    return Err((
+                        StatusCode::CONFLICT,
+                        Json(ChatResponse {
+                            reply: String::new(),
+                            success: false,
+                            error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
+                        }),
+                    ))
+                }
+                Err(error) => {
+                    warn!(%error,conversation_id,"user message was not persisted");
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(ChatResponse {
+                            reply: String::new(),
+                            success: false,
+                            error: Some("未能保存请求，请稍后重试。".into()),
+                        }),
+                    ));
+                }
             }
-            Err(error) => {
-                warn!(%error,conversation_id,"user message was not persisted");
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ChatResponse {
-                        reply: String::new(),
-                        success: false,
-                        error: Some("未能保存请求，请稍后重试。".into()),
-                    }),
-                ));
-            }
-        }
-    };
+        };
 
     // 图片按消息批量原子写入；失败保留已保存的用户文本并告警。
     // 删除随消息外键级联，确认请求没有新消息可挂靠。
@@ -350,6 +378,7 @@ pub(super) async fn prepare_chat(
         turn_id: payload.turn_id.clone(),
         body,
         role,
+        image_event: payload.image_event.clone(),
     })
 }
 
@@ -367,6 +396,7 @@ fn agent_request(
         "resume_task": payload.resume_task,
         "browser_feedback": payload.browser_feedback,
         "browser_result": payload.browser_result,
+        "image_event": payload.image_event,
         "conversation_id": conversation_id,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),

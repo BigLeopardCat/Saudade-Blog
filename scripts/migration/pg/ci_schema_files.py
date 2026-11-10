@@ -38,6 +38,7 @@ LOAD = [
     "0031_gallery_storage.sql",
     "0032_gallery_public_ids.sql",
     "0033_deletion_reference_indexes.sql",
+    "0034_image_chat_reports.sql",
 ]
 
 EXCLUDED = {

@@ -4,6 +4,7 @@ use serde_json::json;
 
 fn draft() -> Draft {
     Draft {
+        conversation_id: None,
         prompt: "画一幅山景，留白适合作为文章封面".into(),
         model: "gpt-image-2".into(),
         size: "1536x1024".into(),
@@ -153,7 +154,8 @@ async fn pg_review_ownership_stale_result_and_replay() {
         &state,
         uid,
         &id,
-        Approval {
+        Acceptance {
+            storage: crate::routes::gallery::storage::Kind::Local,
             version: "b".repeat(64)
         }
     )
@@ -193,7 +195,8 @@ async fn pg_review_ownership_stale_result_and_replay() {
             &state,
             uid,
             &id,
-            Approval {
+            Acceptance {
+                storage: crate::routes::gallery::storage::Kind::Local,
                 version: "b".repeat(64),
             },
         )

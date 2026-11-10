@@ -107,6 +107,7 @@ pub async fn chat_handler(State(state): State<Arc<AppState>>, req: Request) -> R
                 &ctx.turn_id,
                 &reply,
                 events,
+                ctx.image_event.as_ref(),
             )
             .await
         })
@@ -137,6 +138,7 @@ async fn persist(
     turn_id: &str,
     reply: &str,
     events: Vec<ControlEvent>,
+    image_event: Option<&super::ImageEvent>,
 ) -> Result<Vec<ControlEvent>, sea_orm::DbErr> {
     let mut public = Vec::new();
     for mut event in events {
@@ -169,7 +171,8 @@ async fn persist(
         public.push(event);
     }
     if uid > 0 && !reply.is_empty() {
-        save_assistant_reply(db, uid, cid, role, turn_id, reply.to_owned()).await?;
+        persistence::save_result_reply(db, uid, cid, role, turn_id, reply.to_owned(), image_event)
+            .await?;
     }
     Ok(public)
 }
@@ -211,6 +214,7 @@ mod tests {
             "fixture-task",
             &response.reply,
             response.events,
+            None,
         )
         .await
         .unwrap();

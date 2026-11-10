@@ -1,5 +1,6 @@
 //! Human approval owns paid generation and acceptance; Agent proposes only immutable jobs.
 mod acceptance;
+pub mod chat;
 mod errors;
 pub mod events;
 mod history;
@@ -46,6 +47,8 @@ pub struct Draft {
     pub quality: String,
     #[serde(default)]
     pub reference_ids: Vec<i32>,
+    #[serde(default)]
+    pub conversation_id: Option<i32>,
 }
 impl Draft {
     fn validate(&self, models: &[String]) -> Result<(), DbErr> {
@@ -103,11 +106,25 @@ pub struct Job {
     pub created_at: String,
     pub retry_of: Option<String>,
     pub retry_source_status: Option<String>,
+    pub conversation_id: Option<i32>,
+    pub event_version: String,
+    pub save_storage: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Approval {
     pub version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Acceptance {
+    pub version: String,
+    #[serde(default = "local_storage")]
+    pub storage: crate::routes::gallery::storage::Kind,
+}
+fn local_storage() -> crate::routes::gallery::storage::Kind {
+    crate::routes::gallery::storage::Kind::Local
 }
 
 fn response<T: Default>(result: Result<T, DbErr>) -> Json<ApiResponse<T>> {
@@ -205,7 +222,7 @@ pub async fn accept(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(input): Json<Approval>,
+    Json(input): Json<Acceptance>,
 ) -> Result<Json<ApiResponse<Job>>, errors::JobError> {
     let uid = crate::routes::gallery::actor(&state, &headers)
         .await

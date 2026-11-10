@@ -5,6 +5,104 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
 
 #[tokio::test]
+async fn postgres_image_report_ack_is_atomic_with_reply_and_replay_is_deduplicated() {
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    let uid: i32 = txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO \"user\"(username,password,role) VALUES($1,'fixture','admin') RETURNING id",
+        [format!("image_report_{}",uuid::Uuid::new_v4().simple()).into()]))
+        .await.unwrap().unwrap().try_get("", "id").unwrap();
+    let cid: i32 = txn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO conversation(user_id,title) VALUES($1,'image report') RETURNING id",
+            [uid.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let event = super::super::ImageEvent {
+        job_id: uuid::Uuid::new_v4().to_string(),
+        version: "a".repeat(64),
+    };
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "INSERT INTO image_generation(id,owner_id,conversation_id,request,request_hash,status) \
+         VALUES($1::uuid,$2,$3,'{}'::jsonb,$4,'review')",
+        [
+            event.job_id.clone().into(),
+            uid.into(),
+            cid.into(),
+            "b".repeat(64).into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    assert!(save_result_reply(
+        &txn,
+        uid,
+        cid,
+        Some("admin".into()),
+        &event.turn_id(),
+        "invalid\0reply".into(),
+        Some(&event)
+    )
+    .await
+    .is_err());
+    let row = txn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT reported_version FROM image_generation WHERE id::text=$1",
+            [event.job_id.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row
+        .try_get::<Option<String>>("", "reported_version")
+        .unwrap()
+        .is_none());
+    for _ in 0..2 {
+        save_result_reply(
+            &txn,
+            uid,
+            cid,
+            Some("admin".into()),
+            &event.turn_id(),
+            "图片已生成，等待审阅。".into(),
+            Some(&event),
+        )
+        .await
+        .unwrap();
+    }
+    let count = chat_history::Entity::find()
+        .filter(chat_history::Column::ConversationId.eq(cid))
+        .all(&txn)
+        .await
+        .unwrap();
+    assert_eq!(count.len(), 1);
+    assert_eq!(count[0].role, "assistant");
+    assert_eq!(count[0].turn_id.as_deref(), Some(event.turn_id().as_str()));
+    assert!(save_result_reply(
+        &txn,
+        uid + 1,
+        cid,
+        Some("admin".into()),
+        &event.turn_id(),
+        "foreign".into(),
+        Some(&event)
+    )
+    .await
+    .is_err());
+    txn.rollback().await.unwrap();
+}
+
+#[tokio::test]
 async fn visible_reply_requires_a_successful_insert() {
     let db = super::super::test_support::open_turn(MockDatabase::new(DatabaseBackend::Postgres))
         .into_connection();

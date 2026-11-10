@@ -21,8 +21,8 @@ export const imageGenerationApi=galleryApi.injectEndpoints({endpoints:builder=>(
   approveGeneration:builder.mutation<GenerationJob,{id:string;version:string}>({
     query:({id,version})=>({url:`/api/protect/image-generation/jobs/${id}/approve`,method:'POST',body:{version}}),
   }),
-  acceptGeneration:builder.mutation<GenerationJob,{id:string;version:string}>({
-    query:({id,version})=>({url:`/api/protect/image-generation/jobs/${id}/accept`,method:'POST',body:{version}}),
+  acceptGeneration:builder.mutation<GenerationJob,{id:string;version:string;storage?:'local'|'r2'}>({
+    query:({id,version,storage='local'})=>({url:`/api/protect/image-generation/jobs/${id}/accept`,method:'POST',body:{version,storage}}),
     invalidatesTags:['Images','Folders'],
   }),
   rejectGeneration:builder.mutation<GenerationJob,string>({

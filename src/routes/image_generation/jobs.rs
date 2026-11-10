@@ -19,15 +19,18 @@ struct Row {
     created_at: String,
     retry_of: Option<String>,
     retry_source_status: Option<String>,
+    conversation_id: Option<i32>,
+    event_version: String,
+    save_storage: String,
 }
 pub(super) const STATUS: &str = "CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN 'review' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END";
 
 pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
-    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status, \
+    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status,conversation_id,save_storage,{} AS event_version, \
         (status='accepted' AND (image_id IS NULL OR EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=image_generation.image_id))) AS image_removed, \
         (SELECT i.image_url FROM images i WHERE i.image_key=image_generation.image_id \
          AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key)) AS gallery_url \
-        FROM image_generation WHERE id::text=$1 AND owner_id=$2"), vec![id.into(), uid.into()]))
+        FROM image_generation WHERE id::text=$1 AND owner_id=$2", chat::VERSION), vec![id.into(), uid.into()]))
         .one(&state.db)
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("image job missing".into()))?;
@@ -48,7 +51,7 @@ pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
     } else {
         None
     };
-    Ok(Job {
+    let job = Job {
         id: row.id,
         request: Some(request),
         request_hash: row.request_hash,
@@ -62,12 +65,28 @@ pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
         created_at: row.created_at,
         retry_of: row.retry_of,
         retry_source_status: row.retry_source_status,
-    })
+        conversation_id: row.conversation_id,
+        event_version: row.event_version,
+        save_storage: row.save_storage,
+    };
+    Ok(job)
 }
 
 pub async fn create(state: &AppState, uid: i32, input: Draft, origin: &str) -> Result<Job, DbErr> {
     let settings = settings::Settings::load().map_err(error)?;
     input.validate(&settings.models)?;
+    if let Some(cid) = input.conversation_id {
+        let owner = state
+            .db
+            .query_one(stmt(
+                "SELECT id FROM conversation WHERE id=$1 AND user_id=$2",
+                vec![cid.into(), uid.into()],
+            ))
+            .await?;
+        if origin != "agent" || owner.is_none() {
+            return Err(error("image conversation not owned"));
+        }
+    }
     // Retain pending previews for seven days; approval facts and hashes remain durable.
     state.db.execute(stmt("DELETE FROM image_generation_reference WHERE job_id IN (SELECT id FROM image_generation WHERE owner_id=$1 AND created_at<now()-interval '7 days' AND status NOT IN ('generating','saving'))",vec![uid.into()])).await?;
     state.db.execute(stmt("UPDATE image_generation SET output=NULL,status=CASE WHEN status='review' THEN 'rejected' ELSE status END WHERE owner_id=$1 AND created_at<now()-interval '7 days' AND output IS NOT NULL AND status NOT IN ('generating','saving')",vec![uid.into()])).await?;
@@ -91,8 +110,8 @@ pub async fn create(state: &AppState, uid: i32, input: Draft, origin: &str) -> R
     let id = uuid::Uuid::new_v4().to_string();
     let txn = state.db.begin().await?;
     txn.execute(stmt(
-        "INSERT INTO image_generation(id,owner_id,request,request_hash,origin) VALUES($1::uuid,$2,$3,$4,$5)",
-        vec![id.clone().into(), uid.into(), json.into(), hash.into(), origin.into()],
+        "INSERT INTO image_generation(id,owner_id,request,request_hash,origin,conversation_id) VALUES($1::uuid,$2,$3,$4,$5,$6)",
+        vec![id.clone().into(), uid.into(), json.into(), hash.into(), origin.into(), input.conversation_id.into()],
     ))
     .await?;
     for (ordinal, (mime, bytes)) in snapshots.into_iter().enumerate() {

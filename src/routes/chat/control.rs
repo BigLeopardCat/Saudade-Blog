@@ -84,6 +84,16 @@ pub(super) fn valid(payload: &ChatRequest) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     };
     identifier(&payload.turn_id)
+        && payload.image_event.as_ref().is_none_or(|event| {
+            event.valid()
+                && payload.conversation_id.is_some_and(|id| id > 0)
+                && payload.message.trim().is_empty()
+                && payload.image.as_ref().is_none_or(|v| v.is_empty())
+                && payload.resume_task.is_empty()
+                && payload.confirm_token.as_deref().unwrap_or("").is_empty()
+                && payload.confirm_pick.as_deref().unwrap_or("").is_empty()
+                && payload.browser_result.is_none()
+        })
         && identifier(&payload.task_id)
         && identifier(&payload.resume_task)
         && payload.browser_result.as_ref().is_none_or(|result| {
