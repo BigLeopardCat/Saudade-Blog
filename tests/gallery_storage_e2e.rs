@@ -559,7 +559,7 @@ async fn generated_result_keeps_locally_when_r2_is_unavailable(ctx: &Fixture) {
     .expect("acceptance must not wait for remote storage");
     let image = ctx.image(saved["imageId"].as_i64().unwrap() as i32).await;
     let url = image["imageUrl"].as_str().unwrap();
-    assert!(url.starts_with("/api/protect/download/"), "{image}");
+    assert_eq!(image["storage"], "local", "{image}");
     assert_eq!(
         ctx.s3.0.lock().unwrap().calls,
         calls,
