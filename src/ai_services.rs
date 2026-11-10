@@ -1,5 +1,19 @@
 //! Optional AI service endpoints. Blog publishing and manual review do not require an agent.
 
+const DEFAULT_AGENT_CHAT_URL: &str = "http://127.0.0.1:8010/chat";
+
+pub(crate) fn agent_chat_url() -> String {
+    std::env::var("AGENT_URL").unwrap_or_else(|_| DEFAULT_AGENT_CHAT_URL.into())
+}
+
+pub(crate) fn agent_ready_endpoint(configured: Option<&str>) -> Option<String> {
+    endpoint(
+        None,
+        Some(configured.unwrap_or(DEFAULT_AGENT_CHAT_URL)),
+        "/ready",
+    )
+}
+
 pub(crate) fn review_endpoint() -> Option<String> {
     let explicit = std::env::var("AI_REVIEW_URL").ok();
     let agent = std::env::var("AGENT_URL").ok();
@@ -7,7 +21,7 @@ pub(crate) fn review_endpoint() -> Option<String> {
 }
 
 pub(crate) fn agent_base_url() -> String {
-    let raw = std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".into());
+    let raw = agent_chat_url();
     let value = raw.trim_end_matches('/');
     value
         .strip_suffix("/chat/stream")
@@ -43,7 +57,26 @@ fn endpoint(explicit: Option<&str>, agent: Option<&str>, path: &str) -> Option<S
 
 #[cfg(test)]
 mod tests {
-    use super::endpoint;
+    use super::{agent_ready_endpoint, endpoint};
+
+    #[test]
+    fn diagnostics_uses_the_chat_default_but_respects_explicit_disable() {
+        assert_eq!(
+            agent_ready_endpoint(None),
+            Some("http://127.0.0.1:8010/ready".into())
+        );
+        assert_eq!(agent_ready_endpoint(Some(" ")), None);
+        for url in [
+            "http://agent/chat",
+            "http://agent/chat/stream/",
+            "http://agent/",
+        ] {
+            assert_eq!(
+                agent_ready_endpoint(Some(url)),
+                Some("http://agent/ready".into())
+            );
+        }
+    }
 
     #[test]
     fn absent_or_disabled_services_do_not_require_an_agent() {

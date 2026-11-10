@@ -360,7 +360,7 @@ fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
 }
 
 fn agent_chat_url() -> String {
-    std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string())
+    crate::ai_services::agent_chat_url()
 }
 
 /// Preserve business status codes and emit all other early outcomes as named SSE.
