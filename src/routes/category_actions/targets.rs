@@ -91,10 +91,11 @@ pub(super) async fn prepare<C: ConnectionTrait>(
             query = query.lock_exclusive();
         }
         let rows = query.limit(2).all(db).await?;
-        if rows.len() != 1 {
-            return Err(failure(
-                "分类不存在或名字不唯一，请查询分类清单并指定唯一编号",
-            ));
+        if rows.is_empty() {
+            return Err(failure("未找到指定分类，请核对分类编号或完整名称"));
+        }
+        if rows.len() > 1 {
+            return Err(failure("分类名字不唯一，请查询候选并指定唯一编号"));
         }
         let row = rows.into_iter().next().unwrap();
         if target.name.as_ref().is_some_and(|name| name != &row.name) {
