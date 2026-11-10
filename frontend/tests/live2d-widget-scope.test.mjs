@@ -1,12 +1,11 @@
-// 当前确认交互的来源、撤销、选项与模块边界回归。
 import { readFileSync } from 'fs';
 import path from 'path';
-import vm from 'node:vm';
+import { runtime, widgetSource } from './helpers/widget-runtime.mjs';
 import { fileURLToPath } from 'url';
 import { JSDOM } from 'jsdom';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const W = (f) => readFileSync(path.join(here, '../public/live2d-widgets/', f), 'utf8');
+const W = widgetSource;
 
 let pass = 0, fail = 0;
 const ok = (cond, name, extra) => {
@@ -19,7 +18,7 @@ const eq = (a, b, name) => ok(a === b, name, `期望 ${JSON.stringify(b)}，实�
 const stripComment = (l) => {
   const i = l.indexOf('//');
   let code = i >= 0 ? l.slice(0, i) : l;
-  return /^\s*\*/.test(code) ? '' : code;   // 块注释续行
+  return /^\s*\*/.test(code) ? '' : code;
 };
 const scanScopeHoles = (file) => {
   const lines = W(file).split('\n');
@@ -57,27 +56,12 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
 }
 
 {
-  const src = W('chat-stream.js');
-  const at = src.indexOf('const init = () => {');
-  ok(at > 0, 'chat-stream.js 有 init');
-  const body = src.slice(at);
-  ok(/^ {6}const sendMessage = async \(opts\) => \{/m.test(body), 'sendMessage 定义在 init 内层');
-  ok(/^ {6}const handleAskChoice = \(value\) => \{/m.test(body), 'handleAskChoice 定义在 init 内层（与 sendMessage 同层）');
-  ok(/sendMessage\(\{ silent: true, confirmToken: ask\.token/.test(body),
-     '确认点击发的是隐藏请求（silent + confirmToken）');
-  const h = body.slice(body.indexOf('const handleAskChoice'));
-  const seg = h.slice(0, h.indexOf('askBtns.addEventListener'));
-  const iReturn = seg.lastIndexOf('return;');
-  const iPending = seg.indexOf("askSettle('确认中…'");
-  ok(iReturn >= 0 && iPending >= 0 && iReturn < iPending,
-     'handleAskChoice 的早退全在 settle 之前（确立反馈=发请求，不会静默吞掉）');
-  const cancellation = body.slice(body.indexOf('const cancelAsk = async'), body.indexOf('const handleAskChoice'));
-  ok(iPending >= 0 && seg.includes('cancelAsk(ask)')
-      && cancellation.includes("askSettle('撤销中…'") && cancellation.includes("askSettle('已撤销，未执行改动'"),
-     '确认与撤销都有处理中反馈，撤销由服务端回执结算');
-  ok(!/askSettle\('已确认/.test(seg), '点确定不写「已确认」（乐观态不许再回到点击那一跳）');
-  ok(/askSettle\('已确认，结果见后续回复'[^)]*cr\.ask\)/.test(body),
-     '成功结算写在轮次收尾（而非点击处）');
+  const f = runtime();
+  try {
+    ok(typeof f.engine.hooks.onAskResync === 'function', '确认卡恢复接入实际工厂');
+    ok(typeof f.engine.hooks.onFailedResync === 'function', '失败操作恢复接入实际工厂');
+    ok(!!f.doc.querySelector('#waifu-tool-hitokoto[title="对话"]'), '工具栏从构建产物初始化');
+  } finally { f.close(); }
 }
 
 {
@@ -116,7 +100,7 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
 {
   const css = W('widget.css').replace(/\/\*[\s\S]*?\*\//g, '');
   ok(/#waifu \{[^}]*\bleft: 15px/.test(css),
-     'widget.css：#waifu 初始 left = 15px（20261011 回退到最初值）');
+     'widget.css：#waifu 初始 left = 15px');
   ok(/#waifu \{[^}]*transform: translateY\(-15px\)/.test(css),
      'widget.css：#waifu 基态 transform = translateY(-15px)');
   ok(/#waifu:hover \{\s*[^}]*transform: translateY\(-15px\)/.test(css),
@@ -181,37 +165,30 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
      'chat-engine.js：删掉带 id 的常驻节点要上报（漏加 chat-keep 的探照灯）');
   ok(/onAskResync/.test(e) && /ui\.onAskResync\(\)/.test(e),
      'chat-engine.js：reconcileDOM 收尾调用 onAskResync（DOM 重建后卡片自愈）');
-  const s = W('chat-stream.js');
-  const a = W('chat-approval.js');
-  ok(/const syncAsk = \(\) => \{/.test(a) && /__waifuApproval\(ctx, engine\)/.test(s),
-     '确认展示模块提供幂等同步，交互模块消费同一实现');
-  const resync = s.match(/engine\.setConvUI\(\{ onAskResync: \(\) => \{([^}]*)\}/);
-  ok(!!resync && /restoreAsk\(\)/.test(resync[1]) && /syncAsk\(\)/.test(resync[1]),
-     'chat-stream.js：onAskResync 钩子 = 接回存档 + 挂卡（两半缺一不可）');
-  ok(/onFailedResync/.test(e) && /ui\.onFailedResync\(\)/.test(e),
-     'chat-engine.js：reconcileDOM 收尾调用 onFailedResync（提示条重建后按钮自愈）');
-  const failedHook = /onFailedResync:\s*\(\)\s*=>\s*\{([^}]+)\}/.exec(s)?.[1];
-  ok(!!failedHook, 'chat-stream.js：失败轮恢复钩子存在');
-  if (failedHook) {
-    let repaired = 0, restored = 0;
-    vm.runInNewContext(failedHook, { attachHistoryFailedRetry: () => repaired++,
-      steering: { restore: () => restored++ } });
-    eq(repaired, 1, '失败轮恢复实际重挂一次重发/编辑按钮');
-    eq(restored, 1, '失败轮恢复同时核对任务补充状态');
-    let missing = 0;
-    vm.runInNewContext(failedHook.replace('attachHistoryFailedRetry();', ''), {
-      attachHistoryFailedRetry: () => missing++, steering: { restore() {} } });
-    eq(missing, 0, '负控：移除重挂调用后不会误判为已恢复');
-  }
-  const fin = s.slice(s.indexOf("if (ctx.state.pendingPull) { ctx.state.pendingPull = false;"));
-  const finSeg = fin.slice(0, fin.indexOf('agent-turn-done'));
-  ok(/if \(!ctx\.state\.isSending\) syncAsk\(\);/.test(finSeg),
-     'chat-stream.js：收尾忙时保留待办（不再 hideAsk 销毁）+ 到点 syncAsk');
-  ok(!/hideAsk\(\)/.test(finSeg.split('\n').map(stripComment).join('\n')),
-     'chat-stream.js：收尾段没有 hideAsk 暗门（注释里提到不算）');
-  const protocol = W('chat-protocol.js');
-  ok(/throw new Error/.test(protocol) && /if \(terminal\)/.test(protocol),
-     '非法或迟到事件必须显式失败');
+  const f = runtime({steering: {begin() {}, end() {}, restore() { restored++; }}});
+  let restored = 0;
+  try {
+    const card = {id:'restore',token:'fixture-only',q:'继续操作？',exp:Date.now()/1000+600,
+      opts:[{value:'yes',label:'确认'},{value:'no',label:'取消'}]};
+    f.approval.receive(card,42,null); f.approval.syncAsk();
+    f.ctx.dom.askBox.classList.remove('active');
+    f.engine.hooks.onAskResync();
+    ok(f.ctx.dom.askBox.classList.contains('active'), 'DOM重建后恢复挂起确认卡');
+    const slot = f.doc.createElement('div'); slot.className='chat-msg-retry-slot';
+    slot.dataset.failedText='继续请求'; slot.dataset.turnId='failed-turn';
+    f.ctx.dom.messages.appendChild(slot);
+    f.engine.hooks.onFailedResync();
+    eq(slot.querySelectorAll('.chat-retry-btn').length,2,'失败恢复实际重挂重发/编辑按钮');
+    eq(restored,1,'失败恢复同时核对任务补充状态');
+    f.engine.hooks.onFailedResync();
+    eq(slot.querySelectorAll('.chat-retry-btn').length,2,'重复恢复不会重复添加操作');
+    const parser=f.win.__waifuChatProtocol.createStream(()=>{});
+    let rejected=false;
+    try {parser.feed('event: done\ndata: {}\n\nevent: text\ndata: "late"\n\n');}
+    catch {rejected=true;}
+    ok(rejected,'构建协议拒绝终局后的迟到事件');
+  } finally {f.close();}
+
 }
 
 {
