@@ -52,6 +52,7 @@ class ServiceConfiguration(unittest.TestCase):
             rust = (root / "saudade-rust.service").read_text()
             self.assertIn("TimeoutStopSec=360", rust)
             self.assertNotIn("saudade-agent/data/word_graph", rust)
+            self.assertIn("BindReadOnlyPaths=-/var/lib/saudade-blog/article-graph\n", rust)
             self.assertTrue((root / "saudade-agent-maintenance.timer").is_file())
 
     def test_existing_output_is_not_mixed_with_generated_configuration(self):
