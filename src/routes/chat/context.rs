@@ -120,17 +120,31 @@ pub(super) async fn prepare_chat(
         .unwrap_or(false);
 
     if let Some(event) = &payload.image_event {
-        let verified = if role.as_deref().is_some_and(crate::authz::is_admin_tier) {
-            crate::routes::image_generation::chat::verify(state, uid, conversation_id, event).await
-        } else {
-            Err(sea_orm::DbErr::Custom("image event forbidden".into()))
-        };
+        if !role
+            .as_deref()
+            .is_some_and(crate::authz::can_access_console)
+        {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    error: Some("image_event_forbidden".into()),
+                }),
+            ));
+        }
+        let verified =
+            crate::routes::image_generation::chat::verify(state, uid, conversation_id, event).await;
         match verified {
             Ok(true) => {
                 payload.task_id = event.turn_id();
                 payload.turn_id = payload.task_id.clone();
             }
             result => {
+                if let Err(error) = &result {
+                    warn!(%error, uid, conversation_id, job_id=%event.job_id,
+                          "image completion report deferred");
+                }
                 return Err((
                     if result.is_ok() {
                         StatusCode::NO_CONTENT
@@ -142,7 +156,7 @@ pub(super) async fn prepare_chat(
                         success: result.is_ok(),
                         error: result.err().map(|_| "image_event_deferred".into()),
                     }),
-                ))
+                ));
             }
         }
     }

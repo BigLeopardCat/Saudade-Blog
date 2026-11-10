@@ -99,12 +99,11 @@ pub enum RoleChangeDenial {
     AdminAssignTier,
 }
 
-const ADMIN_TIERS: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
+const ADMIN_MANAGEABLE_ROLES: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
 
-/// 这个身份在不在管理员能动的那两档里。**判据只此一处**：
-/// 管理员能不能改、以及能改成什么，都问它。
-pub fn is_admin_tier(role: &str) -> bool {
-    ADMIN_TIERS.contains(&role)
+/// Role targets an administrator may manage; this does not authorize the caller.
+pub fn is_role_manageable_by_admin(role: &str) -> bool {
+    ADMIN_MANAGEABLE_ROLES.contains(&role)
 }
 
 pub fn check_role_change(
@@ -130,10 +129,10 @@ pub fn check_role_change(
         return Err(RoleChangeDenial::NotAssignable);
     }
         if !is_superadmin(op_role) {
-        if !is_admin_tier(target_role) {
+        if !is_role_manageable_by_admin(target_role) {
             return Err(RoleChangeDenial::AdminTargetTier);
         }
-        if !is_admin_tier(new_role) {
+        if !is_role_manageable_by_admin(new_role) {
             return Err(RoleChangeDenial::AdminAssignTier);
         }
     }
@@ -428,18 +427,16 @@ mod tests {
         }
     }
 
-    /// 低两档的定义只有一处（`is_admin_tier`）：判据与话术都从它来。
-    /// 单独锁一条是为了让"加一档到管理员授权范围"这件事**必须改到这里**，
-    /// 而不是在某个 handler 里顺手 `|| role == "..."` 加一格。
+    /// Managing lower roles must never imply console access for those roles.
     #[test]
     fn 管理员能动的是哪两档() {
-        assert!(is_admin_tier(ROLE_USER));
-        assert!(is_admin_tier(ROLE_ZAKO));
-        assert!(!is_admin_tier(ROLE_ADMIN));
-        assert!(!is_admin_tier(ROLE_SUPERADMIN));
-        assert!(!is_admin_tier("root"));
-        assert!(!is_admin_tier(""));
-        assert_eq!(ADMIN_TIERS.len(), 2);
+        assert!(is_role_manageable_by_admin(ROLE_USER));
+        assert!(is_role_manageable_by_admin(ROLE_ZAKO));
+        assert!(!is_role_manageable_by_admin(ROLE_ADMIN));
+        assert!(!is_role_manageable_by_admin(ROLE_SUPERADMIN));
+        assert!(!is_role_manageable_by_admin("root"));
+        assert!(!is_role_manageable_by_admin(""));
+        assert_eq!(ADMIN_MANAGEABLE_ROLES.len(), 2);
     }
 
     #[test]
