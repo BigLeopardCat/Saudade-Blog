@@ -335,7 +335,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: BigLeopardCat/saudade-blog-agent
-          ref: 0b78d657085b130ab0fab61c9301ec0986496e92
+          ref: dc3ee6c402fdffc3cd8c1b4a995b3b5892aabeff
           path: _agent-stack
           persist-credentials: false
       - name: Setup stack Python
@@ -360,7 +360,7 @@ jobs:
           chmod +x '${{ runner.temp }}/chat-stack-bin/saudade_blog_bin'
           uv sync --locked --no-dev --project _agent-stack
           npm ci --ignore-scripts --prefix _agent-stack/frontend
-      - name: Real HTTP stack disconnect and checkpoint drill
+      - name: Real HTTP checkpoint and background completion drill
         if: needs.check.outputs.backend_candidate == 'true'
         timeout-minutes: 4
         working-directory: _agent-stack
