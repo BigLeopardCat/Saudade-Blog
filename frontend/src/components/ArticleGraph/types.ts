@@ -30,11 +30,10 @@ export interface GraphArticle {
 }
 
 export interface GraphStats {
-    var3_sum: number; sv_ratio_1_3: number;
-    fidelity: number; fidelity_raw: number; len_sim_rho: number;
-    layout: string; layout_iters?: number;
-    n_nodes: number; n_rescued: number; tau: number; k: number;
-    built?: string;
+    layout: string;
+    n_nodes: number;
+    var3_sum: number;
+    source?: string;
     [k: string]: unknown;
 }
 
