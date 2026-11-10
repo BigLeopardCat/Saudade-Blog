@@ -65,7 +65,7 @@ async fn diagnostics_rejects_anonymous_and_nonadministrators_before_sampling() {
 }
 
 #[tokio::test]
-async fn absent_agent_is_explicit_without_contacting_a_default_local_service() {
+async fn explicitly_disabled_agent_is_not_probed() {
     assert!(matches!(
         agent_state(None).await,
         ServiceState::NotConfigured
