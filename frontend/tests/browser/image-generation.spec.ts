@@ -25,7 +25,7 @@ test('image generation requires request approval and a separate visible-result a
         paidCalls++
         job={...job!,status:'review',outputHash:'b'.repeat(64),previewUrl:'/fixture/generated.svg'}
       }else if(path.endsWith('/accept')){
-        expect(route.request().postDataJSON()).toEqual({version:'b'.repeat(64)})
+        expect(route.request().postDataJSON()).toEqual({version:'b'.repeat(64),storage:'local'})
         accepts++
         job={...job!,status:'saving'}
       }else{

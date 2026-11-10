@@ -10,13 +10,18 @@ pub(super) async fn accept(
     state: &Arc<AppState>,
     uid: i32,
     id: &str,
-    input: Approval,
+    input: Acceptance,
 ) -> Result<Job, JobError> {
     let current = jobs::read(state, uid, id).await?;
     if current.output_hash.as_deref() != Some(input.version.as_str()) {
         return Err(JobError::Conflict("生成结果版本已变化，请重新查看并确认"));
     }
     if matches!(current.status.as_str(), "accepted" | "saving") {
+        if current.save_storage != input.storage.as_str() {
+            return Err(JobError::Conflict(
+                "保存位置已确定；请在图库使用移动功能更换存储位置",
+            ));
+        }
         return Ok(current);
     }
     if current.status != "review" {
@@ -32,15 +37,19 @@ pub(super) async fn accept(
     let claimed = state
         .db
         .query_one(stmt(
-            "UPDATE image_generation SET status='saving',reviewed_at=now(),error=NULL \
+            "UPDATE image_generation SET status='saving',reviewed_at=now(),error=NULL,save_storage=$4 \
          WHERE id::text=$1 AND owner_id=$2 AND output_hash=$3 AND output IS NOT NULL \
          AND (status='review' OR (status='saving' AND reviewed_at<now()-interval '5 minutes')) \
          RETURNING output,request,origin",
-            vec![id.into(), uid.into(), input.version.clone().into()],
+            vec![id.into(), uid.into(), input.version.clone().into(), input.storage.as_str().into()],
         ))
         .await?;
     let Some(row) = claimed else {
-        return Ok(jobs::read(state, uid, id).await?);
+        let current = jobs::read(state, uid, id).await?;
+        if current.save_storage != input.storage.as_str() {
+            return Err(JobError::Conflict("保存位置已变化，请重新核对任务"));
+        }
+        return Ok(current);
     };
     let bytes: Vec<u8> = row.try_get("", "output")?;
     let request: Request = serde_json::from_value(row.try_get("", "request")?)
@@ -51,7 +60,7 @@ pub(super) async fn accept(
     crate::lifecycle::task_tracker().spawn(async move {
         let _permit = permit;
         let result = tokio::time::timeout(Duration::from_secs(120),
-            complete(&worker, uid, &job_id, &input.version, &request, &origin, &bytes)).await;
+            complete(&worker, uid, &job_id, &input.version, &request, &origin, &bytes, input.storage)).await;
         if !matches!(result, Ok(Ok(()))) {
             let failure = match &result {
                 Err(_) => "deadline",
@@ -87,13 +96,14 @@ async fn complete(
     request: &Request,
     origin: &str,
     bytes: &[u8],
+    storage: crate::routes::gallery::storage::Kind,
 ) -> Result<(), DbErr> {
     if digest(bytes) != version {
         return Err(error("image result hash mismatch"));
     }
     let name = format!("ai-{id}.png");
     let started = std::time::Instant::now();
-    let url = crate::routes::upload::persist_generated(state, &name, bytes).await?;
+    let url = crate::routes::upload::persist_generated(state, &name, bytes, storage).await?;
     tracing::info!(
         job_id = id,
         storage_seconds = started.elapsed().as_secs_f64(),

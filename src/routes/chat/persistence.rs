@@ -63,6 +63,7 @@ pub(super) async fn lock_turn<C: ConnectionTrait>(
     Ok(owner.is_some() && !crate::checkpoint_cleanup::turn_discarded(db, cid, turn_id).await?)
 }
 
+#[cfg(test)]
 pub(super) async fn save_assistant_reply<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     uid: i32,
@@ -71,9 +72,48 @@ pub(super) async fn save_assistant_reply<C: ConnectionTrait + TransactionTrait>(
     turn_id: &str,
     reply: String,
 ) -> Result<(), DbErr> {
+    save_result_reply(db, uid, conversation_id, source_role, turn_id, reply, None).await
+}
+
+pub(super) async fn save_result_reply<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    uid: i32,
+    conversation_id: i32,
+    source_role: Option<String>,
+    turn_id: &str,
+    reply: String,
+    event: Option<&super::ImageEvent>,
+) -> Result<(), DbErr> {
+    use sea_orm::{DbBackend, Statement};
     let txn = db.begin().await?;
     if !lock_turn(&txn, uid, conversation_id, turn_id).await? {
         return Err(DbErr::Custom("turn_discarded".into()));
+    }
+    if let Some(event) = event {
+        let row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT reported_version FROM image_generation WHERE id::text=$1 \
+             AND owner_id=$2 AND conversation_id=$3 FOR UPDATE",
+                [
+                    event.job_id.clone().into(),
+                    uid.into(),
+                    conversation_id.into(),
+                ],
+            ))
+            .await?
+            .ok_or_else(|| DbErr::Custom("image event missing".into()))?;
+        let reported: Option<String> = row.try_get("", "reported_version")?;
+        if reported.as_deref() == Some(&event.version) {
+            txn.commit().await?;
+            return Ok(());
+        }
+        txn.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE image_generation SET reported_version=$2 WHERE id::text=$1",
+            [event.job_id.clone().into(), event.version.clone().into()],
+        ))
+        .await?;
     }
     chat_history::Entity::insert(chat_history::ActiveModel {
         user_id: Set(uid),

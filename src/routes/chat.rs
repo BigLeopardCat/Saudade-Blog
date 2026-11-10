@@ -19,7 +19,9 @@ pub use task_inputs::{
 };
 mod pending;
 mod persistence;
-use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
+use persistence::{save_execution_log, PERSISTENCE_ERROR};
+#[cfg(test)]
+use persistence::save_assistant_reply;
 mod protocol;
 mod synchronous;
 pub use synchronous::chat_handler;
@@ -49,10 +51,13 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 pub use control::BrowserResult;
+use super::image_generation::chat::ImageEvent;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    #[serde(default)]
+    pub image_event: Option<ImageEvent>,
     #[serde(default)]
     pub task_id: String,
     #[serde(default)]
@@ -109,6 +114,7 @@ struct ChatCtx {
     turn_id: String,
     body: serde_json::Value,
     role: Option<String>,
+    image_event: Option<ImageEvent>,
 }
 
 /// 链路追踪：X-Request-ID 全链路透传（浏览器 → nginx → Rust → agent → LLM 日志）。
@@ -361,6 +367,9 @@ fn agent_chat_url() -> String {
 
 /// Preserve business status codes and emit all other early outcomes as named SSE.
 fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Response {
+    if status == StatusCode::NO_CONTENT {
+        return status.into_response();
+    }
     if status == StatusCode::NOT_FOUND || status == StatusCode::CONFLICT {
         return (status, Json(body)).into_response();
     }
@@ -499,6 +508,7 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
         ctx.role,
         ctx.turn_id,
         trace_id,
+        ctx.image_event,
         upstream.bytes_stream(),
     );
 
@@ -527,6 +537,7 @@ fn forward_agent_stream(
     source_role: Option<String>,
     turn_id: String,
     trace_id: String,
+    image_event: Option<ImageEvent>,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
     stream! {
@@ -565,7 +576,8 @@ fn forward_agent_stream(
                     if uid > 0 && !reply.is_empty() {
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
-                            save_assistant_reply(&state.db, uid, conversation_id, source_role, &turn_id, reply).await
+                            persistence::save_result_reply(&state.db, uid, conversation_id,
+                                source_role, &turn_id, reply, image_event.as_ref()).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;

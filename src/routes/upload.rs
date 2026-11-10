@@ -76,15 +76,17 @@ async fn write_local(dir: &Path, name: &str, data: &[u8]) -> Result<String, DbEr
 async fn registered_generation(
     state: &Arc<AppState>,
     prefix: &str,
+    storage: crate::routes::gallery::storage::Kind,
 ) -> Result<Option<String>, DbErr> {
     let row = state
         .db
         .query_one(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT i.image_url FROM images i LEFT JOIN image_location l ON l.image_id=i.image_key WHERE (i.image_url LIKE $1 OR l.source_url LIKE $1) \
+         AND COALESCE(l.location->>'storage',CASE WHEN i.image_url LIKE '/api/protect/download/%' THEN 'local' ELSE 'r2' END)=$2 \
          AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key) \
          ORDER BY i.image_key DESC LIMIT 1",
-            [format!("%/{prefix}%").into()],
+            [format!("%/{prefix}%").into(),storage.as_str().into()],
         ))
         .await?;
     row.map(|row| row.try_get("", "image_url")).transpose()
@@ -92,7 +94,6 @@ async fn registered_generation(
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UploadTarget {
-    FollowPanel,
     Local,
     R2,
 }
@@ -100,7 +101,7 @@ pub enum UploadTarget {
 impl UploadTarget {
     fn parse(raw: Option<&str>) -> Option<Self> {
         match raw.map(str::trim) {
-            None | Some("") => Some(UploadTarget::FollowPanel),
+            None | Some("") => Some(UploadTarget::Local),
             Some("local") => Some(UploadTarget::Local),
             Some("r2") => Some(UploadTarget::R2),
             Some(_) => None,
@@ -410,10 +411,10 @@ mod tests {
 
     #[test]
     fn upload_target_parse() {
-        assert_eq!(UploadTarget::parse(None), Some(UploadTarget::FollowPanel));
+        assert_eq!(UploadTarget::parse(None), Some(UploadTarget::Local));
         assert_eq!(
             UploadTarget::parse(Some("")),
-            Some(UploadTarget::FollowPanel)
+            Some(UploadTarget::Local)
         );
         assert_eq!(
             UploadTarget::parse(Some(" local ")),
@@ -587,28 +588,37 @@ mod tests {
         let db = sea_orm::MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([rows])
             .into_connection();
-        let result = persist_generated(&state(db), "job-a", b"\x89PNG\r\n\x1a\n")
+        let result = persist_generated(&state(db), "job-a", b"\x89PNG\r\n\x1a\n", crate::routes::gallery::storage::Kind::Local)
             .await
             .unwrap();
         assert_eq!(result, url);
     }
 }
 
-/// Keep generated pixels locally; remote relocation is an explicit gallery transfer.
+/// Store generated pixels in the explicitly chosen destination; default callers choose local.
 pub(crate) async fn persist_generated(
     state: &Arc<AppState>,
     name: &str,
     bytes: &[u8],
+    storage: crate::routes::gallery::storage::Kind,
 ) -> Result<String, DbErr> {
     let ext = sniff_image_ext(bytes).ok_or_else(|| DbErr::Custom("生成结果不是有效图片".into()))?;
     if !crate::utils::image_ext_allowed(ext) || bytes.len() > IMAGE_MAX_BYTES {
         return Err(DbErr::Custom("生成图片类型或大小无效".into()));
     }
     let prefix = generation_prefix(name, bytes);
-    if let Some(url) = registered_generation(state, &prefix).await? {
+    if let Some(url) = registered_generation(state, &prefix, storage).await? {
         return Ok(url);
     }
     let object = object_name(&prefix, ext);
+    if storage == crate::routes::gallery::storage::Kind::R2 {
+        let response = try_r2_upload(state, name, &object, bytes, true, false).await
+            .ok_or_else(|| DbErr::Custom("R2 storage unavailable".into()))?;
+        if response.code != 200 {
+            return Err(DbErr::Custom("R2 image save incomplete".into()));
+        }
+        return Ok(response.data);
+    }
     let url = write_local(&upload_dir(), &object, bytes).await?;
     register(state, &url, None).await
 }

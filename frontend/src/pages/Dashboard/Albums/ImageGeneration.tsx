@@ -7,6 +7,7 @@ import {galleryApi,galleryError} from '../../../apis/galleryApi'
 import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
 import {assetDisplayName} from '../../../utils/assetName'
 import GenerationHistory from './GenerationHistory'
+import {getR2Usage} from '../../../apis/ImageMethods'
 
 const statusNames:Record<string,string>={pending:'等待确认提示词',generating:'正在生成',saving:'正在保存',review:'等待审阅图片',accepted:'已完成保留审批',rejected:'已放弃',failed:'生成失败',unknown:'结果待核实',expired:'审批已过期'}
 export default function ImageGeneration({onClose}:{onClose:()=>void}){
@@ -22,6 +23,11 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const [model,setModel]=useState<string>()
   const [size,setSize]=useState('1536x1024')
   const [quality,setQuality]=useState('high')
+  const [storage,setStorage]=useState<'local'|'r2'>('local')
+  const [r2Available,setR2Available]=useState(false)
+  useEffect(()=>{let active=true;void getR2Usage().then(value=>{
+    if(active)setR2Available(value.data?.code===200&&value.data.data.configured===true)
+  }).catch(()=>{});return()=>{active=false}},[])
   const [referenceIds,setReferences]=useState<number[]>([])
   const [articleId,setArticleId]=useState<number|null>(null)
   const [loadingArticle,setLoadingArticle]=useState(false)
@@ -98,7 +104,9 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
           {job.status==='saving'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在保存图片，可以关闭窗口，稍后回来核对入库结果。"/>}
           {job.previewUrl&&!job.imageRemoved&&<img className="generationResult" src={resolveApiAssetUrl(job.previewUrl)} alt="本次生成结果"/>}
           {job.status==='review'&&<><Alert type="info" message="请查看实际生成结果。确认入库后才会出现在图库中；不会自动修改文章封面。"/>
-            <Button type="primary" loading={accepting} disabled={busy||!job.outputHash} onClick={()=>void updated(accept({id:job.id,version:job.outputHash!}).unwrap())}>确认结果并存入图库</Button></>}
+            <Space wrap><Select aria-label="生成图片保存位置" value={storage} onChange={setStorage}
+              options={[{value:'local',label:'本地存储（默认）'},...(r2Available?[{value:'r2',label:'R2 存储'}]:[])]}/>
+            <Button type="primary" loading={accepting} disabled={busy||!job.outputHash} onClick={()=>void updated(accept({id:job.id,version:job.outputHash!,storage}).unwrap())}>确认结果并存入图库</Button></Space></>}
           {['pending','review'].includes(job.status)&&<Button danger disabled={busy} loading={rejecting} onClick={()=>void updated(reject(job.id).unwrap())}>放弃本次{job.status==='pending'?'请求':'结果'}</Button>}
           {job.error&&<Alert type="warning" message={job.error}/>}
           {job.status==='unknown'&&<Alert type="warning" message="请求结果尚未核实，不会自动重试扣费。请检查服务商调用记录。"/>}

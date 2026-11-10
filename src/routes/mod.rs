@@ -257,6 +257,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/upload", upload::route())
         .route("/api/protect/image-generation/articles/{id}", get(image_generation::article_context))
         .route("/api/protect/image-generation/options", get(image_generation::options))
+        .route("/api/protect/image-generation/chat-jobs", get(image_generation::chat::list))
         .route("/api/protect/image-generation/jobs", get(image_generation::list).post(image_generation::create))
         .route("/api/protect/image-generation/jobs/{id}", get(image_generation::detail).delete(image_generation::remove))
         .route("/api/protect/image-generation/jobs/{id}/retry", post(image_generation::retry))

@@ -22,6 +22,7 @@ async fn cancelling_stream_does_not_delete_any_persisted_turn() {
         Some("user".into()),
         "fixture-task".into(),
         "cancel-test".into(),
+        None,
         upstream,
     ));
     assert!(response.next().await.unwrap().is_ok());

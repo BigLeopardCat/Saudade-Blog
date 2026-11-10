@@ -256,7 +256,8 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
             state,
             fixture.uid + 1,
             &id,
-            Approval {
+            Acceptance {
+                storage: crate::routes::gallery::storage::Kind::Local,
                 version: version.clone()
             }
         )
@@ -286,7 +287,8 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
             state,
             fixture.uid,
             &id,
-            Approval {
+            Acceptance {
+                storage: crate::routes::gallery::storage::Kind::Local,
                 version: version.clone(),
             },
         ),
@@ -346,7 +348,8 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
             state,
             fixture.uid,
             &id,
-            Approval {
+            Acceptance {
+                storage: crate::routes::gallery::storage::Kind::Local,
                 version: version.clone(),
             },
         )
@@ -461,8 +464,12 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
         "Deleting generation history must retain the accepted gallery image"
     );
     assert!(crate::routes::gallery::storage::public_id(&url).is_some());
-    let image=crate::routes::gallery::read(&state.db,fixture.uid,image_id).await.unwrap();
-    let location=crate::routes::gallery::storage::resolve(&state.db,&image).await.unwrap();
+    let image = crate::routes::gallery::read(&state.db, fixture.uid, image_id)
+        .await
+        .unwrap();
+    let location = crate::routes::gallery::storage::resolve(&state.db, &image)
+        .await
+        .unwrap();
     let filename = location.key.as_str();
     assert!(filename.starts_with(&storage_prefix) && !filename.contains('/'));
     let path = crate::utils::upload_dir().join(filename);
@@ -476,6 +483,102 @@ async fn saving_returns_without_storage_lock_and_commits_once_to_agent_gallery()
         .await
         .unwrap();
     tokio::fs::remove_file(path).await.unwrap();
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+async fn completion_reports_are_owned_versioned_and_caught_up_from_the_durable_list() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let id = fixture.seed("review", "agent", &request(vec![])).await;
+    let cid: i32 = fixture
+        .state
+        .db
+        .query_one(stmt(
+            "INSERT INTO conversation(user_id,title) VALUES($1,'image completion') RETURNING id",
+            vec![fixture.uid.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "UPDATE image_generation SET conversation_id=$2,output_hash=$3 WHERE id::text=$1",
+            vec![id.clone().into(), cid.into(), "a".repeat(64).into()],
+        ))
+        .await
+        .unwrap();
+    let job = jobs::read(&fixture.state, fixture.uid, &id).await.unwrap();
+    let event = chat::ImageEvent {
+        job_id: id.clone(),
+        version: job.event_version.clone(),
+    };
+    assert!(event.valid());
+    assert!(chat::verify(&fixture.state, fixture.uid, cid, &event)
+        .await
+        .unwrap());
+    assert!(chat::verify(&fixture.state, fixture.uid + 1, cid, &event)
+        .await
+        .is_err());
+    assert!(chat::verify(&fixture.state, fixture.uid, cid + 1, &event)
+        .await
+        .is_err());
+    let changed = chat::ImageEvent {
+        version: "f".repeat(64),
+        ..event.clone()
+    };
+    assert!(chat::verify(&fixture.state, fixture.uid, cid, &changed)
+        .await
+        .is_err());
+    let list = chat::list(
+        State(fixture.state.clone()),
+        fixture.headers(),
+        Query(chat::ConversationQuery {
+            conversation_id: cid,
+        }),
+    )
+    .await
+    .0
+    .data;
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].event_version, event.version);
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "UPDATE image_generation SET reported_version=$2 WHERE id::text=$1",
+            vec![id.into(), event.version.clone().into()],
+        ))
+        .await
+        .unwrap();
+    assert!(!chat::verify(&fixture.state, fixture.uid, cid, &event)
+        .await
+        .unwrap());
+    let list = chat::list(
+        State(fixture.state.clone()),
+        fixture.headers(),
+        Query(chat::ConversationQuery {
+            conversation_id: cid,
+        }),
+    )
+    .await
+    .0
+    .data;
+    assert!(list.is_empty());
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "DELETE FROM conversation WHERE id=$1",
+            vec![cid.into()],
+        ))
+        .await
+        .unwrap();
     fixture.cleanup().await;
 }
 
