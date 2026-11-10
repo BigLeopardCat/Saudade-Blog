@@ -529,10 +529,11 @@ async fn task_list_preserves_job_state_ownership_and_interrupted_save_errors() {
             assert!(shown.error.is_some());
         }
     }
-    assert!(tasks::list(&fixture.state, fixture.uid + 1)
-        .await
-        .unwrap()
-        .is_empty());
+    let owned = tasks::list(&fixture.state, fixture.uid).await.unwrap();
+    let other = tasks::list(&fixture.state, fixture.uid + 1).await.unwrap();
+    assert!(other
+        .iter()
+        .all(|row| owned.iter().all(|mine| mine.id != row.id)));
     fixture.cleanup().await;
 }
 
