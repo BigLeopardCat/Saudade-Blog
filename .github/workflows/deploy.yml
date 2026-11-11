@@ -5,6 +5,12 @@ on:
   push:
     branches: [cn_sora_blog]
   workflow_dispatch:
+    inputs:
+      skip_browser:
+        description: "Explicit operator exception for this candidate run"
+        type: boolean
+        required: false
+        default: false
 
   pull_request:
     branches: [cn_sora_blog]
@@ -277,6 +283,7 @@ jobs:
           retention-days: 7
 
   browser:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_browser) }}
     needs: check
     runs-on: ubuntu-24.04
     permissions:
@@ -316,11 +323,10 @@ jobs:
       - name: Install browser system dependencies
         timeout-minutes: 6
         run: |
-          test -s /etc/apt/apt-mirrors.txt
           sudo tee /etc/apt/saudade-ci.sources.list >/dev/null <<'EOF'
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble main universe restricted multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble-updates main universe restricted multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble-security main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe restricted multiverse
           EOF
           sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
           Dir::Etc::sourcelist "/etc/apt/saudade-ci.sources.list";
@@ -398,6 +404,7 @@ jobs:
           retention-days: 7
 
   build-and-deploy:
+    if: ${{ !cancelled() && needs.check-changes.result == 'success' && needs.check.result == 'success' && (needs.browser.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.skip_browser && needs.browser.result == 'skipped')) }}
     needs: [check-changes, check, browser]
     runs-on: ubuntu-latest
     steps:
