@@ -5,7 +5,7 @@ test.use({entry: 'article-cover'})
 for (const id of ['62，这是助手的介绍', '0', '-1', '2147483648']) {
     test(`invalid article route ${id} shows not found without requesting an article`, async ({page, sandboxURL}) => {
         const target = new URL(sandboxURL)
-        target.searchParams.set('path', `/article/${encodeURIComponent(id)}`)
+        target.hash = new URLSearchParams({path: `/article/${encodeURIComponent(id)}`}).toString()
         await page.goto(target.href)
         await expect(page.getByRole('heading', {name: '文章不存在或链接有误'})).toBeVisible()
         await expect(page.getByText('404', {exact: true})).toBeVisible()
