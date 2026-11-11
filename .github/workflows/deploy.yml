@@ -316,10 +316,11 @@ jobs:
       - name: Install browser system dependencies
         timeout-minutes: 6
         run: |
+          test -s /etc/apt/apt-mirrors.txt
           sudo tee /etc/apt/saudade-ci.sources.list >/dev/null <<'EOF'
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
-          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble-updates main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:/etc/apt/apt-mirrors.txt noble-security main universe restricted multiverse
           EOF
           sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
           Dir::Etc::sourcelist "/etc/apt/saudade-ci.sources.list";
