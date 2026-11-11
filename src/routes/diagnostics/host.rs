@@ -19,8 +19,23 @@ pub(super) struct Memory {
 #[serde(rename_all = "camelCase")]
 pub(super) struct Disk {
     mount: String,
+    filesystem_device_id: Option<u64>,
     total_bytes: u64,
     available_bytes: u64,
+}
+
+fn filesystem_device_id(path: &std::path::Path) -> Option<u64> {
+    // Namespace-local filesystem identity; it is not a persistent physical-disk identifier.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).ok().map(|metadata| metadata.dev())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 #[derive(Serialize)]
@@ -79,6 +94,7 @@ impl Sampler {
             .filter(|disk| disk.total_space() > 0)
             .map(|disk| Disk {
                 mount: disk.mount_point().to_string_lossy().into_owned(),
+                filesystem_device_id: filesystem_device_id(disk.mount_point()),
                 total_bytes: disk.total_space(),
                 available_bytes: disk.available_space(),
             })
@@ -114,4 +130,28 @@ pub(super) fn collect() -> Result<Snapshot, &'static str> {
         .lock()
         .map_err(|_| "measurement_unavailable")
         .map(|mut sampler| sampler.read())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_identity_is_observed_and_missing_paths_stay_unknown() {
+        let directory = std::env::temp_dir();
+        assert!(filesystem_device_id(&directory).is_some());
+        assert_eq!(
+            filesystem_device_id(&directory),
+            filesystem_device_id(&directory.join("."))
+        );
+        let missing = directory.join(format!("saudade-missing-{}", uuid::Uuid::new_v4()));
+        assert_eq!(filesystem_device_id(&missing), None);
+        let disk = Disk {
+            mount: missing.to_string_lossy().into_owned(),
+            filesystem_device_id: None,
+            total_bytes: 100,
+            available_bytes: 50,
+        };
+        assert!(serde_json::to_value(disk).unwrap()["filesystemDeviceId"].is_null());
+    }
 }
