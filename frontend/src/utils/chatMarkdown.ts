@@ -25,6 +25,7 @@ import mermaid from '@bytemd/plugin-mermaid'
 import { MERMAID_CONFIG } from './mermaidTheme'
 import { remarkStickers } from './stickers'
 import { remarkMathElements } from './remarkMathElements'
+import { remarkAutolinkBoundary } from './remarkAutolinkBoundary'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
 const schema = JSON.parse(JSON.stringify(defaultSchema)) as { attributes: Record<string, string[]> }
@@ -37,6 +38,7 @@ const processor = unified()
   .use(remarkParse)
   // 中文范围 “30~50”“10~15” 不应被单波浪线识别为删除线。
   .use(gfm, { singleTilde: false })
+  .use(remarkAutolinkBoundary)
   .use(breaks)
   .use(gemoji)
   .use(math)

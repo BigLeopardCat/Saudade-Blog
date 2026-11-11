@@ -592,3 +592,28 @@ async fn aggregate_search_rejects_unbounded_input_before_database() {
     let (status, _) = req_api_json(mock_app(), r#"{"type":"private"}"#).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn article_lookup_failure_is_not_a_missing_article() {
+    let failed = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([sea_orm::DbErr::Custom("synthetic database outage".into())])
+        .into_connection();
+    let missing = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<saudade_blog::entity::note::Model>::new()])
+        .into_connection();
+    for (db, status) in [
+        (failed, StatusCode::INTERNAL_SERVER_ERROR),
+        (missing, StatusCode::NOT_FOUND),
+    ] {
+        let response = create_router(test_state(db))
+            .oneshot(
+                Request::builder()
+                    .uri("/api/public/notes/62")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+    }
+}
