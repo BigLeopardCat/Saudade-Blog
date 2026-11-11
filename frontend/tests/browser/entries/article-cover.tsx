@@ -22,7 +22,7 @@ function Fixture() {
     return <div className={`frontRoot${dark ? ' frontDark' : ''}`}>
         <button type="button" onClick={() => window.dispatchEvent(
             new CustomEvent('darkmode-change', {detail: !dark}))}>切换主题</button>
-        <MemoryRouter initialEntries={['/article/1']}>
+        <MemoryRouter initialEntries={[new URLSearchParams(location.hash.slice(1)).get('path') || '/article/1']}>
             <Routes><Route path="/article/:id" element={<ReadArticle/>}/></Routes>
         </MemoryRouter>
     </div>

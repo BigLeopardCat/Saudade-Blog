@@ -876,12 +876,21 @@ pub async fn delete_note(
 }
 
 pub async fn get_note_detail(State(state): State<Arc<AppState>>, Path(id): Path<i32>) -> Response {
-    let res = note::Entity::find_by_id(id)
+    let res = match note::Entity::find_by_id(id)
         .filter(public_condition())
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
-        .unwrap_or(vec![]);
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                super::db_error::<Option<NoteDto>>("读取文章", &error),
+            )
+                .into_response()
+        }
+    };
 
     // 详情页头部同样按**文章作者**渲染（与卡片同一份判据，不是站点主人）
     let mut dtos: Vec<NoteDto> = res

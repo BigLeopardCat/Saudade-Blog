@@ -96,6 +96,16 @@ const plugins = [
     bytemdStickers
 ]
 
+const ArticleNotFound = ({id}: {id: string}) => (
+    <div role="status" style={{minHeight:'70vh',display:'flex',flexDirection:'column',
+        justifyContent:'center',alignItems:'center',gap:16,padding:24,textAlign:'center',overflowWrap:'anywhere'}}>
+        <p>404</p>
+        <h1 style={{fontSize:28}}>文章不存在或链接有误</h1>
+        <p>未找到 <code>/article/{id}</code>，文章可能已删除或下架，请检查链接。</p>
+        <a href="/">← 返回首页</a>
+    </div>
+)
+
 const ArticleResource = ({id}: {id: string}) => {
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
@@ -426,11 +436,7 @@ const ArticleResource = ({id}: {id: string}) => {
         <div className='readContainer'>
             <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" noindex={notFound} />
             {notFound ? (
-                <div style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',gap:16}}>
-                    <h1 style={{fontSize:28}}>文章不存在或已删除</h1>
-                    <p style={{opacity:0.6}}>你访问的文章 <code>/article/{id}</code> 未找到——可能是链接有误，或文章已下架。</p>
-                    <a href="/" style={{color:'#aec8c8'}}>← 返回首页</a>
-                </div>
+                <ArticleNotFound id={id} />
             ) : loadError && !article ? (
                 <div role="alert" style={{padding: '25vh 24px', textAlign: 'center'}}>
                     <p>文章加载失败，请稍后重试</p>
@@ -561,6 +567,13 @@ const ArticleResource = ({id}: {id: string}) => {
 // isolates state immediately, including A → B → A before the first A settles.
 const ReadArticle = () => {
     const {id = ''} = useParams()
+    // Reject the complete route parameter; never silently parse a valid numeric prefix.
+    if (!/^[0-9]+$/.test(id) || Number(id) < 1 || Number(id) > 2_147_483_647) {
+        return <div className="readContainer">
+            <SeoHelmet title="文章不存在" url={`/article/${id}`} noindex />
+            <ArticleNotFound id={id} />
+        </div>
+    }
     return <ArticleResource key={id} id={id} />
 }
 
