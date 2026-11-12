@@ -35,7 +35,7 @@ pub fn create_token(user_id: i32, role: &str, token_version: i32) -> String {
         sub: user_id,
         exp: expiration,
         role: role.to_string(),
-        // 本函数签的令牌**一定带代次**（`Some`）——`None` 只出现在旧令牌与 agent 代理令牌上
+        // 登录令牌始终绑定当前账号代次。
         ver: Some(token_version),
         aud: Some("blog-session".into()),
     };

@@ -1,11 +1,5 @@
-// note.tags 的编解码
-//
-// 存储形态是**逗号分隔的标签 id 字符串**（`src/entity/note.rs`），既不是数组也没有
-// 外键；后端 `update_note` 对 `noteTags` 是 `if let Some(v) { Set(Some(v)) }` —— 也就是说
-// **传空串会真的把标签清空**。所以「读」必须容忍一切脏值、"写"必须走同一个出口。
-//
-// 统一在这里编解码：逐处手写 `split(',').map(parseInt)` 容易漏掉丢空片、丢掉解析
-// 不出来的片、去重。脏数据（`"1,1,,"`、`"1,2,3,"`）会在列表上渲染成重复或空白标签块。
+// 编辑器的 noteTags 协议使用逗号分隔的 id；空串表示清空，省略字段表示保持。
+// 数据库标签关系以 note_tag 为准，此处只负责前端输入的编解码。
 
 /** 只保留**正整数**（标签 id 都是自增正整数）：`'12abc'`/`'0'`/`'-3'`/`''`/`'NaN'` 全部丢掉 */
 function toTagId(value: unknown): number | null {
@@ -36,10 +30,7 @@ export function parseNoteTags(raw: unknown): number[] {
     return out;
 }
 
-/**
- * 写：id 数组 → 后端要的字符串。空数组返回 `''`（后端会把它当成"清空标签"，这是调用方
- * 的明确意图；**不要**为了"看起来安全"就跳过不传 —— 那样用户永远清不掉标签）。
- */
+/** 编码标签 id；空数组发送空串，明确请求清空标签。 */
 export function joinNoteTags(ids: Array<number | string> | null | undefined): string {
     if (!ids || ids.length === 0) return '';
     const out: number[] = [];

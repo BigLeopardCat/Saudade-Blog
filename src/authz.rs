@@ -135,11 +135,7 @@ pub fn is_assignable_role(role: &str) -> bool {
     is_known_role(role) && !is_superadmin(role)
 }
 
-/// 角色在**服务端话术**里的中文名（用于拼"身份已改为杂鱼…"这类回复句）。
-///
-/// 前端 `utils/auth.ts::ROLE_LABEL` 是另一份、用途也不同的映射（界面标签，还带
-/// 颜色）——两份都从同一组角色名出发，改角色名时两边会一起红（各有单测/沙箱锁着）。
-/// 未登记角色给一句兜底，**绝不把它当已知角色**（调用方已经过了 `is_known_role`）。
+/// 服务端使用的角色显示名；未知角色返回兜底文案，不授予权限。
 pub fn role_label(role: &str) -> &'static str {
     match role {
         ROLE_ADMIN => "管理员",
@@ -155,8 +151,7 @@ pub const STATUS_ACTIVE: i16 = 0;
 /// 冻结：拒登录、拒改密码与恢复码、已签发令牌全部失效。
 pub const STATUS_FROZEN: i16 = 1;
 
-/// 账号是否已冻结。**未登记的值一律按冻结处理**（`!= ACTIVE`，不是 `== FROZEN`）：
-/// 库里出现第三种值时，我们要的是"不认识的账号状态不放行"，而不是"没写 1 就等于正常"。
+/// 除 ACTIVE 外的状态均视为冻结。
 pub fn is_frozen(status: i16) -> bool {
     status != STATUS_ACTIVE
 }
@@ -180,19 +175,10 @@ pub fn check_token(status: i16, token_version: i32, claims_ver: Option<i32>) -> 
 }
 
 
-/// 「永久禁言」在 `user.muted_until` 里的字面量。
-///
-/// **不用 NULL 表永久**：NULL 已经是"从未禁言"的意思，两者同形会让后台列表、后台
-/// 的幂等判定（"现在就是禁言中 ⇒ 不重复弹卡"）与通知文案全都分不出来。
-/// 这个值也**不是**"足够远的未来"那种需要重算的近似——它是取值域的一部分（写进
-/// 迁移注释、`TempUserInfo` 的读法、agent 侧的工具参数），改它要三处一起改。
+/// 永久禁言的跨端哨兵值；NULL 表示没有禁言截止时间。
 pub const MUTE_FOREVER: &str = "9999-12-31 23:59:59";
 
-/// 现在是否处于禁言期。**判据只此一处**（`is_frozen` 的同位函数）。
-///
-/// 到期**不需要任何人去清**：判据就是"现在 < 到期时刻"，过了那一刻自然为假——
-/// 没有定时任务、没有后台解禁队列。这也是"永久"必须是一个真实时刻而不是 NULL 的
-/// 另一半理由：这个判据要对两种状态给出同一个形状的答案。
+/// 通过截止时间判断禁言；到期自动失效，无需后台解禁任务。
 pub fn is_muted(muted_until: Option<chrono::NaiveDateTime>, now: chrono::NaiveDateTime) -> bool {
     match muted_until {
         None => false,
@@ -209,13 +195,7 @@ pub fn mute_forever_at() -> chrono::NaiveDateTime {
         .expect("MUTE_FOREVER 是不可解析的时间字面量")
 }
 
-/// 禁言中被拒时，给当事人的那一句原话（**跨语言契约**：agent 逐字转述，
-/// 见 `docs/security-boundary.md` §7⑫）。
-///
-/// 三件事必须说清，少一件当事人就会去做无用功：
-///   · **你还在这儿**（能登录能看，只是发不了）——不然他会以为自己被封号了；
-///   · **到什么时候**（永久那种要直说永久，不能显示成 9999 年）；
-///   · **还剩多久**（钟面时刻是给日历的，剩余量是给人做决定的）。
+/// 禁言拒绝说明包含仍可用的能力、截止时间和剩余时长。
 pub fn mute_denial_message(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
     if until >= mute_forever_at() {
         return "你已被禁言（永久），期间不能发布评论与留言。".to_string();

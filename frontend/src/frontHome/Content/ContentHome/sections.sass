@@ -4,12 +4,7 @@
   // 大块，给它加投影等于给整屏内容加一层要参与合成的阴影。
   position: relative
   box-shadow: inset 0 18px 30px -26px rgba(74, 53, 80, 0.6)
-  // 三层背景：方格纸（横线 + 竖线）+ 分段带的底色渐变。
-  // ⚠️ 渐变色**必须写进 background-image 的第三条**，不能先来一条 `background: var(--band-content)`
-  // 再补 `background-image` —— 后者会把前者整条顶掉（两条声明改的是同一个属性），
-  // 底下的带子就没了。`background-size` 是三层的尺寸表，缺一项会回退成 `auto`。
-  // 也不另写一条 `background-color` 兜底：那等于给同一个带子存第二份色值（夜间档还要
-  // 再对一份），而它真能兜住的场景只有"`index.css` 整份没加载"——那时页面早就散了。
+  // 方格纸和分段底色共用三层 background-image，background-size 按层对应。
   background-image: linear-gradient(rgba(96, 168, 186, 0.09) 1px, transparent 1px), linear-gradient(90deg, rgba(96, 168, 186, 0.09) 1px, transparent 1px), var(--band-content)
   background-size: 28px 28px, 28px 28px, 100% 100%
   background-repeat: repeat, repeat, no-repeat

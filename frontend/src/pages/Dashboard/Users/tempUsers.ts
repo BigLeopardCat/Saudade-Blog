@@ -24,8 +24,7 @@ export interface TempUser {
 
 /** 账号列表（null = 还没成功读到过）。**同一个引用**只在拉到新数据时被替换。 */
 let list: TempUser[] | null = null
-/** 上一次拉取是不是失败了。**必须与"读到的是空的"分开**：读不到却显示"暂无账号"
- *  是同一族谎（本仓纪律：读不到 ≠ 空）。 */
+/** 区分读取失败与成功的空列表。 */
 let failed = false
 /** 去重：同一时刻只发一次 GET（页签挂载时的刷新与 `useLiveRefresh` 的轮询可能同时要） */
 let inflight: Promise<void> | null = null
@@ -89,9 +88,7 @@ export function refreshTempUsers(): Promise<void> {
         .then((res) => {
             // 期间有过本地写入（或更新的请求）⇒ 这份读数是旧快照，丢掉
             if (mine !== seq) return
-            // **每次成功读数都换一个新数组实例**（不是 `res.data` 原样存）。不拷贝的话，
-            // 读接口只要把同一个数组交回来，新快照与旧快照 `Object.is` 相等 ⇒ 订阅者的
-            // setSnap 被 React 判为无变化而**静默不重渲染**（favorites.ts 头注里那条教训同源）。
+            // 成功读取后创建新数组引用，确保 React 订阅者能观察到更新。
             if (Array.isArray(res?.data)) {
                 list = [...(res.data as TempUser[])]
                 failed = false

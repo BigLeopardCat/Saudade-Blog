@@ -15,7 +15,7 @@ interface addNewTagTwo{
     fatherTag: number
 }
 
-/** 标签 id 可能在两级里重号（两张表各自自增），所以"按 id 找名字"以一级优先 —— 与旧行为一致 */
+/** 两级标签 id 各自自增；纯 id 映射以一级优先。 */
 export interface TagOption {
     value: number;
     /** **显示用的名字 = 标签自己的名字**，两级一视同仁（见 `flattenTagOptions` 头注） */
@@ -81,12 +81,7 @@ async function addTagTwo(newTag: addNewTagTwo){
         data: newTag
     })
 }
-/**
- * 建立标签嵌套树：**按父 id（fatherKey）挂载**。
- *
- * 兜底：`fatherKey` 缺失时（新前端撞上旧后端的那一小段窗口）退回按名字匹配，
- * 免得标签树整片空掉 —— 但这是降级路径，不是主路径。
- */
+/** 按 fatherKey 建立标签树；父 id 缺失时回退为父名匹配。 */
 function buildTagTree(tagOneData: TagLevelOne[],tagTwoData: TagLevelTwo[]){
     return tagOneData.map(item => {
         item.children = tagTwoData.filter(child =>
@@ -103,11 +98,7 @@ async function initTree(){
     const tagTwoData: TagLevelTwo[] = await getTagTwo();
     return buildTagTree(tagOneData,tagTwoData)
 }
-/**
- * 删除标签。**必须带 level**：后端旧接口只收一个 id 数组、然后同时去两张表删，
- * 而两级 id 是各自自增的（删一级 #13 会连带删掉二级 #13）。现在按层级分流，
- * 只删指定表；删完后端会顺手把 `note.tags` 里指向这些 id 的引用摘掉。
- */
+/** 按指定层级删除标签及其引用，避免同 id 的跨级误删。 */
 function delTag(level: 'one' | 'two', ids: React.Key[]) {
     return http({
         url: '/api/protected/tag',

@@ -55,12 +55,7 @@ pub(super) struct Period {
     pub(super) end: chrono::NaiveDate,
 }
 
-/// 往回数第 `back` 期的边界。
-///
-/// 期界一律在 Rust 里算（ISO 周、自然月、自然年），**不用 SQL 的日期函数**：
-/// 那是方言相关的表达式（`YEARWEEK` / `DATE_FORMAT`），而本仓的 api_tests 走
-/// MockDatabase——写错了本机全绿、一部署就现形（`SUM` 那个 DECIMAL 的坑同族）。
-/// 取回原始日期列在本地分桶，与本模块其余部分保持同一种做法。
+/// 在 Rust 中计算 ISO 周、自然月和自然年的起止边界。
 pub(super) fn period_at(g: Granularity, today: chrono::NaiveDate, back: usize) -> Period {
     use chrono::Datelike;
     let back = back as i64;
@@ -191,9 +186,7 @@ pub async fn note_period_report(
         periods,
     };
 
-    // 统计的起点 = `note_view` 最早那一行。**这是"这几期到底统没统计过"的唯一判据**：
-    // 期界落在它之前的那些期，数字恒为 0，但那个 0 的意思是"功能还没上线"，
-    // 不是"那几天没人看"。所以整期剔除、跨界的标 partial。
+    // 早于首条观测记录的完整周期不展示；跨起始日期的周期标记为 partial。
     let since: Option<chrono::NaiveDate> = match note_view::Entity::find()
         .select_only()
         .column_as(Expr::col(note_view::Column::ViewDate).min(), "d")
@@ -220,9 +213,7 @@ pub async fn note_period_report(
         )));
     }
 
-    // 一篇文章在某一期里的四个数：`(期 key, note_id) → [views, likes, favorites, comments]`
-    // ⚠️ 下标是**位置**约定的（0 阅读 / 1 点赞 / 2 收藏 / 3 讨论），下面累加处的
-    // `[0]` / `[1usize]` / `[2usize]` / `[3usize]` 与 `or_insert([0; 4])` 必须一起看。
+    // 每篇文章每期的指标顺序：阅读、点赞、收藏、评论。
     type Acc = HashMap<(String, i32), [i64; 4]>;
     let mut acc: Acc = HashMap::new();
     // 期 key 的归属：日期 → 期。kept 是倒序的，构建顺序无所谓（期界互不重叠）

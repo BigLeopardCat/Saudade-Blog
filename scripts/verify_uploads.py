@@ -23,7 +23,6 @@ LOCAL_PREFIX = "/api/protect/download/"
 # 和 HTML 的 `src="url"` 都靠这个收口）。url 本身不会有这些字符。
 _URL_RE = re.compile(r"/api/protect/download/[^\s\"'()<>\[\]，。；、）】》]+")
 
-
 def load_env(root=ROOT):
     """读仓库根的 `.env`（只做 `KEY=VALUE`，不执行任何东西）。
     环境变量优先——CI 或 `export $(…)` 之后跑时，不必再依赖文件在不在。"""
@@ -40,7 +39,6 @@ def load_env(root=ROOT):
         if os.environ.get(k):
             env[k] = os.environ[k]
     return env
-
 
 def parse_pg_url(url):
     """解析 PostgreSQL URL 并解码账号口令，返回连接字段。"""
@@ -65,7 +63,6 @@ def parse_pg_url(url):
     host = host or "127.0.0.1"
     return user, password, host, port or "5432", db
 
-
 def url_to_relpath(url):
     """本地图 URL → UPLOAD_DIR 下的相对路径（已做百分号解码与穿越拦截）。
     不是本地图、或解出来会跑出 UPLOAD_DIR 的，返回 None。"""
@@ -77,13 +74,11 @@ def url_to_relpath(url):
         return None
     return rel
 
-
 def extract_local_urls(text):
     """从正文里抽出全部本地图 URL（去重前，保持顺序）。"""
     if not text:
         return []
     return _URL_RE.findall(text)
-
 
 def _self_test():
     """纯函数自检 —— URL 解析是这里最容易悄悄错掉的一段（错了就是"永远 0 缺图"
@@ -121,7 +116,6 @@ def _self_test():
     print("自检 " + ("全部通过" if not fails else f"失败 {len(fails)} 项"))
     return 1 if fails else 0
 
-
 def pg_rows(conn, sql):
     """执行查询并返回按 tab 分隔的行；口令经环境变量传递，不进入命令行。"""
     user, password, host, port, db = conn
@@ -143,7 +137,6 @@ def pg_rows(conn, sql):
     if out.returncode != 0:
         raise RuntimeError((out.stderr or "").strip()[:400] or "psql 退出码非 0")
     return [r for r in csv.reader(io.StringIO(out.stdout)) if r]
-
 
 def collect(conn):
     """把"库里引用了哪些本地图"汇总成 url → 引用者列表。"""
@@ -169,18 +162,12 @@ def collect(conn):
         for u in extract_local_urls(row[2] if len(row) > 2 else ""):
             add(u, who)
 
-    # 用户头像住在 `user.avatar`（**不进 images 表**）。漏了这一句，盘上那几张头像
-    # 就会全部落进"库里没有记录"那一桶——而它们恰恰也是迁移时必须跟着走的东西。
-    # ⚠️ `user` 在 PostgreSQL 里是**保留字**（裸写等于 `current_user`），必须加双引号：
-    # `FROM user` 在 PG 上报 `column "id" does not exist`（它把 `user` 读成了一个表达式
-    # 而不是表名，于是 `id` 找不到）——报错信息完全指不到真正的原因。MySQL 侧允许裸写，
-    # 所以这是迁移时**只会在这里踩到**的一处。
+    # 头像记录来自 user.avatar，不在图库表中；PostgreSQL 的 user 表名需加双引号。
     for row in pg_rows(conn,
                           "SELECT id, COALESCE(avatar, '') FROM \"user\" "
                           f"WHERE avatar LIKE '%{LOCAL_PREFIX}%'"):
         add(row[1].strip(), f"用户 {row[0]} 的头像")
     return refs
-
 
 def main():
     ap = argparse.ArgumentParser(description="核对库里引用的本地图与盘上文件")
@@ -283,7 +270,6 @@ def main():
         print("\n提示：迁移/恢复之后跑一次，『正在被引用』那一节为零即说明这次搬家完整。")
 
     return 1 if missing_in_use else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

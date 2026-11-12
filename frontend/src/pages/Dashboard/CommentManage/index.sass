@@ -189,14 +189,7 @@
     display: flex
     justify-content: flex-end
 
-// 驳回弹窗
-// antd 弹窗 portal 到 body 下，**不在 .CommentManage 里**，所以必须是顶层块
-// （写进上面那个嵌套里就永远匹配不上，样式静默失效——同 `.bm-reject-modal` 那条）。
-//
-// 这里**刻意用字面色、不用 `var(--washi-*)`**：portal 挂在 body 上，够不着壳上的
-// `.dark`，令牌会一路落回 `:root` 的浅色档 ⇒ 夜间拿到浅色值（深底上一片糊）。
-// 弹窗底色由壳上的 ConfigProvider(darkAlgorithm) 负责，这几行只管文字色。
-// 取值与 `.bm-reject-modal` / `.qm-reject-modal` 同一族（三处各自成块是既有状态）。
+// Portal 弹窗挂在 body 下，使用顶层选择器；背景由 ConfigProvider 提供，文字色在此指定。
 .cm-reject-modal
   .cm-reject-tip
     margin: 0 0 10px

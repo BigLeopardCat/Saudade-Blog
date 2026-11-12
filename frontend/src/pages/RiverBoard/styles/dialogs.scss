@@ -313,7 +313,6 @@
         white-space: nowrap;
       }
 
-
       .rz-album-reason {
         grid-column: 1 / -1;
         padding: 3px 8px;
@@ -348,7 +347,7 @@
       max-width: min(94vw, 800px);
 
       .rz-wish-step {
-        /* 第 28 轮（585919b 基础上）：子容器距窗口边缘留出适当距离（原 6/4/2px 几乎贴边） */
+        /* 内容与弹窗边缘保持留白。 */
         padding: 22px 24px 18px;
       }
 
@@ -373,15 +372,15 @@
       .rz-lamp-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 14px; /* 第 28 轮：卡间 12→14 */
+        gap: 14px;
         margin-top: 18px;
 
         .rz-lamp-card {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 8px; /* 第 28 轮：图与文字间距 4→8，卡内透气 */
-          padding: 18px 14px 16px; /* 第 28 轮：横向 6→14，内容不再贴卡边 */
+          gap: 8px;
+          padding: 18px 14px 16px;
           background: rgba(10, 9, 22, 0.5);
           border: 1px solid rgba(255, 205, 140, 0.16);
           border-radius: 12px;
@@ -391,7 +390,7 @@
           transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 
           img {
-            width: 92px; /* 第 28 轮：84→92，与加大后的卡片比例更协调 */
+            width: 92px;
             height: 92px;
             filter: brightness(1.08) drop-shadow(0 4px 14px rgba(255, 180, 100, 0.25));
             pointer-events: none;

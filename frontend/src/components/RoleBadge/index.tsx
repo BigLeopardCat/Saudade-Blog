@@ -67,16 +67,7 @@ function spaced(s: string): string {
     return /^[一-鿿]+$/.test(s) ? [...s].join(' ') : s
 }
 
-/**
- * 文本宽度估算（px）。SVG 里没有自动撑开盒子的能力，`viewBox` 的宽度得自己算。
- *
- * 为什么要**分类估算**而不是 `字数 × 一个字宽`：标签里混着三种字宽——全角汉字
- * （1em）、半角空格（0.34em）、emoji（约 1.15em，且两端还各带一点边距）。
- * 按同宽算会让「🍃 普 通 用 户」这类窄标签留出大片空白，或让带两个 emoji 的
- * 杂鱼徽章把字挤到边线上。数值是按 Chromium 的实际渲染量出来的——**改这里的系数
- * 就要重新出一张四档对照图核对**（esbuild 就地打包本组件 + playwright 截图，
- * 四档各一枚并排；本机无中文字体时汉字会是豆腐块，只看几何与配色即可）。
- */
+/** 按全角、半角空格与 emoji 的字宽估算 SVG viewBox；调整系数时核对各角色徽章。 */
 function textWidth(s: string, fontSize: number): number {
     let w = 0
     for (const ch of s) {

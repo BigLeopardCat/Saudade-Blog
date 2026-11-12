@@ -16,29 +16,22 @@ use crate::entity::{quota_request, user};
 use crate::routes::AppState;
 use crate::utils::{ApiResponse, ApiResponsePage};
 
-// C6 通知文案（跨语言契约，见模块头注）
+// 额度处理结果的系统通知标题。
 
 pub const NOTICE_APPROVED_TITLE: &str = "额度重置申请已通过";
 pub const NOTICE_REJECTED_TITLE: &str = "额度重置申请未通过";
 pub const NOTICE_RESET_TITLE: &str = "对话额度已重置";
 
-/// 驳回时**没有理由**的回落句。这是系统写的字（写在这里一处），不是模型措辞——
-/// 与 `notice::DEFAULT_TITLE` 同一形态。回落链只有两级（人工 > 无），比留言驳回
-/// 那条三级链短一级：那里的第三级是 AI 说明，这里没有 AI 参与。
+/// 管理员未填写驳回理由时的通知文案。
 pub const NO_REASON_FALLBACK: &str = "管理员没有填写理由";
 
-/// 申请理由的产品上限（字符）。`quota_request.reason` 是 text 列，500 是**产品上限
-/// 而不是列宽**——超限**拒绝、不截断**（同头注 ②）。agent 侧 `_QUOTA_REASON_LIMIT`
-/// 是同一个数（跨语言契约，改一侧要同步）。
+/// 申请理由的字符上限；超限拒绝，不截断，Agent 输入限制须一致。
 pub const REASON_MAX: usize = 500;
 
-/// 驳回理由的上限 = 迁移里 `quota_request.note` 的**列宽**（varchar(255)），
-/// 且它会被原样拼进发给申请人的通知正文。**必须与列宽对齐**：写超了要么报错、
-/// 要么截断，而截断意味着申请人收到的理由与主人核对的那一句不同。
-/// agent 侧 `_QUOTA_NOTE_LIMIT` 是同一个数。
+/// 驳回理由的字符上限，与数据库列宽和 Agent 输入限制一致。
 pub const NOTE_MAX: usize = 255;
 
-/// 申请行状态（三值，见 `entity/quota_request.rs` 头注 ①）——**只有 `0 → 1` 清零**。
+/// 申请状态：待处理、批准、驳回；只有批准申请会重置额度。
 pub const STATUS_PENDING: i16 = 0;
 pub const STATUS_APPROVED: i16 = 1;
 pub const STATUS_REJECTED: i16 = 2;
@@ -58,15 +51,7 @@ pub(crate) fn limit_of(role: &str) -> i32 {
 
 // 用户侧两条
 
-/// GET /api/protected/quota：我的额度现状（个人中心「对话额度」页签）。
-///
-/// 响应体的四个数与 `/chat` body 里的 `chat_quota` **同源同形**（都出自
-/// `crate::quota::forward_json`，这里是唯一第二个消费者，用来给它补一个
-/// `pendingRequest`）——这样前端不必为两个界面各写一份取数逻辑。
-///
-/// `pendingRequest` = 我最新一份**待处理**申请，`null` = 没有。
-/// **读申请失败时整个接口报错**（而不是回 `null`）：半份答案会把"读不到"渲染成
-/// "你没申请过"，而这两件事的下一步动作正好相反（一个去提交，一个去等）。
+/// 读取额度及最新待处理申请；申请读取失败时整个接口失败，不以 null 代替未知。
 pub async fn get_my_quota(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -124,14 +109,8 @@ pub struct ApplyQuotaReq {
     pub reason: Option<String>,
 }
 
-/// POST /api/protected/quota/apply：提交一份额度重置申请。
-///
-/// **"一人同时一份申请"在这里保证**（迁移头注 ③：MySQL 写不出部分唯一索引，
-/// 而 `UNIQUE(user_id,status)` 是错的约束）。代价如实记：同一用户两个并发提交可能
-/// 产生两行 pending——管理员驳回多余的那一条即可（`review` 按行认领、幂等）。
-///
-/// **不给任何人发通知**：用户刚做完这件事，他自己知道；管理员的"通知"就是后台日程
-/// 面板那一行与红点（与待审评论同构，靠读队列而不是靠推送）。
+/// 提交额度重置申请，预检当前待处理记录；管理员通过工作队列查看申请。
+/// 预检与插入不在同一事务，不能保证并发提交唯一。
 pub async fn apply_quota_reset(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -143,11 +122,10 @@ pub async fn apply_quota_reset(
     };
     let reason = payload.reason.unwrap_or_default().trim().to_string();
     if reason.chars().count() > REASON_MAX {
-        // 超限**拒绝**、不截断（模块头注 ②）
+        // 理由超限时拒绝，不截断。
         return Json(ApiResponse::error(&format!("申请理由太长了（最多 {REASON_MAX} 字）")));
     }
-    // 提交前的 pending 预检。它与插入之间有一个窗口，那是接受的代价（迁移头注 ③）；
-    // 预检的价值是让绝大多数重复提交当场得到一句人话，而不是攒出一堆待审行。
+    // 预检用于拒绝已存在的申请，不作为并发唯一性保证。
     match quota_request::Entity::find()
         .filter(quota_request::Column::UserId.eq(uid))
         .filter(quota_request::Column::Status.eq(STATUS_PENDING))
@@ -374,14 +352,7 @@ pub async fn review_quota_request(
     }
 }
 
-/// 发一条额度相关通知（best-effort，见模块头注 ③）。
-///
-/// 用 `push_notice_checked` 而不是 `push_notice`：后者对 title 按字符截 128——
-/// 我们的三句标题是常量、远短于列宽，**截断永远不会发生**，但用不截断的那个版本
-/// 才不会在某天有人把标题写长之后，出现"主人核对的是这一句、库里存的是另一句"。
-/// 失败只记日志、**绝不冒泡给调用方**：清零已经落库（那是事实），通知只是告知通道。
-///
-/// 三句文案的 `link` 一律 None——个人中心是弹窗，**不编一个跳过去 404 的地址**。
+/// 尽力发送额度通知；失败记日志，不回滚已提交的额度变更。
 pub(super) async fn notify(db: &sea_orm::DatabaseConnection, uid: i32, title: &str, content: String) {
     if let Err(e) =
         crate::routes::notice::push_notice_checked(db, uid, title, Some(content), None).await
@@ -390,15 +361,7 @@ pub(super) async fn notify(db: &sea_orm::DatabaseConnection, uid: i32, title: &s
     }
 }
 
-/// 管理员**主动**重置某个账号的额度（`POST /api/temp-users/:id/quota-reset`）。
-///
-/// 挂在账号族下（与 `/status`、`/role`、`/notice` 同族）而不是新开一条
-/// `/api/protected/quota/reset`：它复用 `authz::is_listable_role`
-/// （**超管结构上够不着**，与 `send_user_notice` 同一条论证——超管的额度本来就是
-/// 不限的，对它的"重置"没有任何含义），且账号管理页那一行本来就住在这个族里。
-///
-/// 与 `review_quota_request` 的差别**只有一处**：这里**不需要对方申请过**
-/// （所以不产生 `quota_request` 行，也就没有认领那一步）。
+/// 管理员直接重置账号额度，无需申请记录；目标须满足账号管理权限。
 pub async fn reset_user_quota(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<i32>,

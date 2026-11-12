@@ -19,12 +19,10 @@ RUST = os.environ.get("RUST_BASE", "http://127.0.0.1:3000")
 
 FAILS = []
 
-
 def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
-
 
 def env(name):
     txt = (ROOT / ".env").read_text(encoding="utf-8")
@@ -33,14 +31,11 @@ def env(name):
         sys.exit(f".env 里没有 {name}")
     return m.group(1).strip().strip('"').strip("'")
 
-
 SECRET = env("JWT_SECRET")
-
 
 def b64(b: bytes) -> str:
     import base64
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-
 
 def sign(sub: int, ver=None, ttl: int = 300) -> str:
     """签一枚登录令牌。`ver=None` 时**不带代次声明**——那是 agent 代调令牌与部署前
@@ -52,7 +47,6 @@ def sign(sub: int, ver=None, ttl: int = 300) -> str:
     body = b64(json.dumps(payload).encode())
     sig = b64(hmac.new(SECRET.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest())
     return f"{head}.{body}.{sig}"
-
 
 def token_of(r):
     """从响应里取令牌。**两种形状都认**：登录返回的是裸字符串
@@ -67,7 +61,6 @@ def token_of(r):
     if isinstance(d, dict):
         return d.get("token") or None
     return None
-
 
 def call(method, path, token=None, body=None):
     """返回 (http_status, json_or_text)。绝不打印 token。"""
@@ -87,7 +80,6 @@ def call(method, path, token=None, body=None):
         return status, json.loads(raw)
     except Exception:
         return status, raw
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -200,10 +192,7 @@ def main():
               f"http={st} code={r.get('code')}")
 
         if args.no_self_probe:
-            # 【六】【七】是**负向**断言：真去冻结/删管理员自己的 uid，期望后端拒绝。
-            # 无人值守的夜间跑法（cron）用 --no-self-probe 摘掉它们——那两节每晚都会
-            # 对着一个真实存在的账号发写请求，通过与否取决于"后端有没有把闸守住"，
-            # 而这件事不该靠每晚真发一次来维持。手动跑（有人看着）时仍然要跑这两节。
+            # --no-self-probe 禁用针对真实管理员的冻结和删除拒绝探针，供无人值守运行使用。
             print(f"\n【六】【七】--no-self-probe：跳过对 uid={admin_uid} 的冻结/删除尝试"
                   "（负向断言，夜间不做真请求；手动跑请不带此开关）")
         else:
@@ -231,7 +220,6 @@ def main():
 
     print("\n" + ("全部通过" if not FAILS else f"失败 {len(FAILS)} 项：" + "; ".join(FAILS)))
     return 1 if FAILS else 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

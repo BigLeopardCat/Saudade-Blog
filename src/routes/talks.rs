@@ -64,9 +64,7 @@ async fn list_by_src(
         .await
     {
         Ok(v) => v,
-        // 不再 unwrap_or(vec![])：那会把「数据库出错」伪装成「留言板没有留言」（200 + 空数组），
-        // 排障时只看到一条 200，症状却是"灯全没了"。返回 code=500 但 data 仍是空数组
-        //（ApiResponse::error 的 data 是 T::default），前端的 Array.isArray 分支照常走演示灯
+        // 数据库失败返回错误，不能伪装为没有留言。
         Err(e) => {
             tracing::error!("[board] list_by_src(src={}) 查询失败: {}", src, e);
             return Json(ApiResponse::error("查询失败，请稍后再试"));
@@ -323,10 +321,7 @@ fn review_http() -> &'static reqwest::Client {
     })
 }
 
-/// 归一一段驳回理由：去空白 → 截 200 字（DB 列宽）→ 空串归 None。
-///
-/// 按**字符**截而不是字节：列是 varchar(200)（MySQL 计字符），中文理由按字节切会
-/// 在半个汉字上截断、落库报错。
+/// 去除理由首尾空白并按字符截至 200，空串归 None。
 pub(crate) fn clip_reject_reason(raw: &str) -> Option<String> {
     let t = raw.trim();
     if t.is_empty() {

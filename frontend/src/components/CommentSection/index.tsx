@@ -23,7 +23,7 @@ import './index.sass'
  *  且对 emoji 只会**更严**（一个 emoji 算 2）——永远不会放行一条服务端要拒的。 */
 const MAX_COMMENT_CHARS = 300
 
-/** 一条评论的正文。**整个文件里唯一一处 `dangerouslySetInnerHTML`**（见文件头注 ①）。 */
+/** 仅将 renderBlogMarkdown 清洗后的 HTML 写入评论正文。 */
 const CommentBody = ({ content }: { content: string }) => {
     const html = useMemo(() => renderBlogMarkdown(content), [content])
     return (
@@ -34,12 +34,7 @@ const CommentBody = ({ content }: { content: string }) => {
     )
 }
 
-/** 乐观推进一条评论的票：给定"现在这三个数"与"这次要投成什么"，算出点完之后的三个数。
- *
- *  **纯函数**（不碰 state），因为这里的顺序最容易写反：**先撤旧票、再落新票**。
- *  反过来（先落新票再撤旧）在"赞→踩"时会多出一个 down，而且**只在改主意那一种点击上错**
- *  ——随手连点两下赞是看不出来的，等有人截图说"我只踩了一下显示 2"时才开始查。
- *  撤的时候各自减自己那一侧（不可能减成负数：撤的正是自己上次加的那一票）。 */
+/** 先撤旧票，再应用新票，计算乐观票数。 */
 const optimisticVote = (v: CommentVote, next: -1 | 0 | 1): CommentVote => {
     let up = v.up
     let down = v.down
@@ -58,13 +53,11 @@ interface CommentSectionProps {
 const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [items, setItems] = useState<CommentItem[] | null>(null)
     const [failed, setFailed] = useState(false)
-    /** 顶层排序（文件头注 ⑥）。**不记忆**：每次进页面都是「最热」，这里没有 localStorage
-     *  也**不要加**——理由（"没有可见提示的持久态"）写在头注里。 */
+    /** 每次进入页面默认按热度排序，不跨页面持久化。 */
     const [sort, setSort] = useState<CommentSort>('hot')
     const [content, setContent] = useState('')
     const [busy, setBusy] = useState(false)
-    /** 行内回复框：**开在哪一行**（评论 id；null = 没开）。同时最多一个。
-     *  与 `content` 分开存，是为了收起再展开时**顶层草稿不被冲掉**（见文件头注 ④）。 */
+    /** 行内回复与顶层草稿分开保存，同一时刻只展开一个回复框。 */
     const [openFor, setOpenFor] = useState<number | null>(null)
     const [replyContent, setReplyContent] = useState('')
     const [replyBusy, setReplyBusy] = useState(false)
@@ -119,20 +112,8 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         return { tops: rootList, repliesByRoot: byRoot }
     }, [items])
 
-    /* 深链定位（`?cid=`）：评论列表到位后滚到那一条并加高亮类。
-     *
-     * · **必须等 `items` 到位**——那一行是渲染出来的，DOM 里还没有就 `getElementById` 不到。
-     *   指向的评论**必然已公开**（通知只在评论已放行时发，见后端 `notify_comment_reply`），
-     *   所以"列表里没有它"只可能是它已经被删/被驳回，此时**安静兜底**：页面本身已经打开在
-     *   这篇文章上，再弹一句"没找到这条评论"只会添乱（同 RiverBoard「定不到就安静兜底回页面」）。
-     * · **瞬时滚动 + double-rAF 重放**，不用 `behavior: 'smooth'`：本页挂载时会
-     *   `scrollToTop()`，而那是**平滑**滚动（`utils/scrollToTop.tsx`）——评论列表回来时它
-     *   可能还在动画里，随后的平滑定位会被顶掉或与之互相拉扯，症状就是"点通知进来停在
-     *   页面顶部"。瞬时滚动会取消在途的平滑动画，double-rAF 再补一次压过同帧的其它滚动
-     *   （同族取证见聊天记录命中定位那一轮）。
-     * · **不写 cleanup**：摘掉高亮由那个 1.8s 定时器负责，而 `items` 每次后台刷新都会让本
-     *   effect 重跑一次——若把"摘类"放进 cleanup，一次静默刷新就会把还没闪完的高亮掐掉。
-     */
+    /* 列表就绪后定位 ?cid= 并高亮；瞬时滚动和 double-rAF 避免与页面初始滚动冲突。
+ * 高亮由定时器结束，后台刷新不提前移除；目标不可见时保留文章页面。 */
     useEffect(() => {
         if (!cid || !items || locatedRef.current === cid) return
         const el = document.getElementById(`c-${cid}`)
@@ -147,12 +128,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         window.setTimeout(() => el.classList.remove('comment-hit'), 1800)
     }, [cid, items])
 
-    /** 滚到某条评论并闪一下（复用深链那套 `#c-<id>` + `.comment-hit`）。
-     *
-     *  **double-rAF**：调用点在 `await load()` 之后，那时 `setItems` 已经排队但 DOM 还没
-     *  重排，单帧里 `getElementById` 可能还是空的。与上面 `?cid=` 那条同一个理由、同一套写法。
-     *  **找不到就安静跳过**：待审/被驳回的评论在公开列表里**不存在**（这是常态，不是异常），
-     *  为它弹一句"没找到"只会让人以为出了错——所以调用方**不必**先判 `approved`。 */
+    /** 等待 DOM 更新后定位评论；未公开或不可见的目标不滚动。 */
     const flashComment = (id: number) => {
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -215,7 +191,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         }
         setBusy(true)
         try {
-            // 顶层框只发顶层评论——回复一律走行内那个框（见文件头注 ④）
+            // 顶层评论和行内回复使用独立输入。
             if (await postComment(text, null)) setContent('')
         } catch (e) {
             console.error('发表评论失败', e)
@@ -294,9 +270,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const vote = async (c: CommentItem, dir: 1 | -1) => {
         if (votingIds.has(c.id)) return
         const next: -1 | 0 | 1 = c.myVote === dir ? 0 : dir
-        // 回滚用的快照。**取的是这次渲染看到的那一份**：若后台恰好在这几十毫秒里
-        // 刷新了列表，回滚会写回一个略旧的数——这比"失败后什么都不回滚、留着一个
-        // 假的乐观值"好得多，下一次 `useLiveRefresh` 也会把它拉回真值。
+        // 保留渲染时快照用于失败回滚，后续刷新再核对服务端状态。
         const before: CommentVote = { up: c.up, down: c.down, myVote: c.myVote }
         setVotingIds((s) => new Set(s).add(c.id))
         applyVote(c.id, optimisticVote(before, next))

@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    /// 系统生成的对外任务 id（`at_` + 8 位十六进制）。**不用自增 id 做对外标识**：
-    /// 序号可枚举，而模型会把它当全局唯一键去引用（同族教训见 id 不带来源那条）。
+    /// 系统生成的对外任务标识，与数据库自增主键分开。
     pub task_id: String,
     /// 所属会话（读取/级联删按会话隔离）
     pub conversation_id: i32,
@@ -15,9 +14,7 @@ pub struct Model {
     pub user_id: i32,
     /// 目标的人读表述（取自主人原话，写时定稿；读时零重写）
     pub goal: String,
-    /// 剩余步骤（JSON 数组，每步 `{label,tool}`，形状由 agent 定义）。**Rust 只透传不解析**——
-    /// 渲染成提示词文本在 Python 侧（与 `execution_log.digest` 同一条纪律：
-    /// 跨语言契约只在一侧解释语义，另一侧原样搬运）
+    /// 步骤 JSON 由 Agent 定义；Rust 保留原值。
     #[sea_orm(column_type = "Text", nullable)]
     pub steps: Option<String>,
     /// 登记时的总步数（进度展示用，登记后不再变）
@@ -28,9 +25,7 @@ pub struct Model {
     pub state: String,
     /// `input_required` 时要问主人的那一句（下一轮**原样回放**，不由模型重编）
     pub pending_question: String,
-    /// 幂等键（agent 计算：**会话 + 归一化目标**，步骤刻意不进键——撤下走的是同一个目标，
-    /// 进键就会算出另一个键、长出第二行而旧行永远挂着）。NULL 可重复、空串只能一行，
-    /// 故列可空且不给默认值 —— 服务端唯一键是最后一道保险，agent 侧才是主判据
+    /// 可空幂等键；非空值由数据库唯一约束防重。
     pub idempotency_key: Option<String>,
     /// 推进次数（同一轮反复推进同一行时可见）
     pub attempts: i32,

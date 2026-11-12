@@ -321,9 +321,7 @@ fn exec_row_userdata_reads_and_writes() {
     let m_read = json!({"tool": "read_messages", "args": {"all": "True"},
                             "change": "本来就没有未读的"});
     assert_eq!(render_exec_row(&m_read), "站内信本来就没有未读的（未改动）");
-    // 镜像的另一半：`change` 缺席或空串（旧回执、真写路径）⇒ 照旧从 args 渲染
-    // 动作词——那一行的写**真的发生了**，动作词是对的。两条分支互为镜像，谁被
-    // 写反了（比如把判据写成 `contains`）都能从这一对断言看出来。
+    // 缺少 change 时仍从实际写入回执的参数渲染动作。
     for blank in [
         json!({"tool": "add_favorite", "args": {"article_id": "12"},
                              "change": ""}),
@@ -356,9 +354,7 @@ fn token_jti_reads_payload_without_verifying() {
     assert_eq!(token_jti("!!**.sig"), "");
     assert_eq!(token_jti("bm90LWpzb24.sig"), ""); // "not-json"
     assert_eq!(token_jti("eyJ2IjoxfQ.sig"), ""); // {"v":1} 旧令牌没有 jti
-                                                 // 不验签是**故意**的（认领是自伤型的，真凭据在 agent 侧）：签名段随便换一个
-                                                 // 都照样解得出 jti——这条断言把"这是解码不是验证"写死，免得将来有人误以为
-                                                 // 这里已经有了一层校验
+    // jti 解码不证明签名有效；签名授权由 Agent 校验。
     let tampered = format!("{}.AAAA", SYNTHETIC.split('.').next().unwrap());
     assert_eq!(token_jti(&tampered), "00000000000000000000000000000001");
 }
@@ -466,8 +462,7 @@ async fn early_exit_keeps_status_code_exceptions_as_json() {
     }
 }
 
-/// 载荷形态守卫：每一帧都以 `data: ` 开头、以空行分隔——**这正是前端切帧的判据**
-/// （`buf.indexOf('\n\n')`）。JSON body 一个 `\n\n` 都没有，所以旧形态必然零帧。
+/// SSE 帧以 data: 开始，以空行分隔。
 #[tokio::test]
 async fn early_exit_body_is_splittable_into_sse_frames() {
     let body = body_of(early(StatusCode::OK, "半句话", true, None)).await;

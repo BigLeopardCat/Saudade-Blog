@@ -50,11 +50,7 @@ pub struct TempUserInfo {
     #[serde(rename = "chatQuotaLimit")]
     pub chat_quota_limit: i32,
     pub muted: bool,
-    /// 禁言到期时刻（原始库值，`%Y-%m-%d %H:%M:%S`）。
-    /// **`null` = 从未禁言，`9999-12-31 23:59:59` = 永久**（`authz::MUTE_FOREVER`）
-    /// ——两者不能合并：合并之后后台与 agent 都分不出"永久"与"从没禁过"。
-    /// 显示成"永久/到几号"是**消费方的事**（前端账号页、agent 的渲染层各有一处），
-    /// 这里只回原始值，不替它们做翻译。
+    /// 禁言截止时间使用数据库钟面格式；null 表示无禁言，9999-12-31 23:59:59 表示永久。
     #[serde(rename = "mutedUntil")]
     pub muted_until: Option<String>,
 }
@@ -153,11 +149,7 @@ async fn legacy_account_action(
     }
 }
 
-/// 冻结/解冻被拒的中文话术。**按方向分叉**（"不能解冻自己的账号"与"不能冻结自己
-/// 的账号"是两句不同的事），四个变体各一句、不共用兜底句。
-///
-/// ⚠️ 这四句是**跨语言契约**：agent 的冻结/解冻技能要求模型**逐字转述**这里给的原话
-/// （见 `docs/security-boundary.md` §7⑫），所以措辞不是随手可改的文案。
+/// 按冻结或解冻方向返回确定的权限拒绝说明。
 pub(super) fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> String {
     use crate::authz::FreezeDenial as D;
     let verb = if frozen { "冻结" } else { "解冻" };
@@ -193,8 +185,7 @@ pub(super) fn mute_change_body(muted: bool, action: &str, when: &str) -> String 
 
 #[derive(Deserialize)]
 pub struct SetMuteReq {
-    /// true = 禁言，false = 解禁。**与 `frozen` 同一条纪律**：不做"切换"语义，
-    /// 前端把按钮的当前含义直接写进来（重试/双击/多标签页下"切换"会自己跟自己打架）。
+    /// true 设置禁言，false 解除禁言；显式目标状态支持幂等重试。
     pub muted: bool,
     /// 禁言时长（小时）。**`null` 或 `<= 0` ⇒ 永久**（`authz::MUTE_FOREVER`）；
     /// 解禁方向忽略它。做成 `Option` 而不是"0 表示永久"：后台的时长选项里
@@ -315,10 +306,7 @@ pub(super) fn role_change_denial_message(denial: crate::authz::RoleChangeDenial)
 mod tests {
     use crate::authz::{FreezeDenial, RoleChangeDenial};
 
-    /// 拒绝话术是**跨语言契约**（agent 的冻结/解冻技能要求模型逐字转述后端原话，
-    /// 见 `docs/security-boundary.md` §7⑫）：所以这里逐句锁死字面量。
-    /// 改这些句子之前先读那段文档——它在 agent 侧还有一份引用。
-    /// 这里锁的是**话术**；"什么情况该拒"由 `authz.rs` 的策略表锁着，两件事分开测。
+    /// 核对冻结和解冻的拒绝文案；权限组合由 authz 测试覆盖。
     #[test]
     fn 冻结话术按方向分叉且逐句锁死() {
         use FreezeDenial as D;
@@ -394,8 +382,7 @@ mod tests {
         }
     }
 
-    /// 到期时刻的人话：**永久那一支直说永久，不念 `9999` 哨兵值**。
-    /// 与 `authz::mute_denial_message` 是同一条纪律（那儿有一个同形的断言）。
+    /// 永久禁言展示为“永久”，不暴露哨兵日期。
     #[test]
     fn 禁言到期时刻永久直说永久() {
         let until = chrono::NaiveDateTime::parse_from_str(
@@ -493,9 +480,7 @@ mod tests {
         );
     }
 
-    /// 昵称为空回退账号名——**不许拼出「管理员「」（uid=7）」这种空引号**。
-    /// `nickname` 列允许是空串（新账号默认取账号名，但改过昵称又清空的会留空），
-    /// 这条分支与 `delete_temp_user` 的 `who`、`profile.rs` 的展示口径同源。
+    /// 昵称为空时回退账号名。
     #[test]
     fn 昵称为空时回退账号名() {
         assert_eq!(
@@ -568,8 +553,7 @@ pub async fn delete_temp_user(
     if target.role != crate::authz::ROLE_USER {
         return Json(crate::utils::ApiResponse::error("该账号不是普通用户，不能在这里删除"));
     }
-    // 被删账号的称呼先拼好：`user` 行删掉之后 `target` 还在作用域里，但"删之前
-    // 先把它叫什么记下来"是这类审计行的常规写法，不依赖 move 时机。
+    // 删除前保留目标称呼，用于操作通知。
     let who = if target.nickname.trim().is_empty() {
         target.username.clone()
     } else {

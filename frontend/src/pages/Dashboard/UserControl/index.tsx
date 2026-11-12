@@ -11,9 +11,7 @@ import {useLocation, useNavigate} from "react-router-dom";
 import R2Storage from "./R2Storage";
 import {cjsDefault} from "../../../utils/cjsDefault";
 
-// @mui 的图标包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是组件
-// （这一页就是 `/dashboard/usercontrol` 整页 `Unexpected Application Error! React #130`
-//  的来源）。判据与三种形态见 utils/cjsDefault.ts。**不要改回裸的 default import。**
+// 规范化 MUI 图标的 CommonJS 默认导出。
 const ArrowBackIosIcon = cjsDefault(ArrowBackIosIconDefault)
 
 /** 站点身份、社交链接和图库存储的配置入口。 */
@@ -41,7 +39,6 @@ const UserControl = () => {
     useEffect(() => {
         getSetting()
     }, []);
-
 
     const getSetting = () => {
         http({
@@ -78,7 +75,6 @@ const UserControl = () => {
         const { id, value } = event.target;
         setWebInfo({ ...webInfo, [id]: value });
     };
-
 
     const handleSubmit: React.FormEventHandler<HTMLFormElement> | undefined = (e: { preventDefault: () => void; }) => {
         e.preventDefault();

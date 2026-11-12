@@ -423,17 +423,7 @@ const Users = () => {
                             ) : (
                                 <div className="tu-list">
                                     {filteredUsers.map((u: any) => {
-                                      /** 这一行的冻结按钮该不该亮。两种情况下后端会拒，
-                                       *  这里说到做到（**只决定按钮亮不亮**，真正的闸在
-                                       *  服务端 `authz::check_freeze`）：
-                                       *  · 目标就是我自己（uid 从令牌的 `sub` 里读，不用
-                                       *    再拉一次 /profile）——冻了自己就再也解不开了；
-                                       *  · 我是管理员、对方也是管理员（同级）——但**超管
-                                       *    不受这条限制**（超管冻管理员是放行的），所以
-                                       *    判据必须是"我是 admin"而不是"对方是 admin"。
-                                       *  文案与后端那两句是同一句话（见
-                                       *  `routes/temp_user.rs::freeze_denial_message`）：
-                                       *  同一件事不该在界面上和在接口里说成两句。 */
+                                      /** 按钮禁用仅反映界面策略；服务端仍核对本人操作和管理员层级。 */
                                       const freezeBlocked =
                                           (myUid !== null && u.id === myUid) ? '不能冻结自己的账号'
                                               : (myRole === 'admin' && u.role === 'admin')
@@ -454,13 +444,7 @@ const Users = () => {
                                               {isFrozen(u) ? '解冻' : '冻结'}
                                           </Button>
                                       )
-                                      /** 这一行的禁言按钮该不该亮。条件与冻结**逐字相同**
-                                       *  （后端 `authz::check_mute` 与 `check_freeze` 共用一张
-                                       *  规则表，只有动词不同），所以两个 `Blocked` 只看动作词
-                                       *  是否一致一眼就能核对——**这不是重复，是同一张规则表
-                                       *  在两处的投影**；真出分歧的地方是后端那一处。
-                                       *  ⚠️ 两句文案是跨语言契约，与 `routes/temp_user.rs::
-                                       *  mute_denial_message` 逐字同源，agent 转述的就是它们。 */
+                                      /** 禁言与冻结使用同一账号层级限制，最终授权由服务端核对。 */
                                       const muteBlocked =
                                           (myUid !== null && u.id === myUid) ? '不能禁言自己的账号'
                                               : (myRole === 'admin' && u.role === 'admin')

@@ -66,14 +66,7 @@ img.sticker {
     --band-foot-ink-2: rgba(236, 228, 244, 0.66);
 }
 
-/* 夜间档。⚠️ 浅色档做不到"粉白字"：白字压在浅纸上对比度约 1.2:1，等于看不见，
-   所以浅色走"亮粉→深粉"、粉白只留给夜间（同 dashboard 那两处动漫渐变字的处置）。
-
-   第三个类名 `.washiDark` 是给**挂在 document.body 上的浮层**用的（antd 的 Modal /
-   Drawer / Tooltip 都走 Portal，渲染到 body 下 ⇒ 上面那两个类在它们身上够不着，
-   `var(--washi-*)` 会一路落回 `:root` 的浅色档 —— 白纸上一片白字）。
-   组件用 `useIsDarkMode()`（src/theme.ts）判断深浅，深色时给浮层根节点加这个类。
-   值仍然只有上面那一份，这里只是把它多挂一个类名。 */
+/* 夜间主题也应用于 body 上的 Portal 浮层；组件通过 useIsDarkMode 添加 washiDark。 */
 .frontDark,
 .dark,
 .washiDark {
@@ -99,22 +92,12 @@ img.sticker {
     --washi-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
     --washi-shadow-lg: 0 22px 54px rgba(0, 0, 0, 0.55);
 
-    /* 分段带夜间档（浅色档那一组的对偶，见上）。夜里三段仍然是三个色相：
-       首屏靛紫近黑、正文带**偏青的**深墨、页脚偏紫的深墨。
-       ⚠️ 正文带的顶端刻意压成**青调**（`#13262a`，G 高于 B）。若用偏蓝的深墨
-       `#161f2a`，它正是首屏拼贴底**下端**的颜色 —— 两段在接缝处只差 3 个色阶，
-       看不出分段（`tests/home-bands.test.py` 的像素判据会判红）。
-       浅色档本来就是这个关系：薄荷（绿调）接在粉紫首屏下面，对偶到夜里也该是青接靛紫。 */
+    /* 夜间首页分段背景：靛紫首屏、青调正文、紫调页脚。 */
     --band-content: linear-gradient(180deg, #13262a 0%, #17202e 46%, #201a31 100%);
     --band-foot: linear-gradient(180deg, #2f2745 0%, #262033 54%, #201a2c 100%);
     --band-foot-ink: #f3e8f6;
     --band-foot-ink-2: rgba(243, 232, 246, 0.68);
 
-    /* 内容页整页底的夜间臂（白天档见上，是 `--washi-theme-bg` 本身）。值 = 首页首屏
-       那张拼贴底的夜档，原样搬来 —— 它一直是这几页该有的"夜色"（`.frontDark
-       .SelfDescription .collageBg` 是同一个值，那边现在引用这一支）。
-       ⚠️ 别合并进 `--washi-theme-bg`：那一支**刻意不给夜间档**，真给它补上会反噬
-       登录页/文章页自己的夜间臂（那个类名也挂在 body 上，`var()` 是继承来的，
-       见上面那条注释）。 */
+    /* 内容页沿用夜间首页的拼贴背景色。 */
     --washi-page-bg: linear-gradient(160deg, #16121f 0%, #1c1730 40%, #141a2a 100%);
 }

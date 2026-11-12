@@ -49,9 +49,7 @@ const BoardManage = () => {
     const [rejectReason, setRejectReason] = useState('');
     const [rejectBusy, setRejectBusy] = useState(false);
 
-    /** 列表取数序号：条件/页码挨得近时会有多个请求在途，**只认最后发出去的那一次**。
-     *  少了这道闸，乱序回包会把上一次筛选的结果盖回来——用户看到的是"筛完又自己变回去了"。
-     *  与 `frontHome/Head` 的 `searchSeq` 是同一条纪律（那边的现场注释更详细）。 */
+    /** 用请求序号丢弃迟到响应，防止旧筛选结果覆盖新结果。 */
     const listSeq = useRef(0);
 
     const load = async (opts?: { silent?: boolean }) => {
@@ -72,9 +70,7 @@ const BoardManage = () => {
             if (seq !== listSeq.current) return;
             const rows = Array.isArray(res?.data?.data) ? res.data.data : [];
             setItems(rows);
-            // 总数只认信封里那个，**别拿本页条数当总数**（那只是"结果正好一页"时的巧合）。
-            // 服务端没给（旧后端 / 半截部署）时退回本页条数：宁可只显示一页，也不凭空编一个
-            // 总数（缺键绝不编 0 —— 编出来的数会同时写进文案与分页器，看着很像真的）。
+            // 优先使用服务端总数；缺失时只显示当前页可核实的条数。
             const t = res?.data?.total;
             setTotal(typeof t === 'number' ? t : rows.length);
         } catch {
@@ -113,9 +109,7 @@ const BoardManage = () => {
         }
     };
 
-    /** 把这次关键词排在 `QUERY_DEBOUNCE_MS` 之后生效；期间再敲一个字就被顶掉，只发最后一次。
-     *  生效时**回第一页**：新条件的结果可能只有一页，停在「第 3 页」时表格是空的，
-     *  看着像"筛出来什么都没有"。 */
+    /** 关键词防抖后更新筛选并重置页码，每次输入重新计时。 */
     const scheduleSearch = (kw: string) => {
         cancelScheduledSearch();
         searchTimer.current = setTimeout(() => {
@@ -221,9 +215,7 @@ const BoardManage = () => {
             if (res.data?.code === 200) {
                 message.success('已删除');
                 setItems((prev) => prev.filter((it) => it.talkKey !== id)); // 同上：本地剔除，不重拉
-                // 总数跟着减一：这一行本来就来自**当前这一页**（本页 = 筛选后的那一段），
-                // 删掉它总条数必然少一条。不减的话「共 N 条」与外面那条 Pagination 会停在
-                // 旧数上，直到下一次重拉才追上。
+                // 删除当前筛选中的一行后同步减少总数。
                 setTotal((t) => Math.max(0, t - 1));
             } else {
                 message.error(res.data?.message || '删除失败');

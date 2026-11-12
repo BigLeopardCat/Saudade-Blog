@@ -20,11 +20,8 @@ import type {
 } from "../../../interface/NoteStatsType";
 import {useIsDarkMode} from "../../../theme";
 
-// react-countup 的 build 是 CJS，Vite 8 之后默认 import 可能拿到名字空间对象而不是组件
-// （症状是 `Minified React error #130 … got: object`，判据与三种形态见 utils/cjsDefault.ts）。
-// **不要改回 `import CountUp from "react-countup"`。**
+// 规范化 react-countup 的 CommonJS 默认导出。
 const CountUp = cjsDefault(CountUpDefault)
-
 
 /** 后端字段逐个过一道类型闸。`GET` 回来的是运行时数据，直接 `.map()`
  *  会在形状不对时把整棵子树炸掉（后台页面宁可少渲染一块，也不能白屏）。 */
@@ -145,11 +142,7 @@ const NoteData = () => {
         }).finally(() => setLoading(false))
     }, [])
 
-    // 依赖数组是**必须的**：这个 effect 里会发起请求，写成
-    // `useEffect(() => { setData(notes) })`（无依赖数组）等于每轮渲染都跑一遍，
-    // 在真数据下会变成"渲染 → 请求 → setState → 渲染"的循环。
-    // 依赖写 `[load]`（`load` 已被 useCallback 固定）——**不要再写成 `[]` + 一条
-    // eslint-disable**：那条注释在本仓会被 `--report-unused-disable-directives`
+    // 请求成功后更新一次本地快照。
     useEffect(() => {
         load()
     }, [load])

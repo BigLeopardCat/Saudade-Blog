@@ -26,11 +26,7 @@ pub struct VoteBody {
     pub value: i16,
 }
 
-/// 一条评论的票数 + **我**投的那一票。列表里的每一行与投票回执**共用这一个形状**
-/// （前端也共用同一个类型），同一次动作的回执与刷新后看到的那一行必须是同一种东西。
-///
-/// `my_vote` 恒为 `-1` / `0` / `1`（`0` = 我没投）——**它与 up/down 是两件事**：
-/// 前者是"我"，后者是"所有人"。前端按前者点亮按钮，按后者显示数字。
+/// 评论列表和投票回执共用票数视图；my_vote 为当前访客的 -1/0/1，up/down 为总数。
 #[derive(Serialize, Default, Clone, Copy)]
 pub struct CommentVoteDto {
     pub up: i64,
@@ -129,11 +125,7 @@ async fn my_vote_of(db: &DatabaseConnection, comment_id: i32, who: &Who) -> Resu
         .unwrap_or(0))
 }
 
-/// 评论是否存在且**公开可见**（`approved = 1 AND is_deleted = 0`）。
-///
-/// 三条否定理由（不存在 / 待审 / 已驳回 / 已删）**合成同一句「评论不存在」**：
-/// 投票方按定义看得到这条评论（他刚刚才点了它），所以这句话不会误导正常人，而
-/// "这条评论正在等人复核"是不能从公开端口透露出去的（同 `list_comments` 的口径）。
+/// 仅允许操作公开且未删除的评论；不可见与不存在使用相同错误。
 async fn visible_comment(db: &DatabaseConnection, id: i32) -> Option<note_comment::Model> {
     note_comment::Entity::find()
         .filter(note_comment::Column::Id.eq(id))
@@ -145,8 +137,7 @@ async fn visible_comment(db: &DatabaseConnection, id: i32) -> Option<note_commen
         .flatten()
 }
 
-/// 回读这次投票之后的状态（**不在 Rust 侧自增**——并发下自增必然对不上，
-/// 同 `like_dto` 的取舍）。
+/// 从数据库回读投票状态，避免并发下本地自增失真。
 async fn vote_state(
     db: &DatabaseConnection,
     comment_id: i32,
@@ -165,8 +156,7 @@ async fn vote_state(
 
 /// POST /api/public/comments/:id/vote —— 给一条评论投赞/踩，或撤回。
 ///
-/// 幂等：连着投两次同一个方向，结果与投一次相同（唯一键 + `ON DUPLICATE KEY UPDATE`
-/// 保证，不是靠"先查再插"）。
+/// 唯一键与原子 upsert 保证同方向重复投票不增加票数。
 pub async fn vote_comment(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
@@ -232,24 +222,14 @@ async fn withdraw_vote(db: &DatabaseConnection, comment_id: i32, who: &Who) -> R
     Ok(())
 }
 
-/// 投一票（`v` 只可能是 ±1）。
-///
-/// 一次 `INSERT … ON DUPLICATE KEY UPDATE value = …` 同时覆盖"第一次投"与"改主意"，
-/// 不先查一次再决定插入还是更新——那中间有一个并发窗口，而幂等性本来就该由唯一键
-/// （这里是它上面那条 upsert）而不是由代码的顺序保证（同 `insert_like` 的取舍）。
-///
-/// **匿名行与登录行撞的是两条不同的唯一键**，所以冲突目标要按身份选：匿名行的
-/// `user_id` 是 NULL，而 MySQL 的 `ON DUPLICATE KEY` 对 NULL 键**不生效**——
-/// 拿 `(comment_id, user_id)` 当冲突目标，匿名票会重复插入然后被唯一键报错。
+/// 原子 upsert 投票值；按登录账号或访客标识选择对应唯一键。
 async fn set_vote(
     db: &DatabaseConnection,
     comment_id: i32,
     who: &Who,
     v: i16,
 ) -> Result<(), DbErr> {
-    // 登录态先清掉同一 `visitor_key` 的匿名行：那行的主人就是这台浏览器，
-    // 不清的话"先匿名投一票、再登录投一票"= 同一台机器投出两票（同 `insert_like`）。
-    // 对"从没匿名投过"的绝大多数请求，这就是一条零行的 DELETE。
+    // 登录投票前移除同一浏览器的匿名票，避免重复计票。
     if let Who::User { key: Some(k), .. } = who {
         note_comment_vote::Entity::delete_many()
             .filter(note_comment_vote::Column::CommentId.eq(comment_id))
@@ -284,14 +264,11 @@ async fn set_vote(
     note_comment_vote::Entity::insert(am)
         .on_conflict(
             OnConflict::columns(conflict)
-                // 只改 value。`updated_at` 列带 `ON UPDATE CURRENT_TIMESTAMP`，
-                // 行真的变了由 MySQL 自己刷新（同迁移文件里那条列注释）。
+                // 冲突时仅更新票值。
                 .update_columns([note_comment_vote::Column::Value])
                 .to_owned(),
         )
-        // **不能用 `exec`**：走到冲突分支时 MySQL 并不会为这类 upsert 回一个
-        // `LAST_INSERT_ID` 对应的模型，收返回值这条路不通；要 ReadBack 就再查一次
-        // （`vote_state` 本来就要回读，那里才是唯一的事实源）。
+        // 写入不请求模型返回值，最终状态由 vote_state 回读。
         .exec_without_returning(db)
         .await
         .map(|_| ())

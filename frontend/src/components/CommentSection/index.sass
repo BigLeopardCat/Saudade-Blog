@@ -220,8 +220,7 @@
         display: flex
         gap: 10px
         padding: 14px 0 10px
-        // 回复：缩进到与顶层评论的头像右缘对齐（一条竖线示意从属关系，不做更多层级——
-        // 对回复的回复在数据上仍挂同一个顶层，见组件头注 ②）
+        // 回复的回复仍归属于同一顶层评论。
         &.isReply
             margin-left: 46px
             padding: 10px 0 6px

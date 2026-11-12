@@ -68,9 +68,7 @@ pub async fn login(
         if crate::authz::is_frozen(u.status) {
             return Json(ApiResponse::error("账号已被冻结，请联系管理员"));
         }
-        // 惰性迁移：旧格式（SHA-256）哈希在**登录成功的这一刻**换成 Argon2id——
-        // 用户无感、不需要改密码，也不需要一次性刷全表（刷表会让所有人登不进来）。
-        // 失败只记日志不影响登录（下次登录再试）。
+        // 登录成功后升级 SHA-256 密码哈希；升级失败记日志，不中断本次登录。
         if needs_rehash(&u.password) {
             let uid = u.id;
             let password_hash = match hash_password_async(payload.password.clone()).await {
@@ -158,9 +156,7 @@ async fn reset_password_inner(
             account.id, candidates.len()
         );
     }
-    // 旧格式（无盐 SHA-256）由 `verify_password` 一并认。**刻意不做惰性升级**：
-    // 恢复码是**一次性**的（15 分钟、用过即废），升级一条马上要死的行只是多一次写。
-    // 主密码那条路要惰性升级，是因为那个哈希还要活很多年——两者的理由不同，别照抄。
+    // 一次性恢复码沿用密码校验器，不为即将失效的记录升级哈希。
     let mut matched = None;
     for candidate in candidates {
         if verify_password_async(code.to_string(), candidate.token_hash.clone()).await

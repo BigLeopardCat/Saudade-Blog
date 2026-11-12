@@ -128,7 +128,7 @@ const VISITOR_HEADER: &str = "x-visitor-key";
 /// 标识长度下限。太短的 key（两三个字符）会被不同的人/脚本轻易撞上，等于没有去重；
 /// 前端生成的是 UUID（36 字符），这个下限只是拦明显不认真的调用方。
 const VISITOR_MIN: usize = 8;
-/// 长度上限 = `note_like.visitor_key` 的列宽（超了会被 MySQL 截断/报错，不如提前拒）。
+/// 访客标识上限与 note_like.visitor_key 列宽一致。
 const VISITOR_MAX: usize = 64;
 
 /// 从请求头取匿名访客标识（**尽力而为**：缺失/格式不对一律当"没有"）。
@@ -212,13 +212,7 @@ impl Who {
     }
 }
 
-/// 解析这次请求的身份。三种结果**必须分开**，别用 `.ok()` 一把梭：
-///   · `Ok(Some(who))` —— 认出来了（登录优先，其次访客标识）；
-///   · `Ok(None)`      —— 既没登录也没带访客标识（读接口照常返回、`liked` 恒 false）；
-///   · `Err(e)`        —— **带着令牌来的，但令牌不能用**（过期/已收回/账号被冻结）。
-///     这一支**绝不降级成匿名**：账号被冻结的人不该因为"换个身份"就照常点赞。
-///     （他能清掉 localStorage 再来——那是匿名点赞固有的口子，见迁移头注语义 ①——
-///      但我们不主动替他换。）读接口按模块头注第 1 条把它当"没认出来"处理。
+/// 区分有效身份、未提供身份和身份校验失败；带无效凭据的写请求不降级为匿名。
 pub(super) async fn identify(
     db: &DatabaseConnection,
     headers: &HeaderMap,
@@ -339,8 +333,7 @@ pub async fn report_view(
         .exec_without_returning(&state.db)
         .await
     {
-        // 记不上就记不上：读者的正文照常显示，**不能因为统计失败让整页报错**
-        // （前端也只是把它当"这次没数"，不弹提示）。
+        // 统计失败不影响文章阅读。
         tracing::warn!("[note_stats] 阅读上报失败 note={}: {}", id, e);
     }
     let who = optional_who(&state.db, &headers).await;
@@ -380,12 +373,7 @@ async fn like_prelude(
     Ok(who)
 }
 
-/// 写入一行点赞。两种身份落到两种行（见 `entity/note_like.rs` 头注）。
-///
-/// **登录态会先清掉同一 `visitor_key` 的匿名行**：那行的主人就是这台浏览器，
-/// 不清的话"先匿名点一下、再登录点一下"= 同一台机器投出两票，而报表上分不出来。
-/// 这个动作对"从没匿名点过"的绝大多数请求就是一条零行的 DELETE（走
-/// `uq_like_note_visitor` 的最左列，代价可忽略）。
+/// 登录点赞前清除同一浏览器的匿名点赞，避免重复计数。
 async fn insert_like(db: &DatabaseConnection, note_id: i32, who: &Who) -> Result<(), DbErr> {
     if let Who::User { key: Some(k), .. } = who {
         note_like::Entity::delete_many()
@@ -409,10 +397,7 @@ async fn insert_like(db: &DatabaseConnection, note_id: i32, who: &Who) -> Result
         .exec_without_returning(db)
         .await
     {
-        // 并发下两个请求同时走到这里 → 对应的那条唯一键拦下第二个
-        // （登录行撞 `uq_like_note_user`、匿名行撞 `uq_like_note_visitor`）。
-        // **不能只看错误类型断言"是撞唯一键"**（同 `profile.rs::add_favorite` 的取舍）：
-        // 回查一次，现在真有一行就算成功，否则才是真失败。
+        // 并发插入失败后回查；确有记录视为成功，不能把任意数据库错误当作唯一键冲突。
         if !liked_by(db, note_id, Some(who)).await {
             return Err(e);
         }
@@ -611,7 +596,7 @@ pub use window::DailyWindow;
 pub struct NoteStatsReportDto {
     #[serde(rename = "generatedAt")]
     pub generated_at: String,
-    /// 当前可见文章的阅读量合计（含未进榜的文章）——与排行榜同一口径，见模块头注
+    /// 当前可见文章的阅读量合计，包含未进入排行榜的文章。
     #[serde(rename = "totalViews")]
     pub total_views: i64,
     #[serde(rename = "totalLikes")]
@@ -697,7 +682,7 @@ async fn sum_by_note(
     }
 }
 
-/// GET /api/protected/stats/notes —— 见模块头注的"报表口径"。
+/// GET /api/protected/stats/notes：公开已发布主文章的统计报表。
 pub async fn note_report(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<NoteStatsReportDto>> {

@@ -1,4 +1,4 @@
-# 原生账号管理接口
+# 账号管理接口
 
 适用于 Agent 的 `freeze_account`、`unfreeze_account`、`set_account_role`、`account_mute`、`account_unmute`。这些工具由模型直接选择，后端只实施确定性的身份、权限、版本和事务检查。
 

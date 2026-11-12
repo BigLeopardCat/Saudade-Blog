@@ -18,7 +18,7 @@ import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
 import Live2dAgent from "../../components/Live2dAgent";
 import { useViewerProfile } from "../../components/UserCenter/identity";
-import AnnouncementModal from "../../components/AnnouncementModal"; // 同上：公告弹窗也跟壳走，不跟页面走
+import AnnouncementModal from "../../components/AnnouncementModal";
 
 const NAV_FILL_SVG: Record<string, { viewBox: string; body: ReactNode }> = {
     'svg-announcement': {
@@ -55,25 +55,15 @@ const WASHI_THEME = {
         colorTextTertiary: '#9a8aa5',                       // --washi-ink-3（夜间档）
         colorBorder: 'rgba(255, 255, 255, 0.16)',           // --washi-line（夜间档）
         colorBorderSecondary: 'rgba(255, 255, 255, 0.08)',  // --washi-line-2（夜间档）
-        /* ⚠️ 这一条不是可选的美化：夜间的主色是**亮粉**，而 antd 给实心底色的默认字色
-           `colorTextLightSolid` 是**白**——白压 #ff8ec7 只有 1.6:1，等于看不见按钮上的字。
-           改成深墨后是 6.4:1。（浅色档的 #d94f9a 压白字是 3.8:1，与出厂蓝同档，不动。） */
+        /* 夜间亮粉按钮使用深色文字，保持可读对比度。 */
         colorTextLightSolid: '#3a2340',
     },
     common: {
         borderRadius: 8,
-        /* antd 的 `lg` 断点（表格列的 `responsive: ['lg']` 用它筛列）默认是 **992**，
-           比我们那条 CSS 断点低 32px ⇒ 992~1024 之间会出现"外壳已是抽屉、表格却还是
-           全列"的破口。把它抬到 1024，两把尺子**精确对齐**。
-           ⚠️ **断点 1024 三处同源**：这里、`Dashboard/index.css` 末尾那条 `@media`、
-           以及壳里那条 matchMedia。改一处必须三处同改。
-           antd 会校验 `screenLGMin <= screenLG <= screenLGMax <= screenXLMin`
-           （768 ≤ 1024 ≤ 1199 ≤ 1200，成立）⇒ 不会抛；后台也没有别处用 `lg`/`xl`
-           的 Grid 属性，改它只影响 Table 的列筛选。 */
+        /* Ant Design 的 lg、外壳 CSS 和 matchMedia 使用相同的 1024px 断点。 */
         screenLG: 1024,
     },
 };
-
 
 const Dashboard = () => {
     const navigate = useNavigate();
@@ -97,7 +87,6 @@ const Dashboard = () => {
         window.addEventListener('darkmode-change', onDarkModeChange);
         return () => window.removeEventListener('darkmode-change', onDarkModeChange);
     },[])
-
 
     /* ① 跨断点一律关抽屉：进也关、出也关（否则拖动窗口变宽后，`nav-open` 会留在台面上，
           而那个类名在桌面档没有样式——状态与画面长期不一致，下次变窄会突兀地弹开）。 */
@@ -245,11 +234,7 @@ const Dashboard = () => {
     };
 
     return (
-        /* 后台的 antd 主题**必须在这层壳上定**：`/dashboard` 与 `/` 是兄弟顶层路由，命中后台时
-           `<App/>` 根本不在树上 ⇒ App.tsx 的 frontDark 永远落不到后台；而 isDarkMode 只长在这
-           个壳里，它已经是 `<Outlet/>` 的父节点，所以这里是唯一能罩住全部子页的位置。
-           页内那几处 ConfigProvider（Home 的 locale / Notes / Talks / AllNotes）在 antd v5 里
-           与父层**合并**，不用动它们。 */
+        /* 后台是独立顶层路由，主题由此壳提供；页内 ConfigProvider 与父配置合并。 */
         <ConfigProvider modal={{centered:true, classNames:{
             content:"dashboard-dialog-content", body:"dashboard-dialog-body",
             header:"dashboard-dialog-header", footer:"dashboard-dialog-footer",
@@ -367,7 +352,6 @@ const Dashboard = () => {
                                 </main>
                             </MainContext.Provider>
                         </Card>
-
 
                         <div className='setting_btn' onClick={()=>toggleFullScreen()}>
                             <SettingButton />
