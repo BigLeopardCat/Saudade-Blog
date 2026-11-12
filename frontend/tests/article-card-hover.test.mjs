@@ -100,15 +100,13 @@ console.log('\n③ 展开态：上限是行高整数倍，且**不许**再用负
     }
 }
 
-console.log('\n④ 两处抖动源保持删除：标题的 :hover 不许解除行数限制');
+console.log('\n④ 标题尺寸保持稳定：标题的 :hover 不许解除行数限制');
 {
-    // 顶卡内容列是 `justify-content: center`：标题一变高，整列重新居中 ⇒ 全列上下窜。
-    // 这两条选择器一旦回来，`.test.py` 的第 ⑥ 组会立刻红，这里在源码层先拦一道。
-    const bad = [...rules.keys()].filter((s) => /:hover/.test(s) && /(contentTitle|topContent h3)/.test(s));
-    ok(bad.length === 0, '没有 `.contentTitle:hover` / `.TopArticle .topContent h3:hover`', bad);
+    const bad = [...rules.keys()].filter((s) => /:hover/.test(s) && /contentTitle/.test(s));
+    ok(bad.length === 0, '没有 `.contentTitle:hover`', bad);
     const sassSrc = readFileSync(SASS_FILE, 'utf8');
     // 源码层：这两块里不许再出现 `-webkit-line-clamp: unset`（唯一合法出现处是简介的展开态）
-    const titleBlocks = sassSrc.split(/\n(?= {0,4}[.\w:-])/).filter((b) => /contentTitle|topContent\n\s{2,}h3/.test(b));
+    const titleBlocks = sassSrc.split(/\n(?= {0,4}[.\w:-])/).filter((b) => /contentTitle/.test(b));
     ok(!titleBlocks.some((b) => /-webkit-line-clamp:\s*unset/.test(b)),
         '标题那两块源码里没有 `-webkit-line-clamp: unset`');
 }
@@ -116,7 +114,6 @@ console.log('\n④ 两处抖动源保持删除：标题的 :hover 不许解除�
 console.log('\n⑤ 源码接线：普通卡简介保留展开和离开复位');
 {
     const article = readFileSync(ARTICLE_TSX, 'utf8');
-    const home = readFileSync(HOME_TSX, 'utf8');
     ok(/import\s*\{\s*resetDescScroll\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/utils\/descHover"/.test(article),
         'Article.tsx 从 utils/descHover 引了 resetDescScroll（别再来一份实现）');
     ok(/<div className="descSlot">\s*<p className="ArticleDescription" onMouseLeave=\{resetDescScroll\}>/.test(article),

@@ -1,4 +1,4 @@
-//! Browser archive and talk feeds; Agent discovery retains its own compact read contract.
+//! Browser article, archive and talk feeds; Agent discovery retains its own compact read contract.
 
 use axum::{
     Json,
@@ -161,10 +161,13 @@ fn article_query(cursor: Option<&Cursor>) -> sea_orm::Select<note::Entity> {
     if let Some(cursor) = cursor {
         query = query.filter(
             Expr::tuple([
-                Expr::col((note::Entity, note::Column::CreatedAt)),
-                Expr::col((note::Entity, note::Column::Id)),
+                Expr::col((note::Entity, note::Column::CreatedAt)).into(),
+                Expr::col((note::Entity, note::Column::Id)).into(),
             ])
-            .lt(Expr::tuple([Expr::val(cursor.at), Expr::val(cursor.id)])),
+            .lt(Expr::tuple([
+                Expr::value(cursor.at),
+                Expr::value(cursor.id),
+            ])),
         );
     }
     query
