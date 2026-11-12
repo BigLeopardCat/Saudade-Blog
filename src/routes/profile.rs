@@ -34,9 +34,7 @@ use crate::utils::{
     ALLOWED_IMAGE_EXTS_TEXT,
 };
 
-/// 头像字节上限（裁切后的产物通常 100KB 以内）。路由上的 `DefaultBodyLimit` 放到 4MiB
-/// 是**为了让超限走我们自己的中文错误**——axum 默认 2MiB 会在 extractor 层直接 413、
-/// 前端只能看到一句英文。
+/// 头像最多 2 MiB；路由允许 4 MiB 请求体，以便由处理器返回明确的超限说明。
 pub const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 // 用户设置
@@ -54,8 +52,6 @@ fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
         sea_orm::DbErr::Exec(rt) | sea_orm::DbErr::Query(rt) => rt,
         _ => return false,
     };
-    // 载荷类型在 sea-orm 0.12 的小版本间从 `sqlx::Error` 变成过 `Box<sqlx::Error>`，
-    // 不写死引用形状：方法调用会自动解引用，两种都能编过。
     let RuntimeErr::SqlxError(err) = rt else { return false };
     err.as_database_error()
         .and_then(|d| d.code())
@@ -81,12 +77,7 @@ pub async fn update_profile(
         return Json(ApiResponse::error("账号不存在"));
     };
 
-    // 预检。`nickname = ?` 走列的 utf8mb4_0900_ai_ci ⇒ 与函数索引**同一口径**
-    // （大小写、重音不敏感），不会出现"索引说重复、预检说没事"的两份判据。
-    // 这里没有 NULLIF/TRIM：写进来的一律是上面 trim 过的非空串。
-    // Rust 侧的 `u.nickname != nick` 是**区分大小写**的，因此"只把 Alice 改成 alice"
-    // 会照常走预检——而 precheck 排除了自己那一行，所以能改成（这是想要的：
-    // 唯一性约束管的是"和别人撞"，不是"不能改大小写"）。
+    // 预检排除本人；并发唯一性冲突仍由数据库约束和写入错误处理。
     if u.nickname != nick {
         let taken = user::Entity::find()
             .filter(user::Column::Id.ne(uid))
@@ -161,8 +152,7 @@ pub async fn change_password(
     let Some(u) = user::Entity::find_by_id(uid).one(&state.db).await.unwrap_or(None) else {
         return Json(ApiResponse::error("账号不存在"));
     };
-    // 旧密码校验与登录共用预占窗口（同一份凭据），按 **IP + 账号** 记——
-    // 拿到令牌的人不该因为"已经登录"就获得无上限的旧密码爆破配额。
+    // 旧密码校验按 IP + 账号复用登录限流窗口。
     let ip = super::auth::get_client_ip(&headers);
     let uname = u.username.clone();
     if let Err(msg) = state.rate_limiter.admit_auth(&ip, &uname) {
@@ -207,10 +197,8 @@ pub struct AvatarDto {
     pub avatar: String,
 }
 
-/// 落盘目录：`<UPLOAD_DIR>/avatars/`，对外 URL 前缀 `/api/protect/download/avatars/`
-/// ——`ServeDir` 已经把整个 UPLOAD_DIR 挂在 `/api/protect/download` 下（公开、无鉴权），
-/// 所以子目录天然可访问。头像不进 `image` 表：那张表是编辑器素材库（后台图片管理列表
-/// 直接列它），把头像塞进去会污染素材库。
+/// 头像写入 <UPLOAD_DIR>/avatars/，通过 /api/protect/download/avatars/ 访问。
+/// 头像不进入编辑器图库的 image 表。
 const AVATAR_URL_PREFIX: &str = "/api/protect/download/avatars/";
 
 /// POST /api/protected/profile/avatar：上传裁切后的头像（multipart，单文件）。
@@ -339,9 +327,7 @@ pub struct UnreadDto {
     pub pending_comments: i64,
 }
 
-/// uid 能不能进后台（角色**从库查**、不信 token 里那个可能是旧的 role——
-/// 与 `middleware::auth_guard` 同一条纪律，判据收敛在 `authz::can_access_console`）。
-/// 查不到这个人（token 有效但用户已删）按不能处理。
+/// 从数据库核对当前角色，再按 authz 判断后台准入；账号缺失时拒绝。
 async fn is_console_user(db: &sea_orm::DatabaseConnection, uid: i32) -> bool {
     matches!(
         user::Entity::find_by_id(uid).one(db).await,
@@ -361,12 +347,7 @@ async fn board_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
         .unwrap_or(0) as i64
 }
 
-/// 等人工裁决的**文章评论**条数（`approved = 0` 且 `is_deleted = 0`）。
-///
-/// 与 `board_pending_count` 逐条同形，但**不是同一批数据**（那张数 `talk`、这张数
-/// `note_comment`）。`is_deleted = 0` 这一条是评论独有的：评论是**软删**（后台留着行
-/// 溯源、公开侧看不见），已删的行再审没有意义，`audit_comment` 也明确拒它 ⇒ 它不该
-/// 出现在"等着你处理"的计数里（否则主人会看见一个点进去办不了的数字）。
+/// 统计 approved=0 且 is_deleted=0 的待审文章评论。
 async fn comment_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
     note_comment::Entity::find()
         .filter(note_comment::Column::Approved.eq(0))
@@ -504,8 +485,7 @@ pub async fn send_message(
     if content.chars().count() > MESSAGE_MAX_CHARS {
         return Json(ApiResponse::error("内容过长（最多 500 字）"));
     }
-    // 标题选填：trim 之后空串一律存 NULL——"没填"只有一种表示，前端不必区分
-    // 空串与 null（历史行全是 NULL）。先取出成 owned String，再去碰 payload 的其它字段。
+    // 空标题归一为 NULL。
     let title: Option<String> = payload
         .title
         .as_deref()

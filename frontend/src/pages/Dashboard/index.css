@@ -192,10 +192,7 @@ body {
     transform: translateY(-50%) rotate(0deg);
 }
 
-/* 第二颗圆钮：◀ = 再收一档到极简。**只在 88 档出现**（展开档由第一颗显 ◀，
-   极简档不该再有「继续收」这个动作）。整块样式与 `.toggle` 同源，只有 top 与
-   display 不同 —— 底色/描边仍由文件末尾那块手账皮的 `.toggle, .toggle-collapse`
-   一起管，改配色时两处都要在。 */
+/* 中间侧栏档显示进一步收起按钮；完全展开时隐藏。 */
 .toggle-collapse{
     position: absolute;
     top: calc(50% + 32px);
@@ -455,18 +452,6 @@ li.search-box input {
     right: 20px;
 }
 
-/*.setting_btn:hover{*/
-/*    justify-content: flex-start;*/
-/*    align-items: flex-start;*/
-/*    opacity: 1;*/
-/*}*/
-
-/*.setting_btn:not(:hover) {*/
-/*    !* 鼠标移出时的样式 *!*/
-/*    !* 你可以在这里设置移出时的样式，如果没有特殊需求，可以保持和初始样式一致 *!*/
-/*    opacity: 0;*/
-
-/*}*/
 .dark .ant-form-item-label > label { color: var(--washi-ink-2, #c9b8d3) !important; }
 
 .dark .ant-tabs-tab-btn { color: var(--washi-ink-2, #c9b8d3) !important; }
@@ -483,7 +468,6 @@ li.search-box input {
     border-radius: 50% !important;
 }
 
-/* Fixes V5 */
 .ant-avatar > img {
     border-radius: 50% !important;
     object-fit: cover !important;
@@ -513,7 +497,6 @@ li.search-box input {
 
 
 
-/* Fixes V6 */
 
 /* Force Calendar Text Black in Dark Mode */
 
@@ -534,7 +517,6 @@ li.search-box input {
     border-radius: 4px;
 }
 
-/* V7 All Fixes */
 /* Force Scrollbar visibility globally */
 ::-webkit-scrollbar {
   -webkit-appearance: none;
@@ -554,7 +536,6 @@ li.search-box input {
 
 
 
-/* V8 Fixes */
 
 /* 1. HIDE Scrollbar in Sidebar specifically (Restore sidebar) */
 .menu-bar::-webkit-scrollbar {
@@ -599,7 +580,6 @@ li.search-box input {
 }
 
 
-/* V9 Fixes */
 
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
@@ -615,7 +595,6 @@ li.search-box input {
 }
 
 
-/* V9 Fixes */
 
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
@@ -630,14 +609,12 @@ li.search-box input {
     color: #000000 !important;
 }
 
-/* V11 Force Home Text White in Dark Mode (Refined) */
 .dark .SelfDescription .SayWords h2,
 .dark .SelfDescription .SayWords h3,
 .dark .SelfDescription .SayWords p {
     color: #ffffff !important;
 }
 
-/* V11 Force Home Text White in Dark Mode (Refined) */
 .dark .SelfDescription .SayWords h2,
 .dark .SelfDescription .SayWords h3,
 .dark .SelfDescription .SayWords p {
@@ -645,7 +622,6 @@ li.search-box input {
 }
 
 
-/* V12 Fixes */
 
 /* 1. Home Text ID Override (Strongest) */
 .dark #SayWordsID h2,
@@ -659,7 +635,6 @@ li.search-box input {
 
 
 
-/* V13 Adjustments */
 
 /* 1. Calendar Hover Fix: No Black Background */
 .dark .ant-picker-calendar .ant-picker-cell:hover .ant-picker-cell-inner {
@@ -713,9 +688,7 @@ li.search-box input {
     --anime-ink-dark: #ffb3d9;
 }
 
-/* 侧栏身份块：头像光环 + 昵称渐变字
-   `.image-text` / `.image` 这两个类名**全站只有后台侧栏用**（grep 过），所以不带
-   `.contain` 前缀也安全；带上前缀反而要担心"本文件也进首页 bundle"。 */
+/* 侧栏身份块的头像光环和昵称渐变。 */
 .image-text .name {
     font-family: var(--anime-font);
     letter-spacing: 0.5px;
@@ -759,20 +732,14 @@ li.search-box input {
     to   { transform: rotate(360deg); }
 }
 
-/* 动效是**装饰**：系统里开了"减弱动态效果"就让位（这两处都不承载信息）。
-   欢迎卡那一份写在 `Home/index.sass` 里紧挨着 animation——那边的选择器多两级，
-   这里的规则压不过它，分开写才不会出现"写了没生效"。 */
+/* 装饰动画遵循 prefers-reduced-motion。 */
 @media (prefers-reduced-motion: reduce) {
     .image-text .image .ant-avatar::before { animation: none; }
 }
 
 
 
-/* ① 壳上的两个令牌改由手账接管。
-      `--shell-color`（侧栏底 ＋ 头像圈缝 ＋ 开关钮）与 `--text-color`（侧栏文字与搜索框
-      文字）全仓只有本文件用（grep 过），改在这里不外溢。
-      ⚠️ `--body-color` 刻意**不动**：它挂在裸 `body` 上、是全站底色，而后台这边
-      `.content` 100% 盖满视口、它根本露不出来 —— 改它只会波及前台。 */
+/* 侧栏背景与文字使用共享主题变量。 */
 :root {
     --shell-color: var(--washi-paper, #fffdfa);
     --text-color: var(--washi-ink-2, #7c6584);
@@ -782,9 +749,7 @@ li.search-box input {
     --text-color: var(--washi-ink-2, #c9b8d3);
 }
 
-/* ② 侧栏：和纸底 ＋ 角上两团淡彩 ＋ 右缘一道纸缝。
-      `.shell.slider` 专指外层那个 div —— 里面的 `nav.shell` 不带 `slider`，不限定的
-      话两层各画一遍、左上角会叠成双倍浓度。 */
+/* 外层侧栏承载纸底、淡彩与边线，内层导航独立布局。 */
 .shell.slider {
     background-image:
         radial-gradient(120% 62% at 0% 0%, rgba(255, 158, 201, 0.16), rgba(255, 158, 201, 0) 62%),
@@ -818,12 +783,7 @@ li.search-box input {
     box-shadow: 0 4px 12px -6px rgba(124, 58, 237, 0.55);
 }
 
-/* ⑥ 悬停底色：V13 那两条 `.shell li a:hover` 从未命中过（`li` 里根本没有 `<a>`，见第
-      622 行的注记），这里不翻旧账，只给**真能命中**的那一族补一块浅胶带底。
-      行上的字色规则（浅色黑 / 夜间河灯金＋光晕）原样保留，一个字不碰 —— 两档的底都够浅，
-      金与黑压上去分别是 5.6:1 与 15:1。
-      限定 `.nav-links` 而不是 `.shell li`：`.mode` 那行自带 `background: transparent
-      !important`、`.search-box` 自带纸底，一起套进来只会打架。 */
+/* 仅为导航项设置悬停底色，不覆盖搜索框和主题切换行。 */
 .shell .nav-links:hover {
     background-color: var(--washi-tape-2, rgba(214, 226, 255, 0.8));
     border-radius: 6px;
@@ -855,9 +815,7 @@ li.search-box input::placeholder {
 }
 
 
-/* ① 页里那些 antd 小卡（说说 / 新建文章 / 主页）＝ 叠在外壳大卡上的一张内页。
-      `body.dash-skin .ant-card` 会把**外壳大卡自己**也套进来（它就是 `<Card className="Card">`），
-      所以必须带 `.Card` 当父级 —— 只匹配"大卡里面的卡"。 */
+/* 后台内容卡使用内页背景，保留外层卡片层次。 */
 body.dash-skin .Card .ant-card {
     background-color: var(--washi-paper-2, #fff6fa);
     border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
@@ -905,9 +863,7 @@ body.dash-skin .ant-pagination .ant-pagination-next .ant-pagination-item-link {
     border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
 }
 
-/* ④ 标签页：只补 token 给不出的两处 —— 游标改成站里那支粉紫天青渐变（与首页首屏、
-      对话面板标题签同一支），底下的分隔线换成纸线。行上的字色（浅色墨 / 夜间墨）
-      本来就是 token 通道，不重复写。 */
+/* 标签栏使用主题渐变游标和分隔线。 */
 body.dash-skin .ant-tabs .ant-tabs-ink-bar {
     background: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%));
 }
@@ -916,8 +872,7 @@ body.dash-skin .ant-tabs-bottom > .ant-tabs-nav::before {
     border-bottom-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
 }
 
-/* ⑤ 浮层（Modal / Drawer）：纸底与字色由 token 给（`colorBgElevated`），这里只补
-      形状 —— 圆角与投影跟外壳大卡、公告卡同源，夜里那支投影由令牌自己换。 */
+/* 浮层共用主题圆角、边线和投影。 */
 body.dash-skin .ant-modal .ant-modal-content {
     border-radius: var(--washi-radius, 14px);
     border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
@@ -927,8 +882,7 @@ body.dash-skin .ant-drawer .ant-drawer-content {
     background-color: var(--washi-paper-2, #fff6fa);
 }
 
-/* ⑥ 状态标签：只收圆角，**色相一律不动** —— 红=冻结、绿=通过这类是语义色，
-      改成粉紫会把"这行到底什么状态"读没。 */
+/* 状态标签只统一圆角，保留状态语义色。 */
 body.dash-skin .Card .ant-tag {
     border-radius: 6px;
 }
@@ -1052,12 +1006,7 @@ body.dash-skin .mainbox .search_icon {
 
 @media only screen and (max-width: 1024px) {
 
-    /* ① 整页滚动：外壳不再锁视口高
-       .contain 是 100vh、.content 是 height:100% + display:flex + align-items:center。
-       内容高于视口时，flex 居中会让卡片**上下同时溢出**——顶上那半截在文档流之外，
-       滚动条也够不着（本仓 "flex 居中溢出" 那一族的老坑）。窄屏改成"从顶部开始、向下滚"。
-       `float:none` 是防"浮动元素不撑高父级、.contain 塌陷"。
-       dvh 用两条声明做渐进增强（老浏览器忽略后一条），治移动端地址栏收缩时的跳动。 */
+    /* 窄屏从顶部布局并允许整页滚动；dvh 适配移动端地址栏。 */
     .contain {
         height: auto;
         min-height: 100vh;
@@ -1071,17 +1020,11 @@ body.dash-skin .mainbox .search_icon {
         min-height: 100vh;
         min-height: 100dvh;
         box-sizing: border-box;
-        /* 64px 上内边距是给汉堡钮让位的。**必须是 padding，不能写成 .Card 的 margin-top**：
-           两者之间没有边框也没有内边距，块级上下外边距会一路塌陷出去，卡片根本不会被
-           推下来，汉堡钮照样压在它头上。 */
+        /* 顶部内边距为菜单按钮留位。 */
         padding: 64px 12px 12px;
     }
 
-    /* ② 内容卡：占满全宽、高度交给内容
-       宽 / 高 / 左距 已从内联搬到基础规则（内联压过一切普通声明；不搬的话下面这几条
-       是**静默失效**的，这正是本条改动的第一个前提）。
-       `overflow:visible` 覆盖基础规则那条 overflow:hidden —— 基础规则一个字没动，
-       子页面的自然高度由文档滚动接管。 */
+    /* 窄屏内容卡占满宽度，高度由内容决定。 */
     .Card {
         width: 100%;
         height: auto;
@@ -1089,8 +1032,7 @@ body.dash-skin .mainbox .search_icon {
         overflow: visible;
     }
 
-    /* 放开高度链：子页面写死的 height:100% / 90% 在 auto 父级下退化成内容高，
-       整页滚动接管 —— 七个没接管高度链的页面就此一并修好。 */
+    /* 解除子页面的固定高度链，由整页处理溢出。 */
     .Card > .ant-card-body, .dashboardPage {
         height: auto;
     }
@@ -1098,17 +1040,7 @@ body.dash-skin .mainbox .search_icon {
         overflow: visible;
     }
 
-    /* ③ 侧栏：离屏抽屉
-       `.shell` **嵌套两层**、两层带同样的 tier 类名，只有外层多一个 `slider`
-       （第 883-885 行那条注释说的就是它）。**transform 只加在外层**：它成为内层
-       position:fixed 的包含块，nav 跟着一起位移 —— 推两层会位移两倍。
-
-       内层这颗 fixed 的**包含块是外层的 padding box**（transform 造的），而内层宽 250
-       （全站 reset 是 `* { box-sizing: border-box }` ⇒ `width:250` 就是边框盒，
-       内外两层都是 250，不是 250+28）。所以外层**必须把 padding 收成 0**：
-       留着桌面的 14px，padding box 只剩 222 宽，内层就从边框盒往里 14px 起算、整体右移。
-       收 0 之后 padding box == 边框盒 == 250，与内层严丝合缝，
-       `translateX(-100%)` 正好把整块（外层底色 ＋ 内层 nav）一起送出屏外、一点不剩。 */
+    /* 抽屉位移只作用于外层侧栏；清除其内边距，使固定内层与外层等宽。 */
     .shell.slider {
         width: 250px;
         padding: 0;
@@ -1127,11 +1059,7 @@ body.dash-skin .mainbox .search_icon {
         padding: 10px 14px;
     }
 
-    /* ④ 窄屏下 tier 三档整体作废
-       抽屉只有"开/关"，88px 那两档没有意义。`.shell.slider` 与 `.shell.shell-nav` 都是
-       两个类（0,2,0）：对 `.shell.mini`（0,2,0）同特异度、本块在最后 ⇒ 后写者赢；
-       对 `.close`（0,1,0）直接碾压。**所以这里一条 !important 都不需要。**
-       顺手把 tier 藏掉的两块内容还原回来。 */
+    /* 窄屏抽屉仅有开关两态，覆盖桌面的侧栏宽度档位。 */
     .shell.mini .image-text,
     .shell.mini .menu-bar {
         visibility: visible;
@@ -1143,23 +1071,13 @@ body.dash-skin .mainbox .search_icon {
         pointer-events: auto;
     }
 
-    /* 两颗圆钮（展开 / 收起箭头）在抽屉语义下没有意义，且 right:-25px 会露到屏外。
-
-       ⚠️ 必须写 **`.shell.shell-nav`**（0,3,0）而不是 `.shell`（0,2,0）：对面那条是
-       `.shell.close .toggle-collapse{display:flex}` —— 三个简单选择器 = **0,3,0**，
-       裸 `.shell` 是**压不过它的**（媒体块放在末尾也救不了：媒体查询不改特异性）。
-       88 档（`tier===1`，`dashboard-sidebar.test.py` 在 1280 下会切到的那一档）正好就是
-       `.close` ⇒ 写错的话窄屏收起档会留一颗 25px 的圆钮挂在 `right:-25px`、露出屏外。
-       两颗钮都在内层 `nav.shell.shell-nav` 的 `<header>` 里（index.tsx:401-421），
-       所以这个前缀命中得了它们。 */
+    /* 抽屉隐藏桌面收放按钮；选择器优先级须覆盖 .shell.close。 */
     .shell.shell-nav .toggle,
     .shell.shell-nav .toggle-collapse {
         display: none;
     }
 
-    /* ⑤ 全屏钮让位
-       .content 不再是定位上下文后，position:absolute 的它会挂到初始包含块、随页面滚走；
-       而触屏上全屏本来也没什么用，右下角还与看板娘抢位置。 */
+    /* 窄屏使用整页布局，不显示卡片全屏按钮。 */
     .setting_btn {
         display: none;
     }

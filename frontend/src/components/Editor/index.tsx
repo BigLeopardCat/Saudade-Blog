@@ -31,17 +31,7 @@ const basePlugins = [
     bytemdStickers
 ]
 
-/**
- * 内置图片按钮在**左组**里的下标。
- *
- * `getBuiltinActions` 的 `leftActions` 是写死的：0 = H 下拉、1 粗体、2 斜体、3 引用、
- * 4 链接、**5 = 图片**（`icons.Pic` + `locale.image`）、6 行内代码、7 代码块、8 无序、9 有序。
- * 这个 `5` 不是随手数出来的：`frontend/tests/editor-image-button.test.mjs` 会去读 bytemd
- * 的源码把它钉住，上游一改次序那条套件立刻红。
- *
- * ⚠️ 选择器**必须**带 `.bytemd-toolbar-left` 前缀：右组（toc/帮助/全屏/源码）里的图标
- * 用的是**右组数组**的下标，那里的 `5` 是「源码」那颗按钮。
- */
+/** Bytemd 左工具栏图片按钮的下标；选择器限定 .bytemd-toolbar-left，避免命中右工具栏。 */
 const BUILTIN_IMAGE_ACTION = '.bytemd-toolbar-left > .bytemd-toolbar-icon[bytemd-tippy-path="5"]'
 
 /** 发一次上传请求。失败一律**抛**（调用方按"没拿到图片"处理）。 */
@@ -95,12 +85,7 @@ const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
         },
     }), [noteContent, setNoteContent])
 
-    /**
-     * 把 bytemd 的编辑器上下文留下来给图库弹窗用。
-     *
-     * bytemd 只把上下文交给**插件**（`editorEffect`）和**插件 action 的 handler**，而图片
-     * 那颗是内置 action（我们没有 handler 可写），所以只能从这里拿。
-     */
+    /** 通过 Bytemd editorEffect 保留编辑器上下文，供图库插图使用。 */
     const ctxPlugin = useMemo<BytemdPlugin>(() => ({
         editorEffect: (ctx) => {
             ctxRef.current = ctx
@@ -122,11 +107,7 @@ const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
             throw new Error(response.data?.message || 'upload failed');
         }
         message.success('添加成功');
-        // 这里返回的 url 会**直接**被 bytemd 拼进正文（`svelte/editor.js::handleImageUpload`
-        // 拿返回值 map/join 后 appendBlock）⇒ 拖拽/粘贴上传这条路上，
-        // `![](${url})` 是在 bytemd 里完成的，本组件没有插手的地方。所以编码必须落在这
-        // 里（返回之前）。图库那条路会再经 `insertImage` 走一遍同一个函数 —— 幂等，见
-        // utils/assetUrl.ts 里"跳过 %"那段说明。
+        // 上传 URL 先编码，再交由 Bytemd 插入 Markdown；与图库插图共用幂等编码。
         return [{ alt: '', url: encodeAssetUrl(response.data.data), title: '' }];
     };
 
@@ -143,12 +124,7 @@ const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
         return () => wrap.removeEventListener('click', onClickCapture, true)
     }, [])
 
-    /**
-     * 往正文里插图，**照抄 bytemd 自己的单张路径**（`svelte/editor.js::handleImageUpload`）：
-     * `appendBlock` 从光标往下找第一处空行插入 `![](url)`，再把光标落回那一行、聚焦。
-     * alt 故意留空 —— 与拖拽/粘贴上传产出的 markdown **逐字节一样**（编码也走同一个
-     * `encodeAssetUrl`，所以两条路产出的那一行仍逐字节相同）。
-     */
+    /** 通过 Bytemd appendBlock 插入编码后的图片 Markdown，并将焦点交回编辑器。 */
     const insertImage = (url: string) => {
         const ctx = ctxRef.current
         if (!ctx) {

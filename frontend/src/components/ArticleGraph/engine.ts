@@ -642,9 +642,7 @@ export class WordGraphEngine {
 /** 滚轮一步的距离（正 deltaY = 拉远）。抽成纯函数是为了能在 node 里断言"到底要滚几格
  *  才到极限"——区间放宽后这个手感就是功能本身，见 tests/wordgraph-engine.test.mjs。 */
 export function zoomBy(dist: number, deltaY: number): number {
-    // 0.0016/px：一格滚轮(Chrome 100px)约 17%，从当前默认 2.6 推到最近端 0.4 约 12 格
-    // （旧默认 4.3 时是 15 格）；
-    // 区间放宽后还用 0.0012（12.7%/格）要 19 格才到底，手感是"滚半天没动"
+    // 指数缩放保持每格滚轮的相对变化一致。
     return Math.max(DIST_MIN, Math.min(DIST_MAX, dist * Math.exp(deltaY * 0.0016)));
 }
 

@@ -134,8 +134,7 @@ pub async fn list_conversations(
         .order_by_desc(conversation::Column::Id); // datetime 秒精度并列时 id 兜底
     if let Some(q) = q {
         let pat = format!("%{}%", like_escape(q));
-        // 标题 LIKE（Title 可 NULL：NULL LIKE 永不命中，天然安全）或内容命中会话；
-        // hits 为空时省略 in 支（MySQL 不接受空 IN () 列表）
+        // 按标题或命中消息筛选会话；没有消息命中时省略 IN 条件。
         let cond = if hit_by_conv.is_empty() {
             Condition::any().add(conversation::Column::Title.into_expr().ilike(&pat))
         } else {
@@ -494,10 +493,7 @@ mod tests {
     // DB 时间戳 → 毫秒
     #[test]
     fn 毫秒时间戳按本地钟面解释() {
-        // 库里的 datetime 是 **+08:00 本地钟面**（不是 UTC）。判据就是这一条：
-        // 把它当本地时间读 ⇒ 与"当 UTC 读"恰好差一个本机偏移。
-        // 写成本地偏移的式子而不是 `assert_eq!(ms, expect)`：后者把函数体又抄了一遍，
-        // 抄错了也一起错；这里两边来自**不同的** chrono 入口，叉乘得出真实结论。
+        // 数据库时间为 +08:00 本地钟面，核对其转换与 UTC 解释的偏移差。
         let t = chrono::NaiveDate::from_ymd_opt(2026, 10, 4)
             .unwrap()
             .and_hms_opt(12, 0, 0)

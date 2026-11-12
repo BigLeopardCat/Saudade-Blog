@@ -56,19 +56,7 @@ export function allHits(r: AggregateResult): AggregateHit[] {
     return TYPE_ORDER.flatMap((t) => hitsOf(r, t))
 }
 
-/** 一条结果该跳到哪去。**四类四条路径**，每条都对应一个真实存在的落地页：
- *
- *  | type    | 目标                              | 落地 |
- *  |---------|-----------------------------------|------|
- *  | note    | `/article/<id>`                   | 文章详情 |
- *  | talk    | `/talk?tk=<id>`                   | 说说列表定位到那一条 |
- *  | board   | `/guestbook?lid=<id>`             | 留言板定位到那盏灯 |
- *  | comment | `/article/<noteId>?cid=<评论 id>` | 文章详情 + 评论区定位到那条 |
- *
- *  ⚠️ **一律绝对路径**（以 `/` 开头）：`navigate('article/5')` 这种相对写法在
- *  `/article/3` 这类页面上会拼成 `/article/article/5`——首页搜索框在每一页都在，
- *  不能假定当前路径只有一段。
- */
+/** 各类型映射到文章、说说或留言板深链；使用绝对路径，避免依赖当前页面层级。 */
 export function hitTarget(h: AggregateTarget): string {
     switch (h.type) {
         case 'note': return `/article/${h.key}`

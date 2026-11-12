@@ -11,8 +11,7 @@ use tracing::warn;
 use crate::authz;
 use crate::entity::user;
 
-/// 上限的兜底值：环境变量没设/设坏了都用它。**两侧都不许把这个数字写死**——
-/// 前端从 `chatQuotaLimit` 读、agent 从 `chat_quota.limit` 读。
+/// 配置缺失或无效时的默认限额；前端和 Agent 从响应读取实际值。
 const LIMIT_DEFAULT: i32 = 500;
 
 /// 本部署的上限（`CHAT_QUOTA_LIMIT`）。
@@ -49,11 +48,7 @@ pub enum ConsumeOutcome {
     Degraded,
 }
 
-/// 给 `chat.rs` 与展示端共用的额度视图（不限档四个数全是 0，见 `view`）。
-///
-/// **刻意不 derive `Serialize`**：C1 的线上形状（`used/limit/remaining/unlimited`）
-/// 只有 `forward_json` 一个写者。加了 Serialize 就是第二个写者——字段改名/加字段时
-/// 两边各改一半，症状是 agent 那边收到一个它不认识的键、静默按"没这个字段"处理。
+/// 共享额度视图，由 forward_json 统一序列化；不限额时计数字段为零。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuotaView {
     pub used: i32,
@@ -74,15 +69,8 @@ pub fn view(used: i32, limit: i32, unlimited: bool) -> QuotaView {
     QuotaView { used, limit, remaining: (limit - used).max(0), unlimited: false }
 }
 
-/// C1 契约的**唯一写者**（Rust → agent，`/chat` 与 `/chat/stream` 的 body）。
-///
-/// 是 JSON **对象**而不是 JSON 串——**刻意与 `agent_tasks` 不同**（那个是串）。
-/// 理由：形状由本端拥有且极简，agent 侧 pydantic 的 int 类型让注入结构性不可能，
-/// 所以不需要 `_ctx_field` 那套清洗。**这处不一致是故意的，别来"统一"它。**
-///
-/// 读不到额度时**整个键缺席**（调用方不插这个键），**不许发一个零值**：
-/// 缺席是"读不到"，零值是"剩 0 轮"——后者会让 agent 对着正在说话的访客说一句
-/// 他自己能用一次刷新证伪的话。
+/// 序列化 Rust 发往 Agent 的 chat_quota 对象。
+/// 额度不可用时调用方省略整个字段，不能用零值表示读取失败。
 pub fn forward_json(v: &QuotaView) -> serde_json::Value {
     serde_json::json!({
         "used": v.used,
@@ -195,7 +183,7 @@ mod tests {
         assert_eq!(v, QuotaView { used: 0, limit: 0, remaining: 0, unlimited: true });
     }
 
-    // C1 契约的形状
+    // 核对跨服务额度字段。
     #[test]
     fn 转发对象恰好是那四个键() {
         let v = view(137, 500, false);

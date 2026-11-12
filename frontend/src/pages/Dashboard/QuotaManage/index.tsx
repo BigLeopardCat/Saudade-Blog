@@ -67,9 +67,7 @@ const QuotaManage = () => {
      *  切到"待处理"（可能只有 2 条）会停在一个空页面上。 */
     const [page, setPage] = useState(1);
 
-    /** 拉列表。`silent` = 背景重拉（看板娘收尾事件 / 20 秒轮询）：不闪 loading、失败不弹提示
-     *  ——后台每 20 秒抖一下 spinner 会让人以为页面自己在动，每 20 秒叠一条报错只会刷屏。
-     *  手动那一次（挂载 / 「刷新」按钮 / 每次裁决之后）照旧给反馈。 */
+    /** 静默刷新不显示加载动画或重复错误提示；手动操作保留反馈。 */
     const load = async (opts?: { silent?: boolean }) => {
         if (!opts?.silent) setLoading(true);
         try {
@@ -97,9 +95,7 @@ const QuotaManage = () => {
         [rows, page],
     );
 
-    /** 裁决。`approved` = 批准（后端会清零对方的计数器）/ 驳回（额度不动）。
-     *  理由只在驳回时有意义（批准时后端恒把 note 落 NULL，传了也不生效）。
-     *  成功之后**重拉列表**——见文件头注 ①（回包没有值可写回，且批准还改了对方的 used）。 */
+    /** 裁决后重新读取申请列表和额度状态。 */
     const review = async (row: QuotaRow, approved: boolean, reason?: string) => {
         setBusy(true);
         try {

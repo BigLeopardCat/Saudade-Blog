@@ -5,11 +5,7 @@ set -u
 
 HOST="${1:-${SITE_HOST:-saudade.site}}"
 PATHS=("/" "/live2d-widgets/boot.js" "/api/login")
-# 装了 IoT 才有 /device-console/ 这个 location（它有自己的 Cache-Control ⇒ 必须自己
-# include 一份头，是"add_header 不继承"最容易漏的一处）。存在判据用**开关本身**
-# （那个 snippet 文件在不在，与 iot/toggle.sh 的判据同源），不用 HTTP 状态码——
-# 没装 IoT 时 `/device-console/` 会落到 SPA fallback 返回 200 的 index.html（同族坑：
-# "200 可能是 index.html"），拿状态码判"装没装"会把它当成装了。
+# 仅在 IoT snippet 存在时检查设备路由；SPA fallback 的 200 响应不能证明功能已启用。
 [ -f /etc/nginx/snippets/blog-iot/iot.conf ] && PATHS+=("/device-console/")
 REQUIRED=(
   "x-content-type-options: nosniff"

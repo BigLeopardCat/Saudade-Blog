@@ -45,10 +45,7 @@ class ErrorBoundary extends Component<Props, State> {
         const className = readDarkMode()
             ? 'errorBoundary frontDark frontRoot'
             : 'errorBoundary'
-        // 换代那一支单独一张卡（见 `componentDidCatch`）：**不能给「重试」**——那一颗是
-        // 重新挂载子树，拿的还是同一个已经不存在的 URL，点几次都一样。唯一有意义的动作
-        // 是整页刷新。原始报错文本也不展示：对访客它只是一串带哈希的文件名，没有可操作性
-        // （诊断信息照旧进 monitor.log，见 `recoverFromStaleChunk` 里那条 module_load_fail）。
+        // 资源版本失效时需整页刷新；重新挂载子树仍会请求同一缺失资源。
         const stale = isStaleChunkError(error)
         return (
             <div className={className}>

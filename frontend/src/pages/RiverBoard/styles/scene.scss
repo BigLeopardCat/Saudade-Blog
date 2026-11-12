@@ -189,7 +189,7 @@
       .rz-scroll {
         height: 126px;
         overflow: hidden;
-        padding: 20px 34px 14px 34px; /* 上下留出容器边缘距离（第 25 轮：子容器距边更和谐） */
+        padding: 20px 34px 14px 34px;
       }
 
       .rz-msg {
@@ -218,7 +218,7 @@
 
       .rz-seal {
         position: absolute;
-        top: 14px;   /* 第 25 轮：印章离开容器角部，与文本区边距更和谐 */
+        top: 14px;
         right: 16px;
         font-size: 11px;
         line-height: 1.7;
@@ -240,9 +240,7 @@
     transform: translateX(-50%) translateY(0);
   }
 
-  /* 气泡滚动（scrollTick 往 .rz-msg 写 translateY）才需要会变形的合成层。
-     收窄到「打开/悬停中」这一种状态：屏幕上同一时刻至多 1 个气泡在滚动，
-     旧写法让 22 个常驻层空占（老内核软渲染逐层合成的主成本来源之一）。 */
+  /* 仅为正在滚动的气泡创建合成层，避免常驻灯体占用额外图层。 */
   .rz-lantern:hover .rz-msg,
   .rz-lantern:focus .rz-msg,
   .rz-lantern.rz-open .rz-msg {

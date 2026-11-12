@@ -136,11 +136,7 @@ export default function RiverBoard() {
     /* 刚放下的灯快照："再看一眼"按同一盏灯重新点放（复用其留名/灯型/内容） */
     const lastDroppedWish = useRef<Wish | null>(null);
 
-    /* 河流留言批次轮播（第 22 轮）：全量留言按时间倒序（最新在前）。
-    初始时河灯承载最新一批（前 N 条）；每盏灯漂出视野「眼前重入」时，
-    从批次序列取下一条留言换上 → 窗口整体向更早推进，滚到最早一条后
-    回到最新一批循环（指针取模）。窗口移动节奏 = 灯的漂流周期（约 1 分钟一批）。
-    演示灯阶段（数据未回）不推进。 */
+    /* 公开留言按时间倒序轮播；灯体离开视野后换成下一条，到末尾循环。 */
     const allTalksRef = useRef<Wish[]>([]);
     const batchPtr = useRef(0); // 已发放条数（含初始最新一批）
     const lanternCountRef = useRef(0);
@@ -177,7 +173,7 @@ export default function RiverBoard() {
     const [albumCatFilter, setAlbumCatFilter] = useState<string[]>([]); // 类型筛选（空=全部）
     const [albumSearch, setAlbumSearch] = useState(false);
     const [albumQuery, setAlbumQuery] = useState("");
-    /* 灯影集：选中留言弹详情期间隐藏卷册，关闭后恢复原浏览位置（第 32 轮） */
+    /* 查看单条留言时隐藏灯影集，关闭详情后恢复浏览位置。 */
     const albumListRef = useRef<HTMLDivElement | null>(null); // 列表滚动容器
     const albumResumeRef = useRef<number | null>(null); // 暂存恢复时的 scrollTop
     /* 留言留名（可选；预填当前账号昵称，可一键匿名；检索框按留名/用户名查找） */
@@ -205,7 +201,7 @@ export default function RiverBoard() {
         const ms = metaRef.current;
         const pos: { m: LanternMeta; r: number }[] = [];
         for (const m of ms) {
-            // 流速持续放缓（第 11 轮：系数 0.21/0.63 → 0.15/0.44，再降约 30%）
+            // 按景深调整灯体流速。
             m.d -= dt * m.w * (0.15 + 0.44 * Math.pow(Math.max(0.03, m.d), 1.35));
             if (m.d < -0.02) {
                 m.d = 0.94 + Math.random() * 0.05; // 眼前重入
@@ -220,20 +216,9 @@ export default function RiverBoard() {
             const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 整体等比放大（保原透视形状）
             pos.push({ m, r: scl * 53 });
         }
-        /* 水面漂浮物软排斥（PBD 式松弛，无余量）：只在真实重叠（dist < rr）时推挤——
-           相切对（dist === rr）零受力，刚接触的灯不会抖；每帧只消解重叠的一小部分
-           （pen*0.28，封顶 1.5px/帧），指数松弛收敛、无过冲——浅接触近乎无感，
-           深重叠 20-30 帧缓缓让开，观感是"挤过去"而不是"撞过去"。
-           分离分三路（都吃同一份软推力，不留任何"整段穿透"硬推）：
-           ① oX/oY 瞬态推挤（随流衰减 0.975/帧，≈1.5s 消散）——接触瞬间的轻微"顶开"；
-           ② 法线水平分量约一半转入 u 空间（dx/du ≈ 2*hw，u 不衰减）——横向让行：
-           河道收窄挤住的灯对缓缓侧滑互相让过，一次让开不再叠回；
-           ③ 近垂直对（|nx| < 0.25）再把约一半转入 d 空间——d 不衰减且更深者流速更快
-           （自增强），前后对随流错开；软推下局部导数的小幅低估只会让分离稍慢、
-           不会过冲震荡（第 23 轮的 1.15 补偿是为整段穿透准备的，已随硬推一起移除）。
-           垂直分量留在 oX/oY 而非 d 空间：同向同速对由流速差自然拉开；
-           半径 r = scl*53 与灯体视觉尺寸同源（无 +7 常数）——远端不再有
-           "视觉未接触却判定碰撞"的幻影重叠 */
+        /* PBD 式软排斥仅在真实重叠时生效，限制每帧位移以避免过冲。
+           瞬态偏移随流衰减；水平分量写入 u 以保持让行，近垂直接触写入 d 借流速差分离。
+           碰撞半径与灯体视觉尺寸保持一致。 */
         const vNow = viewRef.current;
         for (let i = 0; i < pos.length; i++) {
             for (let j = i + 1; j < pos.length; j++) {
@@ -413,7 +398,7 @@ export default function RiverBoard() {
         };
     }, [boardReload]);
 
-    /* 气泡长文滚动：JS 逐帧显式推进（CSS animation 偶发卡死不滚，改为可控的 transform） */
+    /* 通过逐帧 transform 推进气泡长文滚动。 */
     const scrollState = useRef<{ msg: HTMLElement; max: number; pos: number } | null>(null);
     const restartScroll = (handle: HTMLElement) => {
         const box = handle.querySelector(".rz-scroll") as HTMLElement | null;
@@ -921,12 +906,8 @@ export default function RiverBoard() {
         else closeModal();
     });
 
-    /* 河灯 DOM：用 useMemo 固定元素引用 —— React 对「同一个元素对象」会直接跳过整棵
-       子树的协调，于是输入框/灯影集检索/弹窗等高频 state 变化不再带着 22 盏灯的 200+
-       元素一起重渲染。位置与透明度永远由 rAF 直写 DOM，React 只在下面三个依赖变化时
-       重建（灯列表变化=批次轮换/放灯/收回；精灵图就绪；弹窗开关）。
-       安全前提：JSX 里用到的 handler（openWish/toggleMsg/restartScroll）只读写 ref 与
-       setState，复用旧闭包无副作用；若将来它们开始读 state，必须把那个 state 加进依赖 */
+    /* 缓存河灯元素，避免输入和弹窗更新重绘整组灯；位置和透明度由 rAF 更新。
+       handler 仅访问 ref 和 setState；若开始读取 state，须加入依赖。 */
     const lanternNodes = useMemo(
         () =>
             lanterns.map((ln) => (

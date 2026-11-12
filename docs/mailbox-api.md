@@ -8,9 +8,9 @@
 - `ids` 与 `unreadOnly=true` 不能同时使用。查询不修改已读状态。
 
 响应继续包含 `inbox`、`outbox`、`unread`。`unread` 统计整个收件箱，不受当前筛选和窗口限制。
-新增 `inboxComplete` 表示当前筛选的收件结果未被 100 封上限截断，不能将截断列表当作全量。
+`inboxComplete` 表示当前筛选的收件结果未被 100 封上限截断，不能将截断列表当作全量。
 
-`POST /api/protected/messages/read` 的现有协议保持兼容。需要固定确认范围的调用方应发送
+`POST /api/protected/messages/read` 需要固定确认范围时发送
 具体编号与 `all=false`，写后按同一批编号重新查询并逐项核对，不能只看全局未读数是否下降。
 
 实现位于 `src/routes/profile/mailbox.rs`。模块的数据库契约测试在 `TEST_PG_URL` 配置时
@@ -41,7 +41,7 @@
 - 删除不等同于已读。列表、未读计数、近期摘要及详情都使用同一可见性条件，
   已删除内容也不会再通过 Agent 的本人读取接口返回。
 - PostgreSQL 迁移 `0020_personal_message_deletion.sql` 新增可空删除时间列。
-  升级时先应用迁移，再部署服务；现有数据无需回填，旧服务仍兼容新增列。
+  升级时先应用迁移，再部署服务，现有数据无需回填。
 
 ## 公告弹窗读取
 

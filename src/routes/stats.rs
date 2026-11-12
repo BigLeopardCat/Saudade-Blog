@@ -58,7 +58,7 @@ pub struct RoleCount {
 #[derive(Serialize, Default, Clone)]
 pub struct UserRowDto {
     pub id: i32,
-    /// 展示名（`display_name` 产出；**不是** username，见模块头注的隐私一节）
+    /// 展示名由 display_name 生成，不返回登录账号名。
     pub name: String,
     pub role: String,
     pub conversations: i64,
@@ -85,10 +85,7 @@ fn looks_like_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// 展示名：`nickname` 可用则用，否则 `用户#<id>`。
-///
-/// 不可用的两种情形：空串（后台没配过）；**像哈希**（早期 nickname 默认取账号，
-/// 而账号本身存的就是 SHA-256）。宁可显示 `用户#7` 也不显示一串口令派生物。
+/// 优先展示有效昵称；空值或疑似哈希值回退为 用户#<id>。
 pub fn display_name(id: i32, nickname: &str) -> String {
     let n = nickname.trim();
     if n.is_empty() || looks_like_hash(n) {
@@ -168,7 +165,7 @@ pub fn listed(rows: &[Activity]) -> Vec<UserRowDto> {
         .collect()
 }
 
-/// GET /api/protected/stats/users —— 见模块头注。
+/// GET /api/protected/stats/users：管理员可见的账号活动报表。
 pub async fn user_stats(State(state): State<Arc<AppState>>) -> Json<ApiResponse<UserStatsDto>> {
     let db = &state.db;
 
@@ -235,11 +232,7 @@ pub async fn user_stats(State(state): State<Arc<AppState>>) -> Json<ApiResponse<
         }
     };
 
-    // 4. 按 user_id 聚合讨论数（+最后一条讨论的时间）。
-    // **只过滤 `is_deleted = 0`，刻意不过滤 `approved`**：本页口径 = 这个账号做过什么，
-    // 待审/驳回的评论也是他做的（风控视角下这才是要看的那个数）。公开口径那一份在
-    // `note_stats::comments_of`（`approved = 1 AND is_deleted = 0`），两处不同是刻意的。
-    // 与第 2 步同一失败策略：查询挂了就整份报表报错，绝不静默按 0 出数（"读不到 ≠ 0"）。
+    // 账号活动统计包含待审和驳回内容，仅排除软删除；查询失败使整份报表失败。
     let cmt = match grouped_counts(
         note_comment::Entity::find()
             .select_only()
@@ -280,8 +273,7 @@ pub async fn user_stats(State(state): State<Arc<AppState>>) -> Json<ApiResponse<
         total_conversations: conv.values().map(|(c, _)| c).sum(),
         total_messages: msg.values().map(|(c, _)| c).sum(),
         total_executions,
-        // 与 `total_messages` 同一条纪律：**全站总量**，用聚合表全量求和，
-        // 不从 `rows` 派生（超管自己发的讨论也是站内活动的一部分，不该被扣掉）。
+        // 全站总量从聚合表求和，不从当前页面账号列表推导。
         total_comments: cmt.values().map(|(c, _)| c).sum(),
         active_users7d: active_since(&rows, now - chrono::Duration::days(7)),
         active_users30d: active_since(&rows, now - chrono::Duration::days(30)),

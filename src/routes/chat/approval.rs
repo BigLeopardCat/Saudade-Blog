@@ -169,8 +169,7 @@ pub(super) async fn claim_confirm_token(
     }
 }
 
-/// 解出确认令牌 payload 里的 `jti`（**不验签**，理由见 `claim_confirm_token`）。
-/// 解不出（格式坏 / 没有点号 / 早期无 jti 的令牌）→ 空串，调用方据此不核销。
+/// 仅解码确认令牌中的 jti，不作为验签或授权。格式无效或缺少 jti 时返回空串。
 pub(super) fn token_jti(token: &str) -> String {
     token_payload(token)
         .and_then(|value| value["jti"].as_str().map(|s| s.chars().take(64).collect()))

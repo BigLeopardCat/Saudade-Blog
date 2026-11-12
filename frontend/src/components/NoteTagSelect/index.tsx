@@ -47,14 +47,7 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
         return map;
     }, [options]);
 
-    /**
-     * 干净的受控值：丢掉字典里已经不存在的 id。
-     *
-     * 悬空 id（标签已被删、文章的 `note.tags` 还留着）在旧界面上渲染成**空白标签块**。
-     * 这里直接不显示，于是「打开配置弹窗 → 保存」就顺手把这一行清干净了；
-     * 注意空数组**必须**照原样回传（后端 `noteTags: ""` 就是"清空标签"的语义），
-     * 所以不能因为"看起来是空的"就跳过 onChange。
-     */
+    /** 丢弃字典中不存在的 id；空数组仍触发 onChange，以便明确清空标签。 */
     const safeValue = useMemo(
         () => (Array.isArray(value) ? value.filter(v => colorOf.has(v)) : []),
         [value, colorOf],

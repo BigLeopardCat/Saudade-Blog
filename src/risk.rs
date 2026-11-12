@@ -10,8 +10,7 @@ use sea_orm::{
 use crate::entity::{note_comment, talk, user};
 use crate::routes::AppState;
 
-/// 风控的五个配置键（`web_info` KV）。**只在这里列一次**：读取、前端设置卡、
-/// agent 文档都引用这一组，谁都不许手抄字面量。
+/// web_info 中的风控配置键，供读取和设置接口共用。
 pub const RISK_KEYS: [&str; 5] = [
     "contentRateWindowSecs",
     "contentMinIntervalSecs",
@@ -48,14 +47,7 @@ impl Default for RiskConfig {
     }
 }
 
-/// 从 KV 读到的原始字符串解析出配置。**纯函数**（不碰库、不碰时间），所以三条取值
-/// 规则可以被单测逐格钉住：
-///
-///   · **缺键** ⇒ 用默认值（没配过就是这个特性的出厂状态）；
-///   · **解析失败**（`abc`、空串、`12.5`）⇒ **回落默认值**，不是回落 0——
-///     填错一个键不该意外把闸门关掉；
-///   · **值 `<= 0`** ⇒ 该档**显式关闭**。"关掉风控"是一个可表达的状态，
-///     而不是靠填一个荒谬的数去逼近。
+/// 缺键或解析失败使用默认值；非正值显式关闭对应策略。
 pub fn parse_config(get: impl Fn(&str) -> Option<String>) -> RiskConfig {
     let d = RiskConfig::default();
     let one = |key: &str, fallback: i64| -> i64 {
@@ -76,8 +68,7 @@ pub fn parse_config(get: impl Fn(&str) -> Option<String>) -> RiskConfig {
     }
 }
 
-/// 从库里读一次配置（每个发帖请求一次，一条 `SELECT`）。读库失败 ⇒ 默认值
-/// （**失败取向不是"放行"**：默认值本身就是有阈值的，只是不是主人调过的那组）。
+/// 每次发帖读取配置；读取失败时采用默认阈值。
 pub async fn load_config(db: &DatabaseConnection) -> RiskConfig {
     let rows = crate::entity::web_info::Entity::find()
         .filter(crate::entity::web_info::Column::KeyName.is_in(RISK_KEYS.to_vec()))
@@ -96,7 +87,7 @@ pub enum RiskVerdict {
     Pass,
     /// 限流档：**本条强制转人工**（忽略两个审核开关）
     RateLimited { count: i64 },
-    /// 触发自动禁言：`muted_until` 已写库、本人已收到通知；**本条同样强制转人工**
+    /// 触发自动禁言；本条内容强制转人工，通知为尽力投递。
     Muted { until: NaiveDateTime, count: i64 },
 }
 
@@ -110,11 +101,7 @@ pub enum RiskReject {
 }
 
 impl RiskReject {
-    /// 拒发时给当事人看的一句话。**两个入口共用这一处**：分开写的话，"被禁言"
-    /// 在评论与留言两条路上会长出两套说法，其中一套迟早会忘了说许可到什么时候。
-    ///
-    /// 禁言那条走 `authz::mute_denial_message`（人工禁言与自动禁言要说同一句话，
-    /// 见 `docs/security-boundary.md §7⑫` 的跨语言契约）。
+    /// 评论和留言共用拒绝说明；禁言期限由 authz 格式化。
     pub fn message(&self) -> String {
         match self {
             RiskReject::AlreadyMuted { until } => crate::authz::mute_denial_message(
@@ -128,12 +115,7 @@ impl RiskReject {
     }
 }
 
-/// 判定通过之后、内容落库**之前**的副作用。返回 **`true` = 本条强制转人工**
-/// （两个入口拿到它之后都做同一件事：`if forced && approved == 1 { approved = 0 }`
-/// ——**只把 1 压成 0**，绝不把 AI 已驳回的 2 松成待审；见 `decide_review` 的裁决语义）。
-///
-/// 两个 handler 共用这一个函数：这样"限流档要不要通知本人""禁言档写不写库"只有一处答案，
-/// 将来加一档（比如更重的处置）也不会出现"评论做了、留言忘了"。
+/// 内容落库前执行风控副作用；true 表示强制转人工，但不覆盖审核驳回结果。
 pub async fn apply_verdict(
     state: &AppState,
     uid: i32,
@@ -153,11 +135,7 @@ pub async fn apply_verdict(
     }
 }
 
-/// 发帖入口的闸。**这是评论与留言唯一的风控调用点**（两个 handler 各调一次，
-/// 行为由本函数一处决定——两处各写一份判据必然会在某天只剩一处被改）。
-///
-/// 只有 `Ok(RiskVerdict::RateLimited | Muted)` 时才会写库（禁言）与发通知；
-/// `Err` 只回原因，不产生任何副作用（除了间隔那条已经记下这一次尝试）。
+/// 评论与留言的统一风控入口。判定错误时不写禁言或通知；间隔检查仍记录发送尝试。
 pub async fn screen(
     state: &AppState,
     uid: i32,
@@ -175,9 +153,7 @@ pub async fn screen(
         }
     }
 
-    // ② 最小间隔（内存计数器：重启丢失不构成绕过，见模块头注）。
-    // `<= 0` = 该档显式关闭——这条规则住在 `PostRateLimiter::check_and_mark` 里，
-    // 这里不再自己判一遍（同一个规则写两处，就是等着两处哪天不一致）。
+    // 非正间隔由 check_and_mark 解释为关闭；计数器仅保存在当前进程。
     if let Err(retry_after_secs) = state.post_limiter.check_and_mark(uid, cfg.min_interval_secs) {
         return Err(RiskReject::TooSoon { retry_after_secs });
     }
@@ -199,11 +175,7 @@ pub async fn screen(
     Ok(RiskVerdict::Pass)
 }
 
-/// 自动禁言的落库 + 通知。**在内容落库之前调用**（`screen` 只判定，这里是副作用），
-/// 两个 handler 共用，保证"触发禁言"这件事在两条链路上的表现逐字相同。
-///
-/// 通知**先落库再发**（同冻结那条纪律）：写失败时不能留下一条"你已被禁言"的假通知。
-/// 通知失败只记一行日志——它是 best-effort，绝不影响发帖本身。
+/// 内容落库前写入禁言，再尽力发送通知；禁言写入失败时不发送成功通知。
 pub async fn apply_auto_mute(state: &AppState, uid: i32, until: NaiveDateTime, count: i64) {
     let now = chrono::Local::now().naive_local();
     let row = match user::Entity::find_by_id(uid).one(&state.db).await {
@@ -214,8 +186,7 @@ pub async fn apply_auto_mute(state: &AppState, uid: i32, until: NaiveDateTime, c
             return;
         }
     };
-    // 已经在禁言期就别再写一次（并发两条同时越过阈值时，第二次不该把到期时间接着往后推
-    // ——"禁言被无限续期"是刷子最容易制造出来的形态）
+    // 已生效的禁言不续期，避免并发请求延长截止时间。
     if crate::authz::is_muted(row.muted_until, now) {
         return;
     }
@@ -239,8 +210,7 @@ pub async fn apply_auto_mute(state: &AppState, uid: i32, until: NaiveDateTime, c
     .await;
 }
 
-/// 限流档给本人的通知：**说清为什么、本条去哪了**（不说的话，当事人只看到"评论没显示"，
-/// 会当成发送失败反复重发，而那正好是我们要拦的行为）。
+/// 限流通知说明触发原因和内容转人工的结果。
 pub async fn notify_rate_limited(state: &AppState, uid: i32, count: i64, window_secs: i64) {
     crate::routes::notice::push_notice(
         &state.db,
@@ -256,12 +226,9 @@ pub async fn notify_rate_limited(state: &AppState, uid: i32, count: i64, window_
     .await;
 }
 
-/// 禁言通知正文。与 `authz::mute_denial_message` **同一组事实、不同的句子**：
-/// 那条是"你被拒了"的当面回执，这条是事后留档的通知（所以带上了触发原因与条数）。
+/// 禁言通知包含触发原因、次数和当前可用能力。
 fn mute_notice_body(count: i64, until: NaiveDateTime, now: NaiveDateTime) -> String {
-    // 期限的措辞**整块交给 `authz::mute_span_text`**（"（永久）" / "至 X（还剩约 Y）"）：
-    // 本函数不再自己判哨兵、自己 `format!` 日期，避免同一措辞出现第三份实现——
-    // 哨兵值或格式一改，后台回执与个人中心横幅跟着变，这里不会。
+    // 与 authz 的拒绝说明共用期限格式。
     let how_long = crate::authz::mute_span_text(until, now);
     format!(
         "你在短时间内发布了 {count} 条评论或留言，已被临时禁言{how_long}。\
@@ -281,10 +248,7 @@ fn window_text(window_secs: i64) -> String {
     }
 }
 
-/// 窗口内这个人发了多少条（评论 + 留言**合起来**）。
-///
-/// 两张表各一次 COUNT。**不用 `UNION` 一条 SQL 图省事**：两条走各自的
-/// `(user_id, created_at)` 索引，计划更可控，而这里本来就只有两次往返。
+/// 分别利用评论与留言的用户/时间索引计数，再求和。
 async fn count_recent(state: &AppState, uid: i32, since: NaiveDateTime) -> i64 {
     let comments = note_comment::Entity::find()
         .filter(note_comment::Column::UserId.eq(uid))
@@ -302,12 +266,7 @@ async fn count_recent(state: &AppState, uid: i32, since: NaiveDateTime) -> i64 {
     comments + talks
 }
 
-/// 发言最小间隔的刹车（形态照抄 `rate_limiter::LoginRateLimiter`：`Mutex<HashMap>`、
-/// 惰性清理、无外部依赖）。
-///
-/// 它记的是**每一次放行的尝试**（不是每一次成功落库）：写失败/校验失败也占掉这个间隔。
-/// 这是刻意的——它的职责是"别让人以机器速度连打接口"，而不是精确记账；把它做成
-/// "成功才记"会在失败重试那条路径上完全失效，而那正是脚本的形态。
+/// 按用户记录放行的发送尝试；后续校验或写入失败仍占用最小间隔。
 #[derive(Clone)]
 pub struct PostRateLimiter {
     last: Arc<Mutex<HashMap<i32, Instant>>>,
@@ -324,12 +283,7 @@ impl PostRateLimiter {
         Self { last: Arc::new(Mutex::new(HashMap::new())) }
     }
 
-    /// `Ok(())` = 可以发（并记下这一刻）；`Err(剩余秒数)` = 太近；
-    /// `gap_secs <= 0` = **这一档显式关闭**（同 [`parse_config`] 的取值规则）⇒ 恒放行。
-    ///
-    /// "关闭"这条规则**只在本函数里实现一次**，调用方不再自己判一遍（`screen` 直接调）。
-    /// 不能用 `gap_secs.max(1)`——那会把 0 悄悄变成"1 秒"，即**一个关不掉的闸**：
-    /// 管理员把 `contentMinIntervalSecs` 设成 0 本意是关掉间隔限制，实际仍在拦人。
+    /// 放行时记录时间；拒绝时返回剩余秒数。gap_secs <= 0 关闭间隔限制。
     pub fn check_and_mark(&self, uid: i32, gap_secs: i64) -> Result<(), i64> {
         if gap_secs <= 0 {
             return Ok(());
@@ -421,8 +375,7 @@ mod tests {
         assert_eq!(c.mute_hours, 48);
     }
 
-    /// 五个键**只在这一处列**：加了配置项却忘了加进 `RISK_KEYS`，
-    /// 表现是"设置卡上改了、后端读不到"（静默失效）——这条钉住数量与内容。
+    /// 读取和设置使用同一组风控配置键。
     #[test]
     fn 配置键清单不许少项() {
         assert_eq!(RISK_KEYS.len(), 5);
@@ -453,9 +406,7 @@ mod tests {
         assert_eq!(limiter.check_and_mark(9, 0), Ok(()));
     }
 
-    /// 窗口长度的人话（配置可改，界面上不能写死"10 分钟"）
-    /// 拒发话术：**禁言那条不许在风控里另写一份**（它必须与人工禁言的当面对话逐字同源，
-    /// 否则同一个状态会长出两种解释）。所以这里断言的是"它与 `authz` 那一份相同"。
+    /// 自动与人工禁言共用拒绝说明。
     #[test]
     fn 拒发话术禁言那条与人工禁言同源() {
         let until =
@@ -463,7 +414,7 @@ mod tests {
         let mine = RiskReject::AlreadyMuted { until }.message();
         assert!(mine.starts_with("你已被禁言，至 2026-10-04 12:00"), "{mine}");
         assert!(mine.contains("不能发布评论与留言"), "{mine}");
-        // 永久那一支（风控自己写不出"永久"这个词，只能从 authz 取）
+        // 永久禁言不展示哨兵日期。
         let forever = RiskReject::AlreadyMuted { until: crate::authz::mute_forever_at() }.message();
         assert!(forever.contains("永久"), "{forever}");
         assert!(!forever.contains("9999"), "{forever}");

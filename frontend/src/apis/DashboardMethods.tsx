@@ -12,13 +12,7 @@ export function getTodos() {
     });
 }
 
-/**
- * PUT /api/protected/todos：整份覆盖。成功时服务端回读一次，返回库里此刻的样子。
- *
- * ★ 调用方注意：**这份 payload 就是库里的全部**——本地列表里没有的行会真的被删掉。
- * agent 可能刚用追加通道写过一条（见文件头注），所以"本地还有没落库的改动、且知道
- * agent 刚写过"时，发之前要先 GET 一次把 agent 那几条并进来。
- */
+/** 整份覆盖待办，缺失项会被删除；提交前须合并其他写入渠道的最新结果。 */
 export function saveTodos(todos: DashboardTodo[]) {
     return http<Envelope<DashboardTodo[]>>({
         url: "/api/protected/todos",

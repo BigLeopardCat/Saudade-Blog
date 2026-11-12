@@ -4,10 +4,7 @@ pub(crate) fn split_terms(kw: &str) -> Vec<String> {
         let piece = piece.to_lowercase();
         let whole_piece = piece.chars().count() == 1;
         for t in script_runs(&piece) {
-            // 纯符号段（`。。。` / `...` / `!!!` / emoji）一律丢：这类 term 没有任何判别力，
-            // 留着就是把"搜所有含这三个点的文章"当成一次真检索。判据是**整段一个字母数字都没有**，
-            // 而不是"含标点就丢"——`C++` / `ESP32-S3` / `node.js` / `3.5` 里的标点是词的一部分
-            // （见 script_runs），它们各有字母数字，照常保留。
+            // 忽略纯符号；保留 C++、ESP32-S3、node.js 等技术名称中的标点。
             if !t.chars().any(|c| c.is_alphanumeric()) {
                 continue;
             }
@@ -22,21 +19,12 @@ pub(crate) fn split_terms(kw: &str) -> Vec<String> {
     out
 }
 
-/// 用户**是否给了**关键词（`None` / 空串 / 全空白 = 没给，其余 = 给了）。
-///
-/// 存在的理由：`split_terms` 可能把一个**非空**关键词切成一无所有（`第1章`、纯标点），
-/// 而两个搜索处理函数都把"terms 为空"当作"没有关键词"、直接返回整表——于是这类查询
-/// 会得到全站文章列表。这是**假命中**，必须用本函数把它和"真的没给关键词"分开。
+/// 区分未提供关键词与提供了关键词但没有可检索词项，后者不能退化为全量列表。
 pub(crate) fn keyword_given(kw: Option<&str>) -> bool {
     kw.map(|k| !k.trim().is_empty()).unwrap_or(false)
 }
 
-/// 一段文本按**脚本类别**切成连续段：ASCII 字符算一类，其余（汉字 / 全角标点 / 假名 / emoji）算另一类。
-/// 纯 ASCII 段或纯非 ASCII 段切出来仍是它自己（二次切分对它们零影响）。
-///
-/// 为什么按类别切、而不是"凡非字母数字都当分隔符"：`C++` / `ESP32-S3` / `node.js` 里的
-/// `+ - .` 是词的一部分，按标点切会把它们剁成单字符残片，其中 `c` 会命中几乎整个库。
-/// **只有跨脚本才切**。
+/// 按 ASCII / 非 ASCII 连续段切分，保留各段内部标点。
 fn script_runs(piece: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -89,11 +77,7 @@ pub(crate) fn keyword_prefilter(
     Some(cond)
 }
 
-/// 命中的 term 个数（0 = 不命中；`terms.len()` = **全中**）。**档位即这个词数**——
-/// 前台按「全中优先、无全中才降级到部分命中」分档（见 `routes/notes.rs::search_notes`）。
-///
-/// `hit` 由调用方给：文章要连**标签名字**一起判（标签在库里是 id 串，只有过了字典才知道名字），
-/// 说说/留言/评论只看自己的正文（留言那张表的 `title` 列存的是**落款**，不是标题）。
+/// 返回命中词项数；调用方提供标题、标签或正文的匹配规则。
 pub(crate) fn count_terms(terms: &[String], hit: impl Fn(&str) -> bool) -> usize {
     terms.iter().filter(|t| hit(t)).count()
 }
@@ -121,12 +105,7 @@ pub(crate) fn score_term_sum(
     terms.iter().map(|t| score_term(t, title, tags, body)).sum()
 }
 
-/// 结果行摘要：空白折平（换行/多空格折叠成一个空格）后按**字符**截断。
-///
-/// 为什么按字符而不是字节：中文列宽按字算，按字节截会把一个字劈成 U+FFFD。
-/// 为什么折平空白：这些摘要进的是搜索结果的一行两行截断槽，原文里的换行会把布局撑歪，
-/// 而且头 100 个字符可能全是缩进。评论正文本来就带 `\n`（`comments::clean_content`
-/// 特意留着它），留言板那篇 `talk_brief` 也为 `\r` 专门拍过平——折叠是这两条经验的收口。
+/// 折叠空白并按 Unicode 字符数截断搜索摘要。
 pub(crate) fn snippet(s: &str, max_chars: usize) -> String {
     let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= max_chars {
@@ -145,7 +124,7 @@ mod split_terms_tests {
         split_terms(kw)
     }
 
-    /// 纯中文 / 纯 ASCII / 多空白段：**与二次切分前逐字一致**（不许有行为漂移）。
+    /// 单一脚本和空白分隔的词项保持原值。
     #[test]
     fn unchanged_for_single_script() {
         assert_eq!(terms("架构"), vec!["架构"]);
@@ -170,15 +149,13 @@ mod split_terms_tests {
         assert_eq!(terms("架构-设计"), vec!["架构", "设计"]);
     }
 
-    /// 混排切出来的**单字符残片**必须丢掉：`第1章` 若留下 `1`，就退化成"搜所有含数字 1 的文章"。
+    /// 丢弃跨脚本切分产生的单字符残片。
     #[test]
     fn drops_single_char_fragments_from_split() {
         assert_eq!(terms("第1章"), Vec::<String>::new());
     }
 
-    /// 切完一无所剩的**非空**关键词必须与"没给关键词"分开：前者回空结果、
-    /// 后者返回整表（分类页/文章列表就是靠后者一次拉全量）。混作一谈会让
-    /// `第1章` 这类查询拿到全站文章列表（假命中）。
+    /// 非空关键词没有有效词项时返回空结果，不能退化为全量列表。
     #[test]
     fn keyword_given_distinguishes_blank_from_unusable() {
         assert!(keyword_given(Some("架构")));
@@ -324,12 +301,7 @@ mod keyword_prefilter_tests {
         Some((sql, values.0.into_iter().next().expect("预筛至少该有一个绑定值")))
     }
 
-    /// **必须是 `ILIKE`**：内存判定是 `to_lowercase().contains`，而 PG 的 `LIKE`
-    /// **区分大小写** ⇒ 用 `LIKE` 会把"正文写 `ESP32`、查询 `esp32`"的行静默丢掉，
-    /// 而内存那一遍永远看不见被丢掉的行（这是**少结果**，不是慢）。
-    ///
-    /// 判据写成"`LIKE` 出现次数 == `ILIKE` 出现次数"：裸 `LIKE` 是 `ILIKE` 的子串，
-    /// 单查 `contains("LIKE")` 对它**恒真**（那种写法看起来在测、其实什么都没测）。
+    /// SQL 预筛使用 ILIKE，与内存中的不区分大小写匹配保持一致。
     #[test]
     fn 预筛用_ilike_而不是_like() {
         let (sql, _) = render(&[col("title")], &["esp32".to_string()]).unwrap();
@@ -341,10 +313,7 @@ mod keyword_prefilter_tests {
         );
     }
 
-    /// 模式串必须是 `%<like_escape(term)>%`：`%` / `_` / `\` 三个字符都要转义成字面量。
-    ///
-    /// ⚠️ 这条判的是**绑定值**，不是 SQL 文本 —— sea-query 默认把值渲染成占位符
-    /// （`$1`），文本里根本没有那个串；写成 `sql.contains("100\\%")` 会恒假。
+    /// 绑定值转义百分号、下划线和反斜杠。
     #[test]
     fn 模式串转义成字面量() {
         let cases = [
@@ -361,7 +330,7 @@ mod keyword_prefilter_tests {
         }
     }
 
-    /// 多个 term / 多列 = 逐个组合成 `OR`（**超集**语义：任一 term 命中任一列即可）。
+    /// 预筛取任一词项在任一列命中的超集。
     #[test]
     fn 多词多列拼成_or() {
         let terms = vec!["a".to_string(), "b".to_string()];
@@ -373,9 +342,7 @@ mod keyword_prefilter_tests {
         );
     }
 
-    /// 没有 term / 没有列 ⇒ `None`。**调用方不许拿它拼一个恒真条件**：
-    /// `Condition::any()` 里一条都没有时渲染出来是**空**，但谁把它当成"匹配一切"去用，
-    /// 就会把整张表拉进候选（预筛的意义当场归零）。
+    /// 没有词项或列时返回 None，调用方不得将其解释为匹配全部。
     #[test]
     fn 空输入回_none() {
         assert!(keyword_prefilter(&[], &["a".to_string()]).is_none());

@@ -58,11 +58,7 @@ pub fn encrypt_password(input: &str) -> String {
     hex::encode(result)
 }
 
-/// 密码哈希：Argon2id，PHC 字符串（自带算法、参数、随机盐），每行一个独立盐。
-///
-/// 为什么换：旧格式是**无盐单轮 SHA-256**——彩虹表直接命中、同密码哈希相同
-/// （撞库时一眼看出哪些账号同密码）、GPU 每秒可试几十亿次。Argon2id 是 OWASP
-/// 当前的推荐档，内存硬（默认 19MiB）+ 时间可调，把离线爆破成本抬到不可行。
+/// Argon2id 密码哈希，PHC 字符串携带参数和独立随机盐。
 pub fn hash_password(input: &str) -> String {
     use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     let salt = SaltString::generate(&mut OsRng);
@@ -94,7 +90,7 @@ pub async fn verify_password_async(input: String, stored: String) -> Result<bool
     password_work(move || verify_password(&input, &stored)).await
 }
 
-/// 校验密码：**同时认新格式与旧格式**（旧格式只在登录成功后被惰性升级，见 auth.rs）。
+/// 校验 Argon2id 或 SHA-256 格式；登录成功后升级 SHA-256 哈希。
 pub fn verify_password(input: &str, stored: &str) -> bool {
     use argon2::password_hash::{PasswordHash, PasswordVerifier};
     if stored.starts_with("$argon2") {
@@ -102,8 +98,7 @@ pub fn verify_password(input: &str, stored: &str) -> bool {
             .map(|h| argon2::Argon2::default().verify_password(input.as_bytes(), &h).is_ok())
             .unwrap_or(false);
     }
-    // 旧格式：确定性 SHA-256 十六进制——用常数时间比较（虽然这里的比较对象是
-    // 服务端算出来的，泄漏面很小，但没理由留一个非常数时间的比对）
+    // SHA-256 哈希使用常数时间比较。
     let got = encrypt_password(input);
     got.len() == stored.len()
         && got.bytes().zip(stored.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
@@ -224,22 +219,8 @@ pub fn site_url() -> String {
         .to_string()
 }
 
-/// 物联网平台（EMQX + device-service + 静态控制台）是否部署在本站：读 `IOT_ENABLED`。
-///
-/// **出厂缺省是关**（与 `site_url` 同一取向：没配时按"没装"处理，而不是按项目作者装了的
-/// 样子）。那三块是**可选件**，源码收在仓库 `iot/` 目录，装不装由部署者决定；关掉时
-/// nginx 不 include 那两个 snippet ⇒ `/device-console/` 与 `/device-api/*` 根本不存在
-/// （`/device-console/` 会落到 SPA fallback 返回首页的 index.html）。
-///
-/// 本函数负责**只负责 Rust 这一侧的唯一一处消费点**——`sitemap.xml` 的固定页面表
-/// （[`crate::routes::sitemap`]）。别的消费面各读各的配置体系、值同源：agent 读
-/// `config/settings.py` 的 `iot_enabled`，nginx 侧由 `iot/toggle.sh` 增删 snippet，
-/// 前端**零消费点**（它只在 `SPA_NAV_DENY` 里提到这个路径，那是"不走 SPA 桥"的意思，
-/// 与装没装无关）。别在这里加缓存：调用点只有"每次抓 sitemap"，一次 getenv 可忽略，
-/// 而 `OnceLock` 会让测试里改环境变量失效（同 `site_url`）。
-///
-/// 取值口径与 agent 侧 `_settings.iot_enabled`（pydantic-settings，真值集
-/// `1/true/yes/on`）**必须一致**：两边对同一个 `.env` 里的 `IOT_ENABLED=1` 都要认成"开"。
+/// 读取可选 IoT 功能开关，默认关闭，供 sitemap 使用。
+/// 真值接受 1/true/yes/on，与 Agent 配置保持一致；nginx 路由由 iot/toggle.sh 管理。
 pub fn iot_enabled() -> bool {
     matches!(
         env::var("IOT_ENABLED").unwrap_or_default().trim().to_ascii_lowercase().as_str(),
@@ -277,11 +258,9 @@ mod tests {
         assert_eq!(password_reject("1234567"), Some("密码至少 8 位"));
         assert_eq!(password_reject("12345678"), None);
 
-        // 中文：3 个字是 9 字节 —— 旧判据（`len() < 8`）会放行，新判据必须拦下。
-        // 这一条正是 `auth::reset_password` 那个洞。
+        // 密码长度按字符数校验。
         assert_eq!(password_reject("一二三"), Some("密码至少 8 位"));
-        // 1 个字是 3 字节 —— 旧判据（`len() < 3`）会放行，新判据必须拦下。
-        // 这一条正是 `temp_user::change_password` 那个洞。
+        // 单个多字节字符仍不满足最小长度。
         assert_eq!(password_reject("密"), Some("密码至少 8 位"));
 
         // 8 个汉字合格（32 字节）

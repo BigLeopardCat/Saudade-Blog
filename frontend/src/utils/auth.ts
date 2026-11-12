@@ -33,30 +33,19 @@ export function getRoleFromToken(token?: string | null): string | null {
     return getTokenClaims(token)?.role ?? null
 }
 
-/** 当前登录用户的 uid（未登录/解析失败 = null）。
- *
- *  账号管理页用它判"这一行是不是我自己"（后端不许冻结自己的账号）。**不为了这件事去
- *  拉 /profile**：uid 就在令牌的 `sub` 里，多一次请求换来的还可能是过期的答案。 */
+/** 解析当前账号 id，仅供界面判断本人操作；不构成服务端授权。 */
 export function getUidFromToken(token?: string | null): number | null {
     const sub = getTokenClaims(token)?.sub
     return typeof sub === 'number' ? sub : null
 }
 
-/** 是否**能进后台**（前端界面分流用，非权限判据，见文件头）。
- *
- *  超级管理员也算：`superadmin` 比管理员权限更高而不是另一个物种，后台准入判据
- *  在 Rust 侧就是一处 `can_access_console`（admin 或 superadmin）。这里要是只认
- *  'admin'，博主提权当天就会**进不去自己的后台**——而且守卫是本地解码令牌判的，
- *  后端一点错都报不出来。 */
+/** 前端后台入口判断；真实权限由服务端当前账号状态核对。 */
 export function isAdminToken(token?: string | null): boolean {
     const role = getRoleFromToken(token)
     return role === 'admin' || role === 'superadmin'
 }
 
-/** 角色显示名（取值域见 Rust 侧 `src/authz.rs::KNOWN_ROLES`）。
- *  放这儿而不是各页面自己写一份：账号管理页与个人中心都要显示这个标签，
- *  两份表迟早会漂移成"同一角色两个名字"。
- *  未知角色**不在这里编名字**：调用方回退显示原值（`roleLabel` 就是干这个的）。 */
+/** 角色显示名，与服务端 KNOWN_ROLES 的取值一致。 */
 export const ROLE_LABEL: Record<string, string> = {
     admin: '管理员',
     superadmin: '站长',
