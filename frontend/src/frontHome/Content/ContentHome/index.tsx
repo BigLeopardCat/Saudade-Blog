@@ -4,6 +4,8 @@ import {SITE_TITLE, SITE_DESCRIPTION} from "../../../utils/siteUrl";
 import './index.sass'
 // Section styles override the home defaults.
 import './sections.sass'
+import './featured.sass'
+import FeaturedArticles from './FeaturedArticles'
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
 import {hasArticleInvalidation} from "../../../components/UserCenter/agentTurn.ts";
@@ -14,23 +16,19 @@ import { motion } from 'framer-motion';
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
-import NoteByline from "../../../components/NoteByline";
 import {useNavigate, useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
-import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
-import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
-import { CAROUSEL_ASPECT, carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
+import {getNoteFeed, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import { parseNoteTags } from '../../../utils/noteTags';
-import { renderNoteTags } from '../../../apis/TagMethods.tsx';
-import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
-import { createArticleFeed, requireArticleRows } from './articleFeed';
+import { createArticleFeed, requireArticlePage, requireArticleRows } from './articleFeed';
 
 let cachedOtherArticles: NoteType[] = [];
 let cachedTopArticles: NoteType[] = [];
 let cachedCurrentPage = 1;
 let cachedHasMoreArticles = true;
+let cachedNextCursor: string | null = null;
 let isCachedOther = false;
 
 let cachedPageSize = 6;
@@ -63,12 +61,6 @@ const mapRows = (rows: unknown[]): NoteType[] => rows.map(raw => {
 });
 
 const ContentHome = () => {
-    const [currentTop,setCurrentTop] = useState(0);
-
-    const [hoverPaused, setHoverPaused] = useState(false);
-
-    const [topInView, setTopInView] = useState(true);
-    const topRef = useRef<HTMLDivElement>(null);
     const heroRef = useRef<HTMLDivElement>(null);
 
     const pageSizeRef = useRef(cachedPageSize);
@@ -77,6 +69,7 @@ const ContentHome = () => {
     const topPendingRef = useRef<Promise<void> | null>(null);
     const [topError, setTopError] = useState(false);
     const measureRef = useRef<HTMLDivElement>(null);
+    const feedBoundaryRef = useRef<HTMLDivElement>(null);
     const location = useLocation();
 
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
@@ -89,23 +82,26 @@ const ContentHome = () => {
             cachedTopArticles = [];
             cachedCurrentPage = 1;
             cachedHasMoreArticles = true;
+            cachedNextCursor = null;
             cachedPageSize = FALLBACK_PAGE_SIZE;
             isCachedOther = false;
             pageSizeRef.current = FALLBACK_PAGE_SIZE;
         }
-        return createArticleFeed<NoteType>(async (page, pageSize) => {
-            const response = await getNotePage({ page, pageSize });
-            return mapRows(requireArticleRows(response));
+        return createArticleFeed<NoteType>(async (cursor, pageSize) => {
+            const response = await getNoteFeed({ limit: pageSize, ...(cursor ? { cursor } : {}) });
+            const result = requireArticlePage(response);
+            return { items: mapRows(result.items), nextCursor: result.nextCursor };
         }, {
             items: cachedOtherArticles, page: cachedCurrentPage, pageSize: cachedPageSize,
-            hasMore: cachedHasMoreArticles, loaded: isCachedOther,
+            hasMore: cachedHasMoreArticles, loaded: isCachedOther, nextCursor: cachedNextCursor,
         }, state => {
             cachedOtherArticles = state.items;
             cachedCurrentPage = state.page;
             cachedPageSize = state.pageSize;
             cachedHasMoreArticles = state.hasMore;
+            cachedNextCursor = state.nextCursor;
             isCachedOther = true;
-        });
+        }, item => item.key);
     });
     const [feedState, setFeedState] = useState(feed.snapshot);
     const { items: otherArticles, hasMore: hasMoreArticles, loading } = feedState;
@@ -124,25 +120,6 @@ const ContentHome = () => {
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)
     const author =  useSelector((state: { user: UserState }) => state.user.name);
-
-    useEffect(() => {
-        if(topArticles.length <= 1) return;
-        if (hoverPaused || !topInView) return; // 悬浮/移出视口暂停：清除定时器，恢复后再重建
-        const timer = setInterval(() => {
-            setCurrentTop(prevTop => {
-            return (prevTop + 1) % topArticles.length;
-        });
-        }, 5000);
-        return () => clearInterval(timer);
-    }, [topArticles.length, hoverPaused, topInView])
-
-    useEffect(() => {
-        const el = topRef.current;
-        if (!el) return;
-        const observer = new IntersectionObserver(([entry]) => setTopInView(entry.isIntersecting), { threshold: 0.1 });
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, []);
 
     useEffect(() => {
         const hero = heroRef.current;
@@ -197,7 +174,6 @@ const ContentHome = () => {
             const mapped = mapRows(requireArticleRows(res));
             if (generation !== topGenerationRef.current) return;
             setTopArticles(mapped);
-            setCurrentTop(current => Math.min(current, Math.max(0, mapped.length - 1)));
             cachedTopArticles = mapped;
         }).catch(() => {
             if (generation === topGenerationRef.current) setTopError(true);
@@ -228,7 +204,16 @@ const ContentHome = () => {
             behavior: 'smooth'
         });
     }
-    const getMore = () => feed.more();
+    useEffect(() => {
+        if (!feedState.loaded || feedState.pending || feedState.error || !hasMoreArticles) return;
+        const target = feedBoundaryRef.current;
+        if (!target) return;
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) void feed.more();
+        }, { rootMargin: '0px 0px 320px 0px' });
+        observer.observe(target);
+        return () => observer.disconnect();
+    }, [feed, feedState.loaded, feedState.pending, feedState.error, hasMoreArticles]);
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
@@ -298,52 +283,10 @@ const ContentHome = () => {
             {topError && <div role="status" className="homeLoadError">
                 置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button>
             </div>}
-            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }} ref={topRef}
-                onMouseEnter={() => setHoverPaused(true)}
-                onMouseLeave={() => setHoverPaused(false)}
-            >
-                <div className="Top"><span className="TopTape"><i className="iconfont icon-sticky1" aria-hidden="true"></i>置顶</span></div>
-                <div style={{ width: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
-                    {topArticles.map((item) => (
-                        <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0 }}>
-                            <div className="TopCover" style={{aspectRatio: CAROUSEL_ASPECT}}>
-                                {resolveApiAssetUrl(item.cover) && (
-                                    <img
-                                        src={resolveApiAssetUrl(item.cover)}
-                                        style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(carouselCropOf(item)) }}
-                                    />
-                                )}
-                                {topArticles.length > 1 && <div className="topDotsContainer">
-                                    {topArticles.map((slide, index) => <button type="button"
-                                        aria-label={`查看置顶文章 ${index + 1}`} aria-pressed={currentTop === index}
-                                        className={`topDot ${currentTop === index ? 'dotCurrent' : ''}`} key={slide.key}
-                                        onMouseEnter={() => setCurrentTop(index)}
-                                        onClick={event => {event.stopPropagation(); setCurrentTop(index)}}/>)}
-                                </div>}
-                            </div>
-                            <div className="topContent">
-                                <h4># {Categories.find(c => c.categoryKey === Number(item.noteCategory))?.categoryTitle}</h4>
-                                <h3 className="contentTitle">{item.noteTitle}</h3>
-                                <div className="descSlot">
-                                    <div className="ArticleDescription" onMouseLeave={resetDescScroll}> {item.description}</div>
-                                </div>
-                                <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                                    {renderNoteTags(item.noteTags, tagList, item.noteTagRefs)}
-                                </div>
-                                <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
-                                    <NoteByline item={item} siteAvatar={avatar} siteName={name} />
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-                </div>
-                
-
-            </div>}
-
-            <div style={{width:'80%', display: 'flex', marginBottom: '20px'}}>
-                <div className='allContent'><i className="iconfont icon-wenzhang2" aria-hidden="true"></i>文章</div>
+            {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories}
+                avatar={avatar} name={name} tags={tagList}/>}
+            <div className="homeSectionHeading">
+                <div className="allContent"><i className="iconfont icon-wenzhang2" aria-hidden="true"/>文章</div>
             </div>
 
             <div className="allArticles allArticlesMeasure" aria-hidden="true" ref={measureRef}>
@@ -360,19 +303,10 @@ const ContentHome = () => {
                 {feedState.error} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>重试</button>
             </div>}
             {feedState.loaded && !feedState.error && otherArticles.length === 0 && <p role="status">暂无公开文章</p>}
-            {loading ? (
-                <div className="loadingio-spinner-spinner-69tfms83mg9">
-                    <div className="ldio-se504dvlmh">
-                        <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
-                    </div>
-                </div>
-            ) : (
-                <div>
-                    {feedState.loaded && !feedState.error && hasMoreArticles ? (
-                        <button type="button" className='allContent more' disabled={feedState.pending} onClick={() => { void getMore(); }}>More</button>
-                    ) : null}
-                </div>
-            )}
+            <div className="homeFeedBoundary" ref={feedBoundaryRef} role="status" aria-live="polite">
+                {loading ? '正在加载文章…' : !feedState.error && feedState.loaded && otherArticles.length > 0
+                    ? hasMoreArticles ? '继续向下浏览' : '已经看到全部文章了' : null}
+            </div>
         </div>
     </>
 }

@@ -1,194 +1,129 @@
-import { describe, expect, it, vi } from 'vitest'
-import { createArticleFeed, requireArticleRows } from '../../src/frontHome/Content/ContentHome/articleFeed'
+import {describe, expect, it, vi} from 'vitest'
+import {createArticleFeed, requireArticlePage, requireArticleRows, type ArticlePage} from '../../src/frontHome/Content/ContentHome/articleFeed'
 
+const page = (items: string[], nextCursor: string | null = null): ArticlePage<string> => ({items, nextCursor})
 function deferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (reason?: unknown) => void
     const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
-    return { promise, resolve, reject }
+    return {promise, resolve, reject}
 }
-function setup(request: (page: number, size: number) => Promise<string[]>) {
+function setup(request: (cursor: string | null, size: number) => Promise<ArticlePage<string>>) {
     const commit = vi.fn()
-    const feed = createArticleFeed(request, { items: ['cached'], page: 1, pageSize: 2, hasMore: true, loaded: true }, commit)
-    return { feed, commit }
+    const feed = createArticleFeed(request, {items: ['cached'], page: 1, pageSize: 2,
+        nextCursor: 'after-cached', hasMore: true, loaded: true}, commit, value => value)
+    return {feed, commit}
 }
 
-describe('homepage API envelope', () => {
-    it('accepts confirmed empty results and rejects business errors or malformed payloads', () => {
-        expect(requireArticleRows({ data: { code: 200, data: [] } })).toEqual([])
-        expect(() => requireArticleRows({ data: { code: 500, data: [] } })).toThrow()
-        expect(() => requireArticleRows({ data: { code: 200, data: null } })).toThrow()
-        expect(() => requireArticleRows({})).toThrow()
+describe('homepage cursor feed', () => {
+    it('validates cursor and pinned-list API envelopes without accepting business failures', () => {
+        expect(requireArticleRows({data: {code: 200, data: []}})).toEqual([])
+        expect(requireArticlePage({data: {code: 200, data: page([])}})).toEqual(page([]))
+        for (const data of [[], null, {items: []}, {items: [], nextCursor: ''}, {items: [], nextCursor: 3}]) {
+            expect(() => requireArticlePage({data: {code: 200, data}})).toThrow()
+        }
+        expect(() => requireArticlePage({data: {code: 500, data: page([])}})).toThrow()
+        expect(() => requireArticleRows({data: {code: 500, data: []}})).toThrow()
     })
-})
 
-describe('homepage paging', () => {
-    it('keeps data, offset, hasMore and cache unchanged on failure; retries the exact failed page', async () => {
-        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
-            .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(['next'])
-        const { feed, commit } = setup(request)
+    it('preserves the exact failed cursor and cache until a successful retry', async () => {
+        const request = vi.fn<(cursor: string | null, size: number) => Promise<ArticlePage<string>>>()
+            .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(page(['next']))
+        const {feed, commit} = setup(request)
         await feed.more()
-        expect(feed.snapshot()).toMatchObject({ items: ['cached'], page: 1, pageSize: 2, hasMore: true, pending: false, error: expect.any(String) })
+        expect(feed.snapshot()).toMatchObject({items: ['cached'], page: 1, nextCursor: 'after-cached', hasMore: true, error: expect.any(String)})
         expect(commit).not.toHaveBeenCalled()
         await feed.retry()
-        expect(request.mock.calls).toEqual([[2, 2], [2, 2]])
-        expect(feed.snapshot()).toMatchObject({ items: ['cached', 'next'], page: 2, hasMore: false, error: null })
-        expect(commit).toHaveBeenCalledTimes(1)
+        expect(request.mock.calls).toEqual([['after-cached', 2], ['after-cached', 2]])
+        expect(feed.snapshot()).toMatchObject({items: ['cached', 'next'], page: 2, nextCursor: null, hasMore: false, error: null})
     })
 
-    it('does not cache a failed first page as an empty successful result', async () => {
-        const request = vi.fn().mockResolvedValue({ data: { code: 500, data: [] } })
-        const { feed, commit } = setup(async () => requireArticleRows(await request()) as string[])
-        await feed.first(4)
-        expect(feed.snapshot()).toMatchObject({ items: ['cached'], pageSize: 2, hasMore: true, error: expect.any(String) })
-        expect(commit).not.toHaveBeenCalled()
-    })
-
-    it('deduplicates rapid More clicks before React can commit a render', async () => {
-        const pending = deferred<string[]>()
+    it('coalesces repeated intersection callbacks into one pending request', async () => {
+        const pending = deferred<ArticlePage<string>>()
         const request = vi.fn(() => pending.promise)
-        const { feed } = setup(request)
+        const {feed} = setup(request)
         const first = feed.more()
-        const second = feed.more()
-        expect(first).toBe(second)
-        pending.resolve(['b', 'c'])
+        expect(feed.more()).toBe(first)
+        pending.resolve(page(['a', 'b'], 'after-b'))
         await first
         expect(request).toHaveBeenCalledTimes(1)
-        expect(feed.snapshot()).toMatchObject({ items: ['cached', 'b', 'c'], page: 2 })
     })
 
-    it('discards a late More response after a grid resize starts replacing the first page', async () => {
-        const more = deferred<string[]>()
-        const replace = deferred<string[]>()
-        const { feed, commit } = setup((page) => page === 1 ? replace.promise : more.promise)
-        const old = feed.more()
-        const fresh = feed.first(4)
-        replace.resolve(['fresh'])
-        await fresh
-        more.resolve(['stale'])
-        await old
-        expect(feed.snapshot()).toMatchObject({ items: ['fresh'], page: 1, pageSize: 4, hasMore: false })
-        expect(commit).toHaveBeenCalledTimes(1)
+    it('uses nextCursor instead of row count and stops at the confirmed end', async () => {
+        const request = vi.fn().mockResolvedValueOnce(page(['a', 'b'])).mockResolvedValueOnce(page(['unexpected']))
+        const {feed} = setup(request)
+        await feed.more()
+        await feed.more()
+        expect(request).toHaveBeenCalledTimes(1)
+        expect(feed.snapshot().hasMore).toBe(false)
     })
 
-    it('keeps the newer resize pending when an older first-page request fails late', async () => {
-        const old = deferred<string[]>()
-        const fresh = deferred<string[]>()
-        const { feed, commit } = setup((_page, size) => size === 2 ? old.promise : fresh.promise)
-        const first = feed.first(2)
-        const second = feed.first(4)
-        old.reject(new Error('old failure'))
-        await first
-        expect(feed.snapshot()).toMatchObject({ pending: true, loading: true, error: null, items: ['cached'] })
-        fresh.resolve(['latest'])
-        await second
-        expect(feed.snapshot()).toMatchObject({ pending: false, loading: false, pageSize: 4, items: ['latest'], error: null })
-        expect(commit).toHaveBeenCalledTimes(1)
+    it('deduplicates rows across responses without losing the next cursor', async () => {
+        const {feed} = setup(async () => page(['cached', 'next'], 'next-cursor'))
+        await feed.more()
+        expect(feed.snapshot()).toMatchObject({items: ['cached', 'next'], nextCursor: 'next-cursor'})
     })
 
-    it('keeps a failed initial request retryable until a confirmed empty response arrives', async () => {
-        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
-            .mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce([])
-        const commit = vi.fn()
-        const feed = createArticleFeed(request, { items: [], page: 1, pageSize: 2, hasMore: true, loaded: false }, commit)
-        await feed.first(2)
-        expect(feed.snapshot()).toMatchObject({ loaded: false, hasMore: true, error: expect.any(String) })
+    it('rejects a non-advancing cursor so automatic loading cannot spin forever', async () => {
+        const {feed, commit} = setup(async () => page(['duplicate'], 'after-cached'))
+        await feed.more()
+        expect(feed.snapshot()).toMatchObject({items: ['cached'], error: expect.any(String), pending: false})
         expect(commit).not.toHaveBeenCalled()
-        await feed.retry()
-        expect(feed.snapshot()).toMatchObject({ loaded: true, hasMore: false, error: null, items: [] })
-        expect(commit).toHaveBeenCalledTimes(1)
     })
 
-    it('retries failed resize before More, without mixing offsets from two page sizes', async () => {
-        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
-            .mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce(['a', 'b', 'c', 'd']).mockResolvedValueOnce([])
-        const { feed } = setup(request)
+    it('does not turn failed first-page replacement into a confirmed empty feed', async () => {
+        const {feed, commit} = setup(async () => { throw new Error('offline') })
         await feed.first(4)
-        await feed.more()
-        await feed.more()
-        expect(request.mock.calls).toEqual([[1, 4], [1, 4], [2, 4]])
-        expect(feed.snapshot()).toMatchObject({ items: ['a', 'b', 'c', 'd'], page: 2, hasMore: false })
-    })
-
-    it('invalidates unmounted requests before they can mutate the session cache', async () => {
-        const pending = deferred<string[]>()
-        const { feed, commit } = setup(() => pending.promise)
-        const first = feed.first(4)
-        feed.invalidate()
-        pending.resolve(['old mount'])
-        await first
-        expect(feed.snapshot()).toMatchObject({ items: ['cached'], pending: false })
+        expect(feed.snapshot()).toMatchObject({items: ['cached'], pageSize: 2, nextCursor: 'after-cached', error: expect.any(String)})
         expect(commit).not.toHaveBeenCalled()
     })
 
-    it('deduplicates first-page refresh and tracks silent requests without a spinner', async () => {
-        const pending = deferred<string[]>()
-        const { feed } = setup(() => pending.promise)
-        const first = feed.first(2, true)
-        expect(feed.first(2, true)).toBe(first)
-        expect(feed.snapshot()).toMatchObject({ pending: true, loading: false })
-        pending.resolve([])
-        await first
-        expect(feed.snapshot()).toMatchObject({ items: [], page: 1, loaded: true, hasMore: false })
-    })
-})
-
-
-describe('homepage invalidation', () => {
-    it('refreshes every loaded page without resetting the next More offset', async () => {
-        const request = vi.fn(async (page: number) => [`${page}a`, `${page}b`])
-        const { feed } = setup(request)
-        await feed.more()
-        request.mockClear()
-        await feed.refresh()
-        expect(request.mock.calls).toEqual([[1, 2], [2, 2]])
-        expect(feed.snapshot()).toMatchObject({ items: ['1a', '1b', '2a', '2b'], page: 2, hasMore: true })
-        await feed.more()
-        expect(request.mock.calls[request.mock.calls.length - 1]).toEqual([3, 2])
-    })
-
-    it('coalesces invalidations while More is pending and includes that completed page', async () => {
-        const pending = deferred<string[]>()
-        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
-            .mockImplementationOnce(() => pending.promise)
-            .mockResolvedValueOnce(['new-a', 'new-b']).mockResolvedValueOnce(['new-c'])
-        const { feed } = setup(request)
-        const more = feed.more()
-        const refresh = feed.refresh()
-        expect(feed.refresh()).toBe(refresh)
-        pending.resolve(['old-c', 'old-d'])
-        await more
-        await refresh
-        expect(request.mock.calls).toEqual([[2, 2], [1, 2], [2, 2]])
-        expect(feed.snapshot()).toMatchObject({ items: ['new-a', 'new-b', 'new-c'], page: 2, hasMore: false })
-    })
-
-    it('preserves all loaded rows on a partial refresh failure and retries the whole range', async () => {
-        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
-            .mockResolvedValueOnce(['old-c', 'old-d'])
-            .mockResolvedValueOnce(['new-a', 'new-b']).mockRejectedValueOnce(new Error('offline'))
-            .mockResolvedValueOnce(['new-a', 'new-b']).mockResolvedValueOnce(['new-c', 'new-d'])
-        const { feed, commit } = setup(request)
-        await feed.more()
-        await feed.refresh()
-        expect(feed.snapshot()).toMatchObject({ items: ['cached', 'old-c', 'old-d'], page: 2, error: expect.any(String) })
+    it('discards stale next-page responses after a grid replacement', async () => {
+        const more = deferred<ArticlePage<string>>(), first = deferred<ArticlePage<string>>()
+        const {feed, commit} = setup(cursor => cursor === null ? first.promise : more.promise)
+        const old = feed.more(), fresh = feed.first(4)
+        first.resolve(page(['fresh'], 'fresh-cursor')); await fresh
+        more.resolve(page(['stale'], 'stale-cursor')); await old
+        expect(feed.snapshot()).toMatchObject({items: ['fresh'], page: 1, pageSize: 4, nextCursor: 'fresh-cursor'})
         expect(commit).toHaveBeenCalledTimes(1)
-        await feed.retry()
-        expect(request.mock.calls).toEqual([[2, 2], [1, 2], [2, 2], [1, 2], [2, 2]])
-        expect(feed.snapshot()).toMatchObject({ items: ['new-a', 'new-b', 'new-c', 'new-d'], page: 2, error: null })
     })
 
-    it('drops a queued invalidation after the consumer has unmounted', async () => {
-        const pending = deferred<string[]>()
-        const request = vi.fn(() => pending.promise)
-        const { feed, commit } = setup(request)
-        const more = feed.more()
-        const refresh = feed.refresh()
-        feed.invalidate()
-        pending.resolve(['stale'])
-        await more
-        await refresh
-        expect(request).toHaveBeenCalledTimes(1)
+    it('does not clear a newer replacement when an old request fails', async () => {
+        const old = deferred<ArticlePage<string>>(), fresh = deferred<ArticlePage<string>>()
+        const {feed} = setup((_cursor, size) => size === 3 ? old.promise : fresh.promise)
+        const a = feed.first(3), b = feed.first(4)
+        old.reject(new Error('stale')); await a
+        expect(feed.snapshot().pending).toBe(true)
+        fresh.resolve(page(['fresh'])); await b
+        expect(feed.snapshot()).toMatchObject({items: ['fresh'], pending: false, error: null})
+    })
+
+    it('retries a failed grid replacement before requesting its next cursor', async () => {
+        const request = vi.fn().mockRejectedValueOnce(new Error('offline'))
+            .mockResolvedValueOnce(page(['a', 'b'], 'new-cursor')).mockResolvedValueOnce(page([]))
+        const {feed} = setup(request)
+        await feed.first(4); await feed.more(); await feed.more()
+        expect(request.mock.calls).toEqual([[null, 4], [null, 4], ['new-cursor', 4]])
+    })
+
+    it('invalidates unmounted requests before they can update the session cache', async () => {
+        const pending = deferred<ArticlePage<string>>()
+        const {feed, commit} = setup(() => pending.promise)
+        const request = feed.first(4)
+        feed.invalidate(); pending.resolve(page(['stale'])); await request
+        expect(feed.snapshot()).toMatchObject({items: ['cached'], pending: false})
         expect(commit).not.toHaveBeenCalled()
+    })
+
+    it('refreshes the loaded window using fresh cursors and retains the new tail', async () => {
+        const request = vi.fn().mockResolvedValueOnce(page(['old-second'], 'old-tail'))
+            .mockResolvedValueOnce(page(['fresh-a', 'fresh-b'], 'fresh-first'))
+            .mockResolvedValueOnce(page(['fresh-c'], 'fresh-tail'))
+        const {feed} = setup(request)
+        await feed.more(); request.mockClear()
+        await feed.refresh()
+        expect(request.mock.calls).toEqual([[null, 2], ['fresh-first', 2]])
+        expect(feed.snapshot()).toMatchObject({items: ['fresh-a', 'fresh-b', 'fresh-c'], page: 2,
+            nextCursor: 'fresh-tail', hasMore: true, pending: false})
     })
 })

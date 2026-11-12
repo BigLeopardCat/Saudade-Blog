@@ -71,7 +71,7 @@ console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 
     ok(!/<Avatar\s+src=\{avatar\}/.test(article),
         '卡片里没有残留的"直接拿 redux 头像渲染"');
 
-    const home = readSrc('src/frontHome/Content/ContentHome/index.tsx');
+    const home = readSrc('src/frontHome/Content/ContentHome/FeaturedArticles.tsx');
     ok(/<NoteByline\b/.test(home), '置顶轮播那一份也走 NoteByline（不是第二份副本）');
     ok(!/<Avatar\s+src=\{avatar\}/.test(home), '轮播里没有残留的那一句');
 

@@ -144,6 +144,10 @@ function getNotePage(data?:page){
     })
 }
 
+export function getNoteFeed(params: { limit: number; cursor?: string }) {
+    return http({ url: '/api/public/notes/feed', method: 'GET', params })
+}
+
 function getTopNotes(){
     return http({
         url: '/api/public/topnotes',

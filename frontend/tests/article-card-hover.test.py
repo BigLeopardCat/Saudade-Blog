@@ -95,42 +95,6 @@ CARD_MARKUP = """
 </div>
 """
 
-# 置顶卡：与 ContentHome/index.tsx 的 `.TopArticle` 同形（`display:flex` 是那边的内联样式，
-# 会压掉 sass 里的 `display:grid`，所以这里也写成内联）。
-TOP_MARKUP = """
-<div class="ContentContainer" id="cc">
-  <div class="TopArticle" id="card" style="display:flex;position:relative">
-    <!-- 置顶贴纸（20261001 六轮）：`.Top` 只剩定位（`top` 写进 sass，内联的
-         `translateY(-40%)` 已删），长相全在 `.TopTape` 那张胶带上。 -->
-    <div class="Top"><span class="TopTape">置顶</span></div>
-    <div style="width:100%;height:100%;border-radius:15px;overflow:hidden">
-      <div style="display:flex;width:100%;height:100%">
-        <div class="TopArticleInner" id="inner">
-          <div class="TopCover" id="cover"></div>
-          <div class="topContent" id="content">
-            <h4 id="cat"># 编程随笔</h4>
-            <h3 class="contentTitle" id="title">{title}</h3>
-            <div class="descSlot" id="slot"><div class="ArticleDescription" id="desc">{desc}</div></div>
-            {tags}
-            <div class="topFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px">
-              <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
-              <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
-              <!-- 同普通卡：顶卡页脚里也挂着「更新于」那行（JSX 里两份是同形的，含那个钟表图标——
-                   图标只影响行宽不影响行高，沙箱里没有 iconfont 就不放它）。 -->
-              <div style="position:relative;display:flex;flex-direction:column">
-                <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
-                <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-"""
-
-
 def build_sandbox() -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix="cardhover-"))
     r = subprocess.run(["node", "-e", SASS_JS, str(SASS_FILE)], cwd=str(FE), capture_output=True)
@@ -277,7 +241,6 @@ with sync_playwright() as p:
 
     card_mk = CARD_MARKUP.format(stats=STATS, title=LONG_TITLE, desc=LONG_DESC, tags=tags(3))
     huge_mk = CARD_MARKUP.format(stats=STATS, title=LONG_TITLE, desc=HUGE_DESC, tags=tags(3))
-    top_mk = TOP_MARKUP.format(title=LONG_TITLE, desc=HUGE_DESC, tags=tags(6))
 
     print("⓪ 沙箱自检：卡片规则真的生效了（否则下面全是 0 与 0 比，怎么比都过）")
     on = pg.evaluate(PAINT, {"markup": card_mk})
@@ -384,100 +347,9 @@ with sync_playwright() as p:
     check("★ 鼠标离开后滚位 = 0（静置态显示的是全文开头，而不是中段）", left == 0,
           f"scrollTop={left}")
 
-    print("⑤ 置顶卡静置：简介 3 行，页脚在卡内")
-    top = pg.evaluate(PAINT, {"markup": top_mk})
-    # 顶卡**仍是定高 640**（与普通卡的"下限"不同，这是刻意的）：它是轮播，按内容长高会让
-    # 各 slide 高度参差、切换时整块跳。它的余量够大（10 个标签两行时仍余 111px），
-    # 所以不需要普通卡那套"长高"。
-    check("置顶卡 640px 定高", abs(top["card"]["h"] - 640) < 1, f"card h={top['card']['h']}")
-    check("  顶卡页脚的「更新于」也在卡内",
-          top["upd"] and top["upd"]["bottom"] <= top["card"]["rect"]["bottom"] + 1,
-          f"更新于底 {top['upd'] and top['upd']['bottom']} / 卡底 {top['card']['rect']['bottom']}")
-    check("简介 60px = 3 × 20px", abs(top["desc"]["h"] - 60) <= 1, f"desc h={top['desc']['h']}")
-    check("简介行高 20px（与普通卡同一套，展开高度才能取整）",
-          abs(top["desc"]["lineHeight"] - 20) < 0.5, str(top["desc"]["lineHeight"]))
-    check("顶卡的简介槽也在场（60px + 原本那 20px 间距归槽管）",
-          abs(top["slot"]["h"] - 60) <= 1 and top["desc"]["position"] == "absolute",
-          f"slot={top['slot']} position={top['desc']['position']}")
-    check("页脚完整在卡内", top["footerRect"]["bottom"] <= top["card"]["rect"]["bottom"] + 1,
-          f"页脚底 {top['footerRect']['bottom']} / 卡底 {top['card']['rect']['bottom']}")
-
-    print("⑥ 悬浮置顶卡标题：全列一个像素都不许动（用户报的「抖动布局」）")
-    pg.evaluate(PAINT, {"markup": top_mk})
-    t_hv = hover_stable(pg, "#title")
-    check("★ 标题悬浮后标题自己没动", abs(t_hv["titleTop"] - top["title"]["top"]) < 0.5,
-          f"悬浮 {t_hv['titleTop']} / 静置 {top['title']['top']}")
-    check("  分类行没动", abs(t_hv["catTop"] - top["cat"]["top"]) < 0.5,
-          f"{t_hv['catTop']} / {top['cat']['top']}")
-    check("  简介没动（垂直居中列没被重新居中）", abs(t_hv["descTop"] - top["desc"]["top"]) < 0.5,
-          f"{t_hv['descTop']} / {top['desc']['top']}")
-    check("  标签行没动", abs(t_hv["tagsTop"] - top["tags"]["top"]) < 0.5,
-          f"{t_hv['tagsTop']} / {top['tags']['top']}")
-    check("  页脚没动", abs(t_hv["footerTop"] - top["footer"]["top"]) < 0.5,
-          f"{t_hv['footerTop']} / {top['footer']['top']}")
-    check("  简介高度也没变（标题的 :hover 不再解除行数限制）",
-          abs(t_hv["descH"] - top["desc"]["h"]) < 0.5, f"{t_hv['descH']} / {top['desc']['h']}")
-    unhover(pg)
-
-    print("⑦ 悬浮置顶卡简介：展开成浮层，占位不变 ⇒ 邻居全不动")
-    pg.evaluate(PAINT, {"markup": top_mk})
-    d_hv = hover_stable(pg, "#desc")
-    check("★ 简介真的展开了（旧版这条被 0,3,0 的选择器压住：只改 max-height/padding ⇒ 10px 抖动）",
-          d_hv["descH"] >= 200 and d_hv["overflowY"] == "auto",
-          f"h={d_hv['descH']} overflow-y={d_hv['overflowY']} max-height={d_hv['maxHeight']}")
-    check("展开高度能被行高整除（240px = 12 行）", d_hv["descH"] % 20 == 0, f"{d_hv['descH']}px")
-    check("★ 槽顶住了占位：标签行 offsetTop 与静置逐像素相同（垂直居中列没重新居中）",
-          abs(d_hv["tagsTop"] - top["tags"]["top"]) < 0.5,
-          f"悬浮 {d_hv['tagsTop']} / 静置 {top['tags']['top']}")
-    check("  页脚没动", abs(d_hv["footerTop"] - top["footer"]["top"]) < 0.5,
-          f"{d_hv['footerTop']} / {top['footer']['top']}")
-    check("  标题没动", abs(d_hv["titleTop"] - top["title"]["top"]) < 0.5,
-          f"{d_hv['titleTop']} / {top['title']['top']}")
-    check("  分类行没动", abs(d_hv["catTop"] - top["cat"]["top"]) < 0.5,
-          f"{d_hv['catTop']} / {top['cat']['top']}")
-    check("  槽高度也没变（60px）", abs(d_hv["slotH"] - 60) <= 1, f"slot={d_hv['slotH']}")
-    check("浮层底色不透明 + z-index 抬起来（压得住下面的标签/页脚）",
-          d_hv["bg"] not in ("rgba(0, 0, 0, 0)", "transparent") and d_hv["zIndex"] != "auto",
-          f"background={d_hv['bg']} z-index={d_hv['zIndex']}")
-    check("浮层没跑出卡片", d_hv["descRectBottom"] <= d_hv["cardRectBottom"] + 1,
-          f"浮层底 {d_hv['descRectBottom']} / 卡底 {d_hv['cardRectBottom']}")
-    unhover(pg)
-
-    # ⑦′ 顶卡的"中等长度"档：与第 ③ 组同一个道理（这一档才是负 margin 方案露馅的地方），
-    # 而顶卡是**垂直居中**列 ⇒ 占位一变整列都动，比普通卡更早暴露。
-    print("⑦′ 置顶卡 + 中等长度简介（展开 80px < 上限 240px）：整列仍不动")
-    med_top_mk = TOP_MARKUP.format(title=LONG_TITLE, desc=LONG_DESC, tags=tags(6))
-    top_med = pg.evaluate(PAINT, {"markup": med_top_mk})
-    dt_hv = hover_stable(pg, "#desc")
-    check("展开高度严格落在 静置 60px 与上限 240px 之间、是行高整数倍、正文没被 padding 吃掉"
-          "（同一段文字在顶卡里是 4 行 = 80px：这一列比普通卡宽 ≈70px，所以行数更少——"
-          "两个卡的文字换行数不一样，别把普通卡那条数抄过来）",
-          60 < dt_hv["descH"] < 240 and dt_hv["descH"] % int(dt_hv["lineHeight"]) == 0
-          and dt_hv["paddingBottom"] in ("0px", ""),
-          f"h={dt_hv['descH']} 行高={dt_hv['lineHeight']} padding-bottom={dt_hv['paddingBottom']}")
-    check("★ 标签行/页脚/标题/分类行与静置逐像素相同",
-          abs(dt_hv["tagsTop"] - top_med["tags"]["top"]) < 0.5
-          and abs(dt_hv["footerTop"] - top_med["footer"]["top"]) < 0.5
-          and abs(dt_hv["titleTop"] - top_med["title"]["top"]) < 0.5
-          and abs(dt_hv["catTop"] - top_med["cat"]["top"]) < 0.5,
-          f"tags {dt_hv['tagsTop']}/{top_med['tags']['top']} · footer {dt_hv['footerTop']}/{top_med['footer']['top']} "
-          f"· title {dt_hv['titleTop']}/{top_med['title']['top']}")
-    unhover(pg)
-
-    print("⑧ 置顶卡的简介也要能滚回顶部（与普通卡共用一份实现）")
-    pg.evaluate(PAINT, {"markup": top_mk})
-    pg.evaluate(ATTACH)
-    hover_stable(pg, "#desc")
-    t_scroll = pg.evaluate("""() => { const d = document.getElementById('desc');
-      d.scrollTop = 120; return d.scrollTop; }""")
-    check("展开态能滚下去", t_scroll > 0, f"scrollTop={t_scroll}")
-    unhover(pg)
-    t_left = pg.evaluate("() => document.getElementById('desc').scrollTop")
-    check("鼠标离开后滚位 = 0", t_left == 0, f"scrollTop={t_left}")
-
     print("⑨ 夜间：浮层底色取主题变量（不是写死的白）")
     pg.evaluate("() => document.documentElement.classList.add('frontDark')")
-    pg.evaluate(PAINT, {"markup": top_mk})
+    pg.evaluate(PAINT, {"markup": huge_mk})
     hover_stable(pg, "#desc")
     dark_bg = pg.evaluate("() => getComputedStyle(document.getElementById('desc')).backgroundColor")
     check("夜间浮层底色 = --pic-background-cover 的夜间值 rgb(33, 33, 33)",

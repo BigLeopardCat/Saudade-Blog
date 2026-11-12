@@ -173,6 +173,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/documents/{kind}/{id}/read", get(document_reads::read))
         .route("/api/public/documents/validate", post(document_visibility::validate).layer(DefaultBodyLimit::max(32768)))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
+        .route("/api/public/notes/feed", get(public_content::article_feed))
         .route("/api/public/notes/search", post(notes::search_notes).layer(DefaultBodyLimit::max(4096)))
         .route("/api/public/search", post(search::search_all).layer(DefaultBodyLimit::max(2048)))
         .route("/api/public/notes/{id}", get(notes::get_note_detail))

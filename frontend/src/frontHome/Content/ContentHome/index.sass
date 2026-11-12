@@ -398,131 +398,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   align-items: center
   padding: 80px 0 80px 0
   background: var(--container-background-color)
-  .TopArticle
-    position: relative
-    cursor: pointer
-    width: 80%
-    height: auto
-    background: var(--pic-background-cover)
-    --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
-    border-radius: 15px
-    box-shadow: var(--box-shadow-color)
-
-    grid-template-rows: none
-    display: grid
-    @media screen and (max-width: 768px)
-      width: 95%
-      height: auto !important
-    &:hover
-      .Top
-        top: -38px
-    .Top
-      position: absolute
-      top: -14px
-      left: 10px
-      z-index: 10
-      transition: top 0.3s ease
-
-      .TopTape
-        position: relative
-        display: inline-flex
-        align-items: center
-        gap: 4px
-        padding: 5px 19px 5px 11px
-        font-size: 13px
-        font-weight: 700
-        letter-spacing: 0.08em
-        white-space: nowrap
-        color: var(--washi-ink, #4a3550)
-        background: linear-gradient(100deg, var(--washi-tape, rgba(255, 222, 238, 0.86)) 0%, #ffe6f2 62%, #fff6fb 100%)
-        clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)
-        filter: drop-shadow(0 6px 11px rgba(120, 90, 140, 0.45))
-        transform: rotate(-3.6deg)
-
-        .iconfont
-          font-size: 15px
-          line-height: 1
-          color: var(--washi-pink-deep, #d94f9a)
-        &::after
-          content: '✦'
-          margin-left: 1px
-          font-size: 9px
-          line-height: 1
-          color: var(--washi-pink-deep, #d94f9a)
-          animation: tag-twinkle 2.6s ease-in-out infinite
-
-    .TopCover
-      flex-shrink: 0
-      border-radius: 15px 0 0 15px
-      position: relative
-      height: auto
-      align-self: start
-      overflow: hidden
-      img
-        position: absolute
-        inset: 0
-        background-repeat: no-repeat
-        background-size: cover
-        display: block
-        object-fit: cover
-        height: 100%
-        width: 100%
-        transition: opacity 0.5s ease-in-out
-      &:after
-        pointer-events: none
-        content: ''
-        background: var(--pic-cover-color)
-        position: absolute
-        z-index: 35
-        left: 71%
-        top: 0
-        height: 100%
-        width: 50%
-    .topContent
-      display: flex
-      flex-direction: column
-      justify-content: center
-      padding: clamp(16px, 3vw, 48px)
-      justify-content: center
-      align-items: flex-start
-      position: relative
-      border: none
-      z-index: 99
-      border-radius: 0 15px 15px 0
-      height: 100%
-      transition: 0.6s
-      h4
-        font-size: 20px
-        color: #8ab1ca
-      p
-        display: -webkit-box
-        -webkit-line-clamp: 4
-        -webkit-box-orient: vertical
-        overflow: hidden
-      .contentTitle
-        font-weight: 900
-        font-size: clamp(24px, 3vw, 40px)
-        margin-bottom: 24px
-        overflow: hidden
-        text-overflow: ellipsis
-        display: -webkit-box
-        -webkit-line-clamp: 2
-        -webkit-box-orient: vertical
-        transition: all 0.3s ease
-      p
-        color: var(--font-p-color)
-        text-indent: 1em
-      .topFooter
-        margin-top: 24px
-        .post-date
-          background-color: #1e73be26
-          font-size: 12px
-          width: max-content
-          padding: 4px 10px 4px 10px
-          border-radius: 6px
-          white-space: nowrap
-          transition: all 0.8s ease!important
-          line-height: 20px
   .allContent
     display: inline-flex
     align-items: center
@@ -707,27 +582,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     overflow: hidden
     visibility: hidden
     pointer-events: none
-  .more
-    font-family: inherit
-    padding: 12px 30px 12px 26px
-    font-size: 15px
-    letter-spacing: 0.18em
-    cursor: pointer
-    transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease
-    &::after
-      content: ''
-      width: 8px
-      height: 8px
-      border-right: 2px solid currentColor
-      border-bottom: 2px solid currentColor
-      transform: rotate(45deg)
-
-    &:hover
-      transform: translateY(-2px)
-      background: var(--washi-tape, rgba(255, 222, 238, 0.86))
-      box-shadow: 0 14px 26px -14px rgba(120, 90, 140, 1)
-      &::after
-        transform: translateY(3px) rotate(45deg)
 .loadingio-spinner-spinner-69tfms83mg9
   width: 200px
   height: 200px
@@ -827,44 +681,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   .ArticleFooter
     color: var(--font-title-color)
 
-.TopArticle .topContent
-  overflow: hidden
-  h3
-    color: var(--font-title-color)
-    overflow: hidden
-    text-overflow: ellipsis
-    display: -webkit-box
-    -webkit-line-clamp: 2
-    -webkit-box-orient: vertical
-    transition: all 0.3s ease
-  h4
-    color: var(--font-title-color) !important
-  .descSlot
-    position: relative
-    width: 100%
-    height: 60px
-    margin-bottom: 20px
-  .ArticleDescription
-    display: -webkit-box
-    -webkit-line-clamp: 3
-    -webkit-box-orient: vertical
-    overflow: hidden
-    line-height: 20px
-    transition: max-height 0.8s ease
-    max-height: 60px
-    position: absolute
-    top: 0
-    left: 0
-    &:hover
-      -webkit-line-clamp: unset
-      max-height: 240px
-      overflow-y: auto
-      z-index: 6
-      background: var(--pic-background-cover)
-      border-radius: 6px
-      box-shadow: 0 12px 28px rgba(0, 0, 0, .18)
-  .topFooter
-    color: var(--font-title-color)
 .frontDark .SelfDescription .collageBg
   background: var(--washi-page-bg)
   &::after
@@ -949,47 +765,6 @@ html[data-theme='dark'] .SayWords h2
   transition: max-height 0.8s ease
   max-height: 60px
 
-.TopArticleInner
-  display: grid
-  grid-template-columns: 6fr 4fr
-  width: 100%
-  height: auto
-  align-items: start
-  @media screen and (max-width: 768px)
-    display: flex
-    flex-direction: column
-
-
-@media screen and (max-width: 768px)
-  .TopCover
-    height: auto !important
-    border-radius: 15px 15px 0 0 !important
-    width: 100% !important
-  .TopArticleInner
-    display: flex !important
-    flex-direction: column !important
-  .TopArticle
-    height: auto !important
-    display: block !important
-.topDotsContainer
-  position: absolute
-  bottom: 20px
-  left: 50%
-  display: flex
-  transform: translate(-50%,-50%)
-  z-index: 10
-  gap: 8px
-  .topDot
-    cursor: pointer
-    width: 10px
-    height: 10px
-    background: white
-    border: 0
-    padding: 0
-    border-radius: 50%
-    margin-left: 10px
-  .dotCurrent
-    background: var(--washi-pink-deep, #d94f9a)
 @media screen and (max-width: 768px)
   .allArticles
     width: 95% !important
@@ -1016,27 +791,6 @@ html[data-theme='dark'] .SayWords h2
             font-size: 11px !important
             line-height: 18px !important
             padding: 3px 8px !important
-  .TopArticle
-    .TopCover
-      height: auto !important
-    .topContent
-      padding: 1rem !important
-      .contentTitle
-        font-size: 22px !important
-        margin-bottom: 8px !important
-      .descSlot
-        height: 40px !important
-      .ArticleDescription
-        -webkit-line-clamp: 2 !important
-      .topFooter
-        margin-top: 8px !important
-        .ant-avatar
-          min-width: 32px !important
-          min-height: 32px !important
-        .post-date
-          font-size: 11px !important
-          line-height: 18px !important
-          padding: 3px 8px !important
 @media screen and (max-width: 768px)
   .allArticles
     grid-template-columns: repeat(2, 1fr) !important
@@ -1131,20 +885,8 @@ html[data-theme='dark'] .SayWords h2
   .frontDark .home-one-say
     text-shadow: none
 @media (prefers-reduced-motion: reduce)
-  .ContentContainer .TopArticle .Top .TopTape
-    &::after
-      animation: none
-  .ContentContainer .TopArticle .Top
-    transition: none
   .ContentContainer .allContent
     transition: none
-  .ContentContainer .more
-    transition: none
-    &:hover
-      transform: none
-      &::after
-        transform: rotate(45deg)
-
 .homeLoadError
   margin: 1rem auto
   padding: .75rem 1rem

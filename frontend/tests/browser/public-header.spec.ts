@@ -38,6 +38,9 @@ for (const width of [1440, 390]) {
       expect(Math.abs(geometry.width - geometry.height)).toBeLessThan(1)
     }
     await assertAvatarCentered()
+    await page.locator('.headContainer').evaluate(element => element.classList.add('is-stuck'))
+    expect(await page.locator('.headContainer').evaluate(element => getComputedStyle(element, '::after').content)).toBe('none')
+    await page.locator('.headContainer').evaluate(element => element.classList.remove('is-stuck'))
     await page.screenshot({path: test.info().outputPath('public-header-idle.png')})
     const headerColor = await page.locator('.webTitle').evaluate(element => getComputedStyle(element).color)
     await page.addStyleTag({ url: new URL('/dashboard-overview.css', sandboxURL).href })

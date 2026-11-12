@@ -155,6 +155,77 @@ pub async fn archive(
         })
 }
 
+/// Homepage cards use the same stable (created_at, id) cursor as the archive.
+fn article_query(cursor: Option<&Cursor>) -> sea_orm::Select<note::Entity> {
+    let mut query = note::Entity::find().filter(super::notes::public_condition());
+    if let Some(cursor) = cursor {
+        query = query.filter(
+            Expr::tuple([
+                Expr::col((note::Entity, note::Column::CreatedAt)),
+                Expr::col((note::Entity, note::Column::Id)),
+            ])
+            .lt(Expr::tuple([Expr::val(cursor.at), Expr::val(cursor.id)])),
+        );
+    }
+    query
+        .order_by_desc(note::Column::CreatedAt)
+        .order_by_desc(note::Column::Id)
+}
+
+async fn article_page<C: ConnectionTrait>(
+    db: &C,
+    limit: u64,
+    cursor: Option<&Cursor>,
+) -> Result<FeedPage<super::notes::NoteSummary>, DbErr> {
+    let mut rows = article_query(cursor)
+        .into_partial_model::<super::notes::NoteSummary>()
+        .limit(limit + 1)
+        .all(db)
+        .await?;
+    let more = rows.len() as u64 > limit;
+    rows.truncate(limit as usize);
+    let next_cursor = if more {
+        rows.last().map(|row| {
+            Cursor {
+                at: row.created_at,
+                id: row.id,
+            }
+            .encode()
+        })
+    } else {
+        None
+    };
+    Ok(FeedPage {
+        items: rows,
+        next_cursor,
+        total: None,
+    })
+}
+
+pub async fn article_feed(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<ApiResponse<FeedPage<super::notes::NoteDto>>>, StatusCode> {
+    let (limit, cursor) = window(&query, 6)?;
+    let page = article_page(&state.db, limit, cursor.as_ref())
+        .await
+        .map_err(|error| {
+            tracing::error!("article feed read failed: {error}");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    let items = super::notes::summarize(&state.db, page.items)
+        .await
+        .map_err(|error| {
+            tracing::error!("article feed metadata failed: {error}");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    Ok(Json(ApiResponse::success(FeedPage {
+        items,
+        next_cursor: page.next_cursor,
+        total: None,
+    })))
+}
+
 #[derive(FromQueryResult)]
 struct TalkRow {
     id: i32,

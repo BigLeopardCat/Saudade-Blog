@@ -96,7 +96,7 @@ console.log('\n④ 边界：量不到列数走回退、超宽钳在上限');
     ok(pageSizeFor(-1) === FALLBACK, '负数（脏读数）⇒ 回退值', pageSizeFor(-1));
     ok(pageSizeFor(Infinity) === FALLBACK, 'Infinity ⇒ 回退值（不做成"一次拉全部"）', pageSizeFor(Infinity));
     ok(pageSizeFor(100) === MAXP && pageSizeFor(1000) === MAXP,
-        `列数再大也钳在 ${MAXP} 张（后端 PageQuery 是 clamp(1,1000)，前端别自己冲上去）`,
+        `列数再大也钳在 ${MAXP} 张（游标接口 limit 上限为 50，前端每批最多 48）`,
         { 100: pageSizeFor(100), 1000: pageSizeFor(1000) });
     ok(MAXP >= MOBILE_COLS * NROWS * 2,
         '上限至少是窄屏一页的两倍（否则"窄屏四行"在超宽列数下会被钳回两行）', MAXP);
@@ -113,7 +113,7 @@ console.log('\n⑤ 前提：手机档真的是 2 列（这条住在 index.sass�
         mobile && mobile[1]);
 }
 
-console.log('\n⑥ 接线：首屏与 MORE 用同一个折算，没有第二处"每页几张"');
+console.log('\n⑥ 接线：首屏与自动加载 用同一个折算，没有第二处"每页几张"');
 {
     // `pageSizeFor(` 只数**调用**：定义那一处写的是 `const pageSizeFor = (cols…`，不含这个串。
     const calls = [...tsx.matchAll(/pageSizeFor\(/g)].length;
@@ -123,7 +123,7 @@ console.log('\n⑥ 接线：首屏与 MORE 用同一个折算，没有第二处"
     ok(/pageSizeFor\(colsOf\(measureRef\.current\)\)/.test(tsx),
         '首屏走 `pageSizeFor(colsOf(...))`');
     ok(/const ps = pageSizeFor\(colsOf\(el\)\)/.test(tsx),
-        '列数变化时走同一个函数（拆成两个条数会让已渲染条数与页偏移错位）');
+        '列数变化时走同一个函数（拆成两个条数会让已渲染条数与已加载窗口错位）');
     ok(!/\b(pageSize|per_page)\s*[:=]\s*\d+\b/.test(tsx.replace(/cachedPageSize\s*=\s*FALLBACK_PAGE_SIZE/g, '')),
         '没有把"每页几张"再写死成一处的数字（缓存初值那次例外，它用的是 FALLBACK 常量）');
 }

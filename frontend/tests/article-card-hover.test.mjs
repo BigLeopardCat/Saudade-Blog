@@ -9,7 +9,7 @@ const repo = path.resolve(root, '..');            // 仓库根（Rust 在那儿�
 
 const SASS_FILE = path.join(root, 'src/frontHome/Content/ContentHome/index.sass');
 const ARTICLE_TSX = path.join(root, 'src/frontHome/Content/ContentHome/Article.tsx');
-const HOME_TSX = path.join(root, 'src/frontHome/Content/ContentHome/index.tsx');
+const HOME_TSX = path.join(root, 'src/frontHome/Content/ContentHome/FeaturedArticles.tsx');
 const BYLINE_TSX = path.join(root, 'src/components/NoteByline/index.tsx');
 const WEB_INFO_RS = path.join(repo, 'src/routes/web_info.rs');
 
@@ -49,12 +49,10 @@ const declNum = (sel, prop, num) => {
 const CONTENT = '.ContentContainer .allArticles .ArticleCard .ArticleContent';
 const SLOT = CONTENT + ' .descSlot';
 const DESC = CONTENT + ' .ArticleDescription';
-const TOP_SLOT = '.TopArticle .topContent .descSlot';
-const TOP_DESC = '.TopArticle .topContent .ArticleDescription';
 
-console.log('\n① 定高槽：两张卡都要有（页脚定死在卡底的**唯一**支点）');
+console.log('\n① 定高槽：普通卡的简介保留固定槽位');
 {
-    for (const [name, sel] of [['普通卡', SLOT], ['置顶卡', TOP_SLOT]]) {
+    for (const [name, sel] of [['普通卡', SLOT]]) {
         const p = decl(sel, 'position', 'relative');
         ok(p.found && p.match, `${name}：${sel} 存在且 position: relative（简介的定位基准）`, p);
         const h = decl(sel, 'height', '60px');
@@ -63,14 +61,12 @@ console.log('\n① 定高槽：两张卡都要有（页脚定死在卡底的**�
     // 普通卡的槽还要能抗 flex 收缩：槽位一变压的就是简介的顶
     const fs = decl(SLOT, 'flex-shrink', '0');
     ok(fs.found && fs.match, '普通卡：槽 flex-shrink: 0（内容区余量不够时不许压槽）', fs);
-    // 顶卡那 20px 不能写成简介的行内 marginBottom（内联样式会压掉绝对定位方案），归槽管
-    const mb = decl(TOP_SLOT, 'margin-bottom', '20px');
-    ok(mb.found && mb.match, '置顶卡：槽 margin-bottom: 20px（原本那 20px 间距搬到这里）', mb);
+
 }
 
 console.log('\n② 简介在槽内绝对定位：长高不参与布局（展开/收回都不许撑动后面的东西）');
 {
-    for (const [name, sel] of [['普通卡', DESC], ['置顶卡', TOP_DESC]]) {
+    for (const [name, sel] of [['普通卡', DESC]]) {
         const p = decl(sel, 'position', 'absolute');
         ok(p.found && p.match, `${name}：${sel} 是 position: absolute`, p);
         const t = declNum(sel, 'top', 0);
@@ -78,20 +74,14 @@ console.log('\n② 简介在槽内绝对定位：长高不参与布局（展开/
         const l = declNum(sel, 'left', 0);
         ok(l.match, `  left: 0`, l);
     }
-    // 反面：绝对定位的盒子拿不到 `width: 100%` 就会收缩成长条（顶卡没有 right 约束）
-    const w = decl(TOP_DESC, 'width', '100%');
-    const wBase = rules.get('.ArticleDescription') || '';
-    ok(w.match || /width\s*:\s*100%/.test(wBase),
-        '顶卡简介有确定的宽度（绝对定位 + 无 right ⇒ 不写宽度就会缩成一条）', w);
+
 }
 
 console.log('\n③ 展开态：上限是行高整数倍，且**不许**再用负 margin / padding 当支点');
 {
     const hoverNormal = decl(DESC + ':hover', 'max-height', '140px');
     ok(hoverNormal.found && hoverNormal.match, `普通卡：:hover 上限 140px（7 行）`, hoverNormal);
-    const hoverTop = decl(TOP_DESC + ':hover', 'max-height', '240px');
-    ok(hoverTop.found && hoverTop.match, `置顶卡：:hover 上限 240px（12 行）`, hoverTop);
-    for (const [name, sel] of [['普通卡', DESC], ['置顶卡', TOP_DESC]]) {
+    for (const [name, sel] of [['普通卡', DESC]]) {
         const body = rules.get(sel + ':hover') || '';
         ok(!/margin-bottom\s*:\s*-/.test(body),
             `${name}：展开态没有负 margin（那套方案在"够不到上限"时会把页脚抽走）`, body.slice(0, 80));
@@ -123,7 +113,7 @@ console.log('\n④ 两处抖动源保持删除：标题的 :hover 不许解除�
         '标题那两块源码里没有 `-webkit-line-clamp: unset`');
 }
 
-console.log('\n⑤ 源码接线：槽挂在两张卡的 JSX 上，mouseleave 接的是同一个实现');
+console.log('\n⑤ 源码接线：普通卡简介保留展开和离开复位');
 {
     const article = readFileSync(ARTICLE_TSX, 'utf8');
     const home = readFileSync(HOME_TSX, 'utf8');
@@ -131,15 +121,7 @@ console.log('\n⑤ 源码接线：槽挂在两张卡的 JSX 上，mouseleave 接
         'Article.tsx 从 utils/descHover 引了 resetDescScroll（别再来一份实现）');
     ok(/<div className="descSlot">\s*<p className="ArticleDescription" onMouseLeave=\{resetDescScroll\}>/.test(article),
         'Article.tsx：descSlot 包着简介，且简介挂着 onMouseLeave', article.match(/descSlot[\s\S]{0,200}/)?.[0]);
-    ok(/<div className="descSlot">\s*<div className="ArticleDescription" onMouseLeave=\{resetDescScroll\}>/.test(home),
-        'index.tsx（置顶卡）：descSlot 包着简介，且简介挂着 onMouseLeave');
-    // 内联样式特异性最高：顶卡简介上再写行内 margin 就会和槽的方案打架
-    const topDescTag = home.match(/<div className="ArticleDescription"[^>]*>/)?.[0] || '';
-    ok(topDescTag !== '' && !/style=/.test(topDescTag),
-        '置顶卡简介上没有行内 style（内联样式会压过槽的定位/间距）', topDescTag);
-    // 类名对齐：sass 有 `.descSlot`、JSX 也挂着 `descSlot`——两边任一漏掉就是静默失效
-    ok(/descSlot/.test(css) && /descSlot/.test(article) && /descSlot/.test(home),
-        'descSlot 这个类名三处一致（sass / Article.tsx / index.tsx）');
+
 }
 
 console.log('\n⑥ 手机档：槽要跟着缩小（桌面那 60px 会让移动卡片白多一截空档）');
@@ -147,8 +129,8 @@ console.log('\n⑥ 手机档：槽要跟着缩小（桌面那 60px 会让移动�
     // 直接在整份编译产物里捞（同一个选择器在多档里重复出现会被 rules 合并，逐条查会漏）
     const importantHeights = [...css.matchAll(/descSlot[^{]*\{([^}]*)\}/g)]
         .flatMap((m) => [...m[1].matchAll(/height\s*:\s*([\d.]+)px\s*!important/g)].map((x) => parseFloat(x[1])));
-    ok(importantHeights.length >= 3,
-        '移动档有 3 处 descSlot 高度覆盖（普通卡两档 + 顶卡一档）', importantHeights);
+    ok(importantHeights.length >= 2,
+        '移动档有普通卡两档 descSlot 高度覆盖', importantHeights);
     ok(importantHeights.length > 0 && importantHeights.every((h) => h < 60),
         '  每一处都 < 60px（手机档简介只有 2 行，槽留桌面那 60px 就是白多一截空档）', importantHeights);
 }
