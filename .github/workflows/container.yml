@@ -17,12 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      STACK_STATE: ${{ runner.temp }}/saudade-container
       COMPOSE_PARALLEL_LIMIT: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Select disposable state directory
+        run: printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Configuration tests without Docker
         run: python3 -m unittest discover -s tests/ops -p test_compose_install.py -v
       - name: Prepare private disposable stack
