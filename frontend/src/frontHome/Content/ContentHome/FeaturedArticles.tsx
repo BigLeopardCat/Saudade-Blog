@@ -6,6 +6,7 @@ import NoteByline from '../../../components/NoteByline'
 import AssetImage from '../../../components/AssetImage'
 import {renderNoteTags} from '../../../apis/TagMethods'
 import {carouselCropOf, coverCropStyle} from '../../../utils/coverCrop'
+import {resetDescScroll} from '../../../utils/descHover'
 
 interface Props {
     items: NoteType[]
@@ -47,30 +48,27 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
         onFocusCapture={() => setFocused(true)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}>
-        <div className="featuredHeading">
-            <span className="featuredLabel"><i className="iconfont icon-sticky1" aria-hidden="true"/>置顶文章</span>
-            {items.length > 1 && <div className="featuredControls" role="group" aria-label="切换置顶文章">
-                <span className="featuredCount" aria-live={focused ? 'polite' : 'off'}>{index + 1} / {items.length}</span>
-                <button type="button" aria-label={paused ? '播放置顶轮播' : '暂停置顶轮播'}
-                    aria-pressed={paused} onClick={() => setPaused(value => !value)}>{paused ? '▷' : 'Ⅱ'}</button>
-                <button type="button" aria-label="上一篇置顶文章"
-                    onClick={() => setCurrent((index - 1 + items.length) % items.length)}>‹</button>
-                <button type="button" aria-label="下一篇置顶文章"
-                    onClick={() => setCurrent((index + 1) % items.length)}>›</button>
-            </div>}
-        </div>
+        <div className="featuredLabel"><span className="featuredTape"><i className="iconfont icon-sticky1" aria-hidden="true"/>置顶</span></div>
         <article className="featuredCard" onClick={event => {
             if (!(event.target as Element).closest('a,button')) navigate(`/article/${item.key}`)
         }}>
             <div className="featuredCover">
                 <AssetImage src={item.cover} alt="" style={coverCropStyle(carouselCropOf(item))}/>
+                {items.length > 1 && <div className="featuredDots" role="group" aria-label="切换置顶文章">
+                    {items.map((slide, position) => <button type="button" key={slide.key}
+                        aria-label={`查看置顶文章 ${position + 1}`} aria-pressed={index === position}
+                        onMouseEnter={() => setCurrent(position)} onClick={() => setCurrent(position)}/>) }
+                </div>}
+                {items.length > 1 && <button className="featuredPause" type="button"
+                    aria-label={paused ? '播放置顶轮播' : '暂停置顶轮播'} aria-pressed={paused}
+                    onClick={() => setPaused(value => !value)}>{paused ? '▷' : 'Ⅱ'}</button>}
             </div>
             <div className="featuredContent">
-                {category && <span className="featuredCategory">{category.categoryTitle}</span>}
+                {category && <span className="featuredCategory"># {category.categoryTitle}</span>}
                 <h2><Link to={`/article/${item.key}`}>{item.noteTitle}</Link></h2>
-                <p className="featuredDescription">{item.description}</p>
+                <div className="featuredDescriptionSlot"><p className="featuredDescription" onMouseLeave={resetDescScroll}>{item.description}</p></div>
                 <div className="featuredTags">{renderNoteTags(item.noteTags, tags, item.noteTagRefs)}</div>
-                <div className="featuredByline"><NoteByline item={item} siteAvatar={avatar} siteName={name} compact/></div>
+                <div className="featuredByline"><NoteByline item={item} siteAvatar={avatar} siteName={name}/></div>
             </div>
         </article>
     </section>

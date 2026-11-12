@@ -38,7 +38,7 @@ for (const width of [375, 1440]) {
     await expect(page.locator('.heroPanel')).toBeVisible()
   })
 
-  test(`homepage keeps compact pinned cards and cover crops at ${width}px`, async ({page, sandboxURL}) => {
+  test(`homepage keeps the original pinned design at a smaller size and preserves cover crops at ${width}px`, async ({page, sandboxURL}) => {
     await page.setViewportSize({width, height: 900})
     await page.emulateMedia({reducedMotion: 'reduce'})
     await images(page)
@@ -63,20 +63,36 @@ for (const width of [375, 1440]) {
     const grid = (await page.locator('.allArticles:not(.allArticlesMeasure)').boundingBox())!
     expect(title.x).toBeGreaterThanOrEqual(content.x)
     expect(title.x + title.width).toBeLessThanOrEqual(content.x + content.width + 1)
-    expect(Math.abs(card.x - grid.x)).toBeLessThanOrEqual(1)
-    expect(Math.abs(card.width - grid.width)).toBeLessThanOrEqual(1)
-    expect(card.width).toBeLessThanOrEqual(1280)
-    expect(card.height).toBeLessThanOrEqual(width < 640 ? 320 : 420)
+    expect(Math.abs(card.x + card.width / 2 - grid.x - grid.width / 2)).toBeLessThanOrEqual(1)
+    expect(card.width).toBeLessThan(grid.width)
+    expect(card.width).toBeLessThanOrEqual(width < 769 ? 420 : 1000)
+    expect(card.height).toBeLessThanOrEqual(width < 769 ? 700 : 640)
+    const cover = (await page.locator('.featuredCover').boundingBox())!
+    if (width < 769) {
+      expect(content.y).toBeGreaterThanOrEqual(cover.y + cover.height - 1)
+      expect(card.width).toBeCloseTo(width * .9, 0)
+    } else {
+      expect(cover.width / card.width).toBeCloseTo(.6, 2)
+      expect(content.x).toBeGreaterThanOrEqual(cover.x + cover.width - 1)
+    }
+    const updated = (await featured.locator('.post-date').last().boundingBox())!
+    expect(updated.y + updated.height).toBeLessThanOrEqual(card.y + card.height + 1)
+    await expect(featured.locator('.featuredTape')).toHaveText('置顶')
+    expect(await page.locator('.featuredCover').evaluate(el => getComputedStyle(el, '::after').backgroundImage)).not.toBe('none')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     await expect(featured.locator('h2 a')).toHaveAttribute('href', '/article/1')
-    await page.getByRole('button', {name: '下一篇置顶文章'}).click()
+    await page.getByRole('button', {name: '查看置顶文章 2'}).click()
     await expect(featured.locator('h2 a')).toHaveAttribute('href', '/article/3')
-    await expect(page.locator('.featuredCount')).toHaveText('2 / 2')
+    await expect(page.getByRole('button', {name: '查看置顶文章 2'})).toHaveAttribute('aria-pressed', 'true')
     await page.getByRole('button', {name: '暂停置顶轮播'}).click()
     await expect(page.getByRole('button', {name: '播放置顶轮播'})).toHaveAttribute('aria-pressed', 'true')
-    await featured.screenshot({path: test.info().outputPath('pinned-light.png')})
+    await page.mouse.move(0, 0)
+    await page.waitForTimeout(350)
+    const box = (await featured.boundingBox())!
+    const clip = {x: box.x, y: Math.max(0, box.y - 44), width: box.width, height: box.height + Math.min(44, box.y)}
+    await page.screenshot({clip, path: test.info().outputPath('pinned-light.png')})
     await page.locator('.frontRoot').evaluate(el => el.classList.add('frontDark'))
-    await featured.screenshot({path: test.info().outputPath('pinned-dark.png')})
+    await page.screenshot({clip, path: test.info().outputPath('pinned-dark.png')})
   })
 }
 
