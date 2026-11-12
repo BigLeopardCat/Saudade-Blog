@@ -82,5 +82,5 @@ jobs:
         run: |
           if test -f "$STACK_STATE/compose.env"; then
             docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
-              -f deploy/docker/compose.yaml --profile agent --profile scheduler down --volumes
+              -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15 --volumes
           fi

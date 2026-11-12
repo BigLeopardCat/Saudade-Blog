@@ -84,11 +84,20 @@ def main():
             if attempt == 19:
                 raise
             time.sleep(0.25)
-    connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=5)
-    connection.request("GET", "/")
-    response = connection.getresponse()
-    assert response.status == 308 and response.getheader("Location") == "https://localhost:8443/"
-    connection.close()
+    # nginx briefly serves the previous configuration while old workers drain.
+    for attempt in range(20):
+        connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=5)
+        try:
+            connection.request("GET", "/")
+            response = connection.getresponse()
+            observed = (response.status, response.getheader("Location"))
+        finally:
+            connection.close()
+        if observed == (308, "https://localhost:8443/"):
+            break
+        if attempt == 19:
+            raise AssertionError(f"TLS redirect did not converge: {observed}")
+        time.sleep(0.25)
     print("TLS smoke passed: private certificate access, config reload, HTTPS readiness and canonical redirect")
 
 

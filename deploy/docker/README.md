@@ -21,6 +21,8 @@ bash deploy/install.sh --site-url http://localhost:8080
 
 ## Agent 与可选功能
 
+本节和上一节是两种首次安装方案，在生成配置前择一执行；`--reuse` 不切换已有安装的 profile。
+
 在私有文件中填写单行模型密钥，再生成配置：
 
 ```sh
@@ -37,6 +39,8 @@ bash deploy/install.sh --site-url https://blog.example.com \
 不需要计划任务时省略 `--with-scheduler`，只安装博客时省略两个选项。`BLOG_API_BASE` 是公开 API，`BLOG_INTERNAL_API_BASE` 和 `AGENT_ADMIN_BASE` 走容器内 `backend:3000`；浏览器导航继续使用公开 origin。Agent 不持有博客 JWT 或工具委托签名密钥。
 
 基线关闭混合检索和 IoT，不安装 embedding 服务，不改变 RAG 设计。邮件、对象存储、生图、审核等能力需按各自配置文档另行启用；未配置功能不视为已验收。
+
+已有核心博客安装如需追加 Agent，保留现有私有目录及全部签名密钥：填写 `agent.env` 中的模型配置，按 `agent.lock.json` 取回干净的 Agent 源码，在 `compose.env` 设置其 `AGENT_SOURCE` 和 `AGENT_REVISION`，并在 `installation.json` 同步 `agent_revision`、`with_agent=true`。需要 worker 时同时设置 `with_scheduler=true` 和 `agent.env` 的 `SCHEDULING_ENABLED=true`，然后执行 `--reuse`。首次初始化已经建立独立 Agent 数据库，无需重建博客库。
 
 ## TLS 与隔离
 
