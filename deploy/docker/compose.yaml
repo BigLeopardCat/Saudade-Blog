@@ -1,4 +1,4 @@
-name: saudade-blog
+name: ${STACK_NAME:?use deploy/install.sh}
 
 x-logging: &logging
   driver: json-file

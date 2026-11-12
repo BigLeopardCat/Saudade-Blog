@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare private PostgreSQL stack configuration and run Docker Compose."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -199,7 +200,8 @@ def prepare(args, output):
     tls_dir.mkdir(mode=0o700)
     for name, contents in certificates.items():
         private_file(tls_dir / name, contents)
-    values = {"BLOG_SOURCE": str(ROOT), "BLOG_REVISION": blog_rev,
+    values = {"STACK_NAME": "saudade-" + hashlib.sha256(str(output).encode()).hexdigest()[:12],
+              "BLOG_SOURCE": str(ROOT), "BLOG_REVISION": blog_rev,
               "AGENT_SOURCE": str(agent), "AGENT_REVISION": agent_rev,
               "SITE_URL": site, "BIND_ADDRESS": f"[{address}]" if address.version == 6 else str(address),
               "HTTP_PORT": args.http_port, "HTTPS_PORT": args.https_port,

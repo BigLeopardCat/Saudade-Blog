@@ -52,6 +52,15 @@ class ComposeInstall(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not empty"):
             self.prepare()
 
+    def test_separate_installations_do_not_share_container_or_volume_names(self):
+        self.prepare()
+        first = (self.state / "compose.env").read_text().splitlines()[0]
+        self.state = self.root / "another-state"
+        self.prepare()
+        second = (self.state / "compose.env").read_text().splitlines()[0]
+        self.assertTrue(first.startswith("STACK_NAME=saudade-"))
+        self.assertNotEqual(first, second)
+
     def test_bad_inputs_do_not_create_state(self):
         for options in [("--site-url", "https://example.com/;evil"),
                         ("--site-url", "https://example.com;return"),
