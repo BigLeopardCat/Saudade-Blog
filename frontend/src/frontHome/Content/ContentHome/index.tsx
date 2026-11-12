@@ -16,7 +16,7 @@ import { motion } from 'framer-motion';
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
-import {useNavigate, useLocation} from "react-router-dom";
+import {useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
 import {getNoteFeed, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import { parseNoteTags } from '../../../utils/noteTags';
@@ -75,7 +75,6 @@ const ContentHome = () => {
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
-    const navigate = useNavigate()
     const [feed] = useState(() => {
         if (location.state?.fromDashboard) {
             cachedOtherArticles = [];
