@@ -7,6 +7,8 @@ import {Provider} from 'react-redux'
 import {MemoryRouter} from 'react-router-dom'
 import store from '../../../src/store'
 import ContentHome from '../../../src/frontHome/Content/ContentHome'
+import {setCategories} from '../../../src/store/components/categories'
+store.dispatch(setCategories([{categoryKey: 1, key: 1, categoryTitle: '随笔', pathName: 'essays', introduce: '', icon: '', noteCount: 1, color: ''}]))
 createRoot(document.getElementById('root')!).render(<HelmetProvider><Provider store={store}>
   <MemoryRouter><div className="frontRoot"><ContentHome/></div></MemoryRouter>
 </Provider></HelmetProvider>)

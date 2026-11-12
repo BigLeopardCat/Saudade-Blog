@@ -4,8 +4,8 @@ test.use({entry: 'home-hero'})
 const coverSVG = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="900"><rect width="300" height="900" fill="pink"/></svg>'
 function note(id: number, revision = 'old') {
   return {noteKey: id, noteTitle: `文章 ${id}：关于生活与代码的一些记录`, noteContent: '', cover: `/${revision}-cover.svg`,
-    coverFit: 'cover', carouselFit: 'cover', noteCategory: 1, noteTags: [],
-    description: '封面测试文章，保留清晰的标题、摘要和作者信息。'.repeat(8), status: 'public', authorName: '测试作者', authorAvatar: '',
+    coverFit: 'cover', carouselFit: 'cover', noteCategory: 1, noteTags: [], noteTagRefs: [{id: 1, level: 1, name: '生活与代码', color: 'blue'}],
+    description: '封面测试文章，保留清晰的标题、摘要和作者信息。'.repeat(8), status: 'public', authorName: '测试作者', authorAvatar: '/old-cover.svg',
     createTime: '2026-01-01', updateTime: '2026-01-01'}
 }
 async function images(page: Page) {
@@ -135,6 +135,7 @@ test('a failed automatic page preserves articles and retries the same cursor onl
   })
   await page.goto(sandboxURL)
   await expect.poll(() => cursors.length).toBe(1)
+  await expect(page.locator('.ArticleCard').first()).toBeVisible()
   const count = await page.locator('.ArticleCard').count()
   await page.locator('.homeFeedBoundary').scrollIntoViewIfNeeded()
   await expect(page.getByRole('button', {name: '重试', exact: true})).toBeVisible()
