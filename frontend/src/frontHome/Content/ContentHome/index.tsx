@@ -213,7 +213,7 @@ const ContentHome = () => {
         }, { rootMargin: '0px 0px 320px 0px' });
         observer.observe(target);
         return () => observer.disconnect();
-    }, [feed, feedState.loaded, feedState.pending, feedState.error, hasMoreArticles]);
+    }, [feed, feedState.loaded, feedState.pending, feedState.error, feedState.nextCursor, hasMoreArticles]);
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
