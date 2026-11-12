@@ -63,7 +63,7 @@ const usersPage = read('frontend/src/pages/Dashboard/Users/index.tsx');
 const cmPage = read('frontend/src/pages/Dashboard/CommentManage/index.tsx');
 const ucPage = read('frontend/src/components/UserCenter/index.tsx') + read('frontend/src/components/UserCenter/useUserCenterModel.tsx');
 const profileType = read('frontend/src/interface/ProfileType.d.ts');
-const migration = read('scripts/migration/user_mute_20261002.sql');
+const migration = read('scripts/migration/pg/0000_schema.sql');
 
 // ① 五组键名：Rust 常量 ⇄ web_info 的 JSON 契约 ⇄ 前端设置卡 ⇄ setter 的位置配对
 console.log('\n① 风控键名四处同源');
@@ -311,14 +311,9 @@ ok(/pub muted: bool/.test(tempUser) && /pub muted_until: Option<String>/.test(te
     'TempUserInfo 加了 muted / mutedUntil（只加字段，不改形状）');
 ok(/原样回库值|原始库值|原样回/.test(tempUser), '注释写明 mutedUntil 是原始库值（永久是那个哨兵）');
 
-// ⑥ 迁移：纯加列、无需回填
-console.log('\n⑥ 迁移 C');
-
-ok(/ALTER TABLE\s+`?user`?\s+ADD COLUMN\s+`?muted_until`?\s+datetime\s+NULL/i.test(migration),
-    '纯加列 datetime NULL');
-eq(count(migration, 'UPDATE '), 0, '没有 UPDATE（存量行 NULL = 未禁言，正是正确语义）');
-ok(/flag: user_mute_20261002/.test(migration), '带 migration flag（勿重跑）');
-ok(/先跑.*后 push|本文件必须\*\*先跑/.test(migration), '头注写明硬顺序：迁移先跑、代码后 push');
+// PostgreSQL keeps the existing nullable mute deadline contract.
+console.log('\n⑥ PostgreSQL 禁言期限');
+ok(/"muted_until" timestamp,/.test(migration), '未禁言账号保留 NULL 期限');
 
 console.log(`\n${failed === 0 ? '✅' : '❌'} ${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

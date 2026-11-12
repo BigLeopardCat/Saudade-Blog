@@ -40,7 +40,7 @@ const tsApis = read('frontend/src/apis/CommentMethods.tsx');
 const tsTypes = read('frontend/src/interface/CommentType.d.ts');
 const tsVisitor = read('frontend/src/utils/visitorKey.ts');
 const tsComment = read('frontend/src/components/CommentSection/index.tsx');
-const MIGRATION = 'scripts/migration/note_comment_vote_20261003.sql';
+const MIGRATION = 'scripts/migration/pg/0000_schema.sql';
 const sql = has(MIGRATION) ? read(MIGRATION) : '';
 
 // ① 路由与域
@@ -168,20 +168,15 @@ console.log('\n排序契约 —— 字面量、默认值、传参：');
         '选中态跟着 sort 走（写成"点了才亮"的本地态 ⇒ 刷新/切文章后页签与实际顺序对不上）');
 }
 
-// ⑥ 迁移与 entity 同源
-console.log('\n迁移 —— 文件、表名、键名、flag 四处对得上：');
+// PostgreSQL schema and the current entity share the vote identity constraints.
+console.log('\nPostgreSQL 评论投票约束：');
 {
-    ok(has(MIGRATION), `迁移文件在（${MIGRATION}）`);
-    ok(/pub mod note_comment_vote;/.test(rustEntityMod), 'entity 已登记进 entity/mod.rs');
-    ok(/CREATE TABLE IF NOT EXISTS `note_comment_vote`/.test(sql),
-        '建的表名与 `#[sea_orm(table_name = ...)]` 相同（写错 ⇒ 编译期全绿、运行期 1146）');
-    ok(/UNIQUE KEY `uq_comment_vote_user`\s*\(`comment_id`, `user_id`\)/.test(sql)
-        && /UNIQUE KEY `uq_comment_vote_visitor`\s*\(`comment_id`, `visitor_key`\)/.test(sql),
-        '两条唯一键都在（幂等靠它们，不靠"先查再插"）');
-    ok(/INSERT INTO migration_flags \(flag_name\) VALUES \('note_comment_vote_20261003'\)/.test(sql),
-        'flag 名与文件名同源（`note_comment_vote_20261003`）');
-    ok(/USE saudade_blog;/.test(sql),
-        'USE 的是现库名（改名那次留的教训：只有 saudade-rust 连这个库）');
+    ok(has(MIGRATION), '当前 PostgreSQL 基线存在');
+    ok(/pub mod note_comment_vote;/.test(rustEntityMod), '投票实体已登记');
+    ok(/CREATE TABLE IF NOT EXISTS "note_comment_vote"/.test(sql), '表名与实体一致');
+    ok(/CREATE UNIQUE INDEX IF NOT EXISTS "uq_comment_vote_user" ON "note_comment_vote" \(comment_id, user_id\)/.test(sql)
+        && /CREATE UNIQUE INDEX IF NOT EXISTS "uq_comment_vote_visitor" ON "note_comment_vote" \(comment_id, visitor_key\)/.test(sql),
+        '账号和匿名访客的投票分别去重');
 }
 
 console.log(`\ncomment-vote: ${passed} 通过, ${failed} 失败`);

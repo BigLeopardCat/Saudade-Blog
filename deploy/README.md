@@ -1,13 +1,16 @@
 # 部署入口
 
-部署要求、数据库迁移、配置、日志、停机及回滚见[部署与运维](../docs/deployment-and-ops.md)，不在此重复维护参数表。
+新环境使用 [Docker Compose 安装指南](docker/README.md)：`install.sh` 生成私有配置、初始化 PostgreSQL 和首个管理员，并等待服务就绪。默认只安装博客，可选 Agent 和计划任务。
 
-- `install.sh`：旧 MySQL 安装器，不适用于当前 PostgreSQL 部署。使用开发指南的 PostgreSQL 迁移步骤和本目录模板，不直接执行旧安装器。
-- `systemd/`：完整服务模板和共享沙箱设置，由 `scripts/deploy/render_service_isolation.py` 生成；运行账号与配置入口固定，发布路径显式传入。
-- [独立服务账号](service-isolation.md)：Rust、Agent、后台任务的账号隔离、可写状态、验收和回滚。
-- `nginx/`：反向代理模板，按站点证书和资源路径核对。
-- `docker/`：未支持的容器草案，不可用于当前 PostgreSQL 版本。
+```sh
+bash deploy/install.sh --site-url http://localhost:8080
+```
 
-常规发布由 GitHub Actions 构建固定提交，经 R2 交付服务器。公开 PR 只检查，不部署、不接触生产凭据。
+已有生产实例继续使用[部署与运维](../docs/deployment-and-ops.md)中的固定版本产物与 systemd 流程。一键安装面向空容器数据卷，不导入、不停止、不删除服务器上既有数据库，也不接管原生服务。
 
-Agent 使用独立版本发布，入口为 `agent.main:app`，见 [Agent 部署](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/deployment.md)。不要从业务开发 checkout 启动线上进程。
+- `stack.py`、`docker/`：容器配置生成、镜像构建和新安装入口。
+- `systemd/`：[独立服务账号](service-isolation.md)、沙箱及固定 release 模板。
+- `nginx/`：原生反向代理模板与共享响应头；容器站点由 `stack.py` 生成。
+- `deploy.env.example`：原生 CI/R2 发布控制配置，不能用作应用运行配置。
+
+不再维护 MySQL 安装器或 MySQL 切库工具，旧文件可从 Git 历史查阅；当前 PostgreSQL 编号迁移继续保留。Agent 源码和镜像由[独立仓库](https://github.com/BigLeopardCat/saudade-blog-agent)维护，容器安装固定 `docker/agent.lock.json` 的完整提交。该锁与前端组件锁、Agent 的宿主契约锁分别管理。

@@ -1,5 +1,7 @@
 # 部署与运维
 
+本页描述现有原生 systemd 发布。新环境另提供 [PostgreSQL 一键安装与 Docker Compose](../deploy/docker/README.md)，两种流程分别维护状态目录，不自动接管或转换现有实例。仓库不再维护 MySQL 安装器和一次性切库工具；当前 PostgreSQL 编号迁移继续保留。
+
 ## 配置
 
 开发环境由 dotenv 读取本地 `.env`，进程环境优先；生产由 systemd 注入 `/etc/saudade/blog-runtime.env`，工作目录为独立状态目录，不读取开发 checkout。必需 `DATABASE_URL`、随机 `JWT_SECRET`；公开部署设置 `SITE_URL`，前端构建设置对应 `VITE_SITE_URL`。完整配置样例见[环境模板](../.env.example)。配置文件不入库，前端不得持有模型或对象存储密钥。

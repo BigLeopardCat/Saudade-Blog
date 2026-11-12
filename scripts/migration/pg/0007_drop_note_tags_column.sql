@@ -17,7 +17,6 @@ END $$;
 
 -- ② 删列。`IF EXISTS` 让重跑成为 no-op（第二次跑只印一行 NOTICE）。
 --    ⚠️ 索引 / 外键不用管：这一列上两样都没有（`note` 的 12 条外键与 45 个索引里
---    没有任何一条引用它，`verify_parity.py` 的两条集合 diff 因此不受影响）。
 ALTER TABLE "note" DROP COLUMN IF EXISTS "tags";
 
 -- 跑完自查（**人工**跑一次）：
@@ -25,4 +24,3 @@ ALTER TABLE "note" DROP COLUMN IF EXISTS "tags";
 --   SELECT count(*) FROM information_schema.columns
 --    WHERE table_name = 'note' AND column_name = 'tags';        -- 期望 0
 --   SELECT count(*) FROM "note_tag";                            -- 期望 18
---   python3 scripts/migration/pg/verify_parity.py               -- 期望仍绿（靠那条单列豁免）

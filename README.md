@@ -40,6 +40,10 @@ npm run dev
 
 看板娘源码在 Agent 仓库；本仓通过 `frontend/widget.lock.json` 固定提交与子树哈希。组件下载先于 Live2D vendor 准备，构建缺失资源时应失败。
 
+## 安装部署
+
+新环境可用 [PostgreSQL 一键安装与 Docker Compose](deploy/docker/README.md)，默认安装核心博客，Agent 和计划任务可选。现有 systemd 实例继续使用[固定版本发布流程](docs/deployment-and-ops.md)。
+
 ## 文档
 
 [使用指南](docs/user-guide.md) · [文档索引](docs/README.md) · [架构](docs/architecture.md) · [开发](CONTRIBUTING.md) · [部署运维](docs/deployment-and-ops.md) · [安全边界](docs/security-boundary.md)
