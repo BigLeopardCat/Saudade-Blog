@@ -71,6 +71,57 @@ async fn database_failures_are_not_confirmed_empty_pages() {
         .append_query_errors([DbErr::Custom("offline".into())])
         .into_connection();
     assert!(read_talks(&db, 20, None, None).await.is_err());
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("offline".into())])
+        .into_connection();
+    assert!(article_page(&db, 6, None).await.is_err());
+}
+
+#[tokio::test]
+async fn postgres_homepage_cursor_survives_newer_inserts_and_timestamp_ties() {
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let tx = db.begin().await.unwrap();
+    let prefix = format!("homepage_{}", uuid::Uuid::new_v4().simple());
+    let mut ids = Vec::new();
+    for index in 0..4 {
+        let row = tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ($1,'PRIVATE BODY','public',true,'2199-01-01','2199-01-01') RETURNING id",
+            vec![format!("{prefix}_{index}").into()])).await.unwrap().unwrap();
+        ids.push(row.try_get::<i32>("", "id").unwrap());
+    }
+    tx.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ($1,'PRIVATE BODY','draft',false,'2299-01-01','2299-01-01')",
+        vec![prefix.clone().into()])).await.unwrap();
+    let first = article_page(&tx, 2, None).await.unwrap();
+    assert_eq!(
+        first.items.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![ids[3], ids[2]]
+    );
+    let cursor = window(
+        &FeedQuery {
+            cursor: first.next_cursor,
+            ..Default::default()
+        },
+        2,
+    )
+    .unwrap()
+    .1
+    .unwrap();
+    tx.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ($1,'PRIVATE BODY','published',true,'2299-01-01','2299-01-01')",
+        vec![prefix.into()])).await.unwrap();
+    let next = article_page(&tx, 2, Some(&cursor)).await.unwrap();
+    assert_eq!(
+        next.items.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![ids[1], ids[0]]
+    );
+    let statement = article_query(Some(&cursor)).build(DatabaseBackend::Postgres);
+    assert!(!statement.sql.contains("OFFSET"));
+    assert!(statement.sql.contains("\"created_at\", \"note\".\"id\") <"));
+    tx.rollback().await.unwrap();
 }
 
 #[tokio::test]

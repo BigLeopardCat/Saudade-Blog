@@ -1,0 +1,167 @@
+.ContentContainer
+  --home-width: min(90%, 1280px)
+  .allArticles, .homeSectionHeading
+    width: var(--home-width)
+  .homeSectionHeading
+    margin-bottom: 20px
+
+.featuredArticles
+  width: var(--home-width)
+  margin-bottom: 32px
+  color: var(--font-title-color)
+  .featuredHeading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    margin-bottom: 14px
+  .featuredLabel
+    display: inline-flex
+    align-items: center
+    gap: 8px
+    font-size: 14px
+    font-weight: 700
+    color: var(--washi-ink, #4a3550)
+  .featuredControls
+    display: flex
+    align-items: center
+    gap: 6px
+    button
+      display: grid
+      place-items: center
+      width: 36px
+      height: 36px
+      padding: 0
+      border-radius: 10px
+      border: 1px solid var(--washi-line, #decddd)
+      color: var(--washi-ink, #4a3550)
+      background: var(--washi-paper-2, #fff6fa)
+      cursor: pointer
+      font-size: 22px
+      &:hover
+        background: var(--washi-tape, #ffdeee)
+      &:focus-visible
+        outline: 2px solid var(--washi-pink-deep, #d94f9a)
+        outline-offset: 3px
+  .featuredCount
+    margin-right: 4px
+    font-size: 12px
+    font-variant-numeric: tabular-nums
+    color: var(--font-p-color)
+  .featuredCard
+    display: grid
+    grid-template-columns: clamp(260px, 28vw, 360px) minmax(0, 1fr)
+    overflow: hidden
+    border: 1px solid var(--washi-line, #decddd)
+    border-radius: 18px
+    background: var(--pic-background-cover)
+    box-shadow: var(--box-shadow-color)
+    cursor: pointer
+  .featuredCover
+    display: block
+    position: relative
+    width: 100%
+    aspect-ratio: 1
+    align-self: center
+    overflow: hidden
+    .asset-image, img
+      width: 100%
+      height: 100%
+    img
+      display: block
+      position: absolute
+      inset: 0
+      object-fit: cover
+  .featuredContent
+    display: flex
+    flex-direction: column
+    align-items: flex-start
+    justify-content: center
+    min-width: 0
+    padding: clamp(20px, 2.2vw, 28px)
+    gap: 10px
+    h2
+      margin: 0
+      font-size: clamp(22px, 2vw, 28px)
+      line-height: 1.35
+      a
+        color: var(--font-title-color)
+        text-decoration: none
+        display: -webkit-box
+        -webkit-line-clamp: 2
+        -webkit-box-orient: vertical
+        overflow: hidden
+        &:focus-visible
+          outline: 2px solid var(--washi-pink-deep, #d94f9a)
+          outline-offset: 3px
+  .featuredCategory
+    font-size: 12px
+    font-weight: 600
+    color: var(--washi-pink-deep, #d94f9a)
+  .featuredDescription
+    margin: 0
+    font-size: 14px
+    line-height: 1.8
+    color: var(--font-p-color)
+    display: -webkit-box
+    -webkit-line-clamp: 2
+    -webkit-box-orient: vertical
+    overflow: hidden
+  .featuredTags
+    display: flex
+    gap: 6px
+    flex-wrap: wrap
+    max-height: 26px
+    overflow: hidden
+  .featuredByline
+    display: flex
+    align-items: center
+    gap: 0
+    flex-wrap: wrap
+    margin-top: 4px
+    padding-top: 4px
+    max-width: 100%
+    font-size: 12px
+
+.homeFeedBoundary
+  display: grid
+  place-items: center
+  min-height: 64px
+  padding: 16px
+  color: var(--font-p-color)
+  font-size: 13px
+
+@media screen and (max-width: 768px)
+  .ContentContainer
+    --home-width: 95%
+
+@media screen and (max-width: 640px)
+  .featuredArticles
+    margin-bottom: 22px
+    .featuredCard
+      grid-template-columns: 128px minmax(0, 1fr)
+      border-radius: 14px
+    .featuredCover
+      width: 112px
+      margin: 16px 0 16px 16px
+      border-radius: 10px
+      align-self: start
+    .featuredContent
+      padding: 14px
+      gap: 8px
+      h2
+        font-size: 18px
+    .featuredDescription
+      font-size: 12px
+      line-height: 1.6
+      -webkit-line-clamp: 2
+    .featuredTags
+      display: none
+    .featuredByline
+      font-size: 11px
+      .ant-avatar
+        width: 24px !important
+        height: 24px !important
+        min-width: 24px !important
+    .featuredLabel
+      font-size: 13px

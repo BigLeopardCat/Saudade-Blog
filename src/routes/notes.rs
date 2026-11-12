@@ -285,6 +285,18 @@ fn summary_to_dto(r: NoteSummary, cats: &HashMap<i32, String>) -> NoteDto {
     map_note_summary(r.into_model(), cat)
 }
 
+pub(super) async fn summarize(
+    db: &DatabaseConnection,
+    rows: Vec<NoteSummary>,
+) -> Result<Vec<NoteDto>, sea_orm::DbErr> {
+    let cats = category_names(db, rows.iter().filter_map(|row| row.category_id)).await?;
+    let mut items: Vec<_> = rows.into_iter().map(|row| summary_to_dto(row, &cats)).collect();
+    attach_tags(db, &mut items).await;
+    attach_stats(db, &mut items).await;
+    attach_authors(db, &mut items).await;
+    Ok(items)
+}
+
 pub async fn list_public_notes(
     State(state): State<Arc<AppState>>,
     Query(query): Query<NoteQuery>,

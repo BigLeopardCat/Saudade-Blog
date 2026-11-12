@@ -136,18 +136,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     border-radius: 0
     background: rgba(0, 0, 0, 0.66)
     box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16))
-    // 底边那条和纸胶带只在深底上出现——透明态下它是一条悬空的彩线
-    &::after
-      content: ''
-      position: absolute
-      left: 8%
-      right: 8%
-      bottom: 2px
-      height: 3px
-      border-radius: 2px
-      background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
-      opacity: 0.5
-      pointer-events: none
   &:hover, &.is-stuck, &.over-dark
     .webTitle, .headBar li
       color: #f3e8f6
