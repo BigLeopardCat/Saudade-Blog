@@ -93,7 +93,9 @@ Agent 独立升级：取回干净的完整 Agent 提交，评估兼容性后修�
 
 ## 镜像交付与许可
 
-提供 Dockerfile 和容器 CI，默认固定源码构建，不假定已有公共镜像。构建机先 `--prepare-only`，再用上述 Compose 命令执行 `build`。用 `docker image save` 导出指定 SHA 的 backend/frontend/agent 镜像；目标机 `docker image load` 后执行安装器 `--reuse --no-build`。目标机需有相同源码版本与配置，核对 SHA 和传输校验值；PostgreSQL 基础镜像单独准备。
+提供 Dockerfile 和容器 CI，默认固定源码构建，不假定已有公共镜像。主线具备新工作流后，可手动运行 `PostgreSQL container` 并勾选 `package_images`；只有端到端检查成功后，才导出三个应用镜像及 PostgreSQL 基础镜像，附 SHA-256 校验文件，作为保留三天的 Actions artifact。归档不包含运行配置和数据卷，下载后按完整源码提交长期保存。
+
+也可在构建机先 `--prepare-only`，再用上述 Compose 命令执行 `build` 和 `docker image save` 导出指定版本。目标机验证校验值、`docker image load` 后执行安装器 `--reuse --no-build`；需有相同版本的干净源码和独立生成的配置，不复用构建机的管理员密码及模型密钥。
 
 镜像保留项目 GPL-2.0 与第三方声明；看板娘代码 MIT、美术 CC BY-NC-SA 4.0，Live2D Core 按独立条款分发。详见 [THIRD-PARTY.md](../../THIRD-PARTY.md)。本入口不新增公共镜像发布，资源不能误标为单一代码许可。
 

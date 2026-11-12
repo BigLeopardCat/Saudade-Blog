@@ -117,6 +117,15 @@ class ComposeInstall(unittest.TestCase):
         self.assertNotIn('CREATE EXTENSION IF NOT EXISTS vector', schema)
         self.assertNotIn('DROP COLUMN IF EXISTS tags', schema)
 
+    def test_source_revision_is_rechecked_before_build(self):
+        with patch.object(stack, "revision", return_value="a" * 40):
+            with self.assertRaisesRegex(ValueError, "pinned revision"):
+                stack.verify_source(ROOT, "b" * 40, "deploy/docker/Dockerfile.backend")
+        with patch.object(stack, "revision", return_value="a" * 40), patch.object(stack, "run") as run:
+            run.return_value.stdout = "?? uncommitted-runtime.py"
+            with self.assertRaisesRegex(ValueError, "clean committed"):
+                stack.verify_source(ROOT, "a" * 40, "deploy/docker/Dockerfile.backend")
+
     def test_upgrade_pins_new_revision_without_regenerating_runtime_secrets(self):
         self.prepare()
         before = (self.state / "backend.env").read_bytes()

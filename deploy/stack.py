@@ -65,6 +65,16 @@ def safe_path(path):
         raise ValueError("deployment paths must be absolute without whitespace or shell metacharacters")
 
 
+def verify_source(source, commit, dockerfile):
+    safe_path(source)
+    if (not re.fullmatch(r"[0-9a-f]{40}", commit) or revision(source) != commit
+            or not (source / dockerfile).is_file()):
+        raise ValueError("source does not match its pinned revision or Dockerfile")
+    if run(["git", "-C", str(source), "status", "--porcelain"],
+           capture_output=True, text=True).stdout:
+        raise ValueError("build from a clean committed checkout")
+
+
 def agent_source(args, output):
     lock = json.loads((ROOT / "deploy/docker/agent.lock.json").read_text())
     commit = args.agent_revision or lock["revision"]
@@ -77,11 +87,7 @@ def agent_source(args, output):
         run(["git", "init", "--quiet", str(source)])
         run(["git", "-C", str(source), "fetch", "--depth=1", lock["repository"], commit])
         run(["git", "-C", str(source), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
-    if revision(source) != commit or not (source / "Dockerfile").is_file():
-        raise ValueError("Agent source must match the revision and contain its Dockerfile")
-    if run(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
-           capture_output=True, text=True).stdout:
-        raise ValueError("Agent source has uncommitted tracked changes")
+    verify_source(source, commit, "Dockerfile")
     return source, commit
 
 
@@ -251,7 +257,7 @@ def main(argv=None):
         for name in ["administrator.json", "backend.env", "agent.env", "postgres.env", "compose.env"]:
             private_regular(output / name)
         if args.upgrade:
-            if run(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no"],
+            if run(["git", "-C", str(ROOT), "status", "--porcelain"],
                    capture_output=True, text=True).stdout:
                 raise ValueError("upgrade from a clean committed checkout")
             commit = revision(ROOT)
@@ -275,11 +281,18 @@ def main(argv=None):
     print(f"Private configuration: {output}; administrator credentials: {output / 'administrator.json'}")
     if args.prepare_only:
         return 0
-    if run(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no"],
-           capture_output=True, text=True).stdout:
-        raise ValueError("build from a clean committed checkout")
-    if revision(ROOT) != manifest["blog_revision"]:
-        raise ValueError("source revision changed; follow the documented upgrade procedure")
+    verify_source(ROOT, manifest["blog_revision"], "deploy/docker/Dockerfile.backend")
+    compose_values = dict(line.split("=", 1) for line in (output / "compose.env").read_text().splitlines()
+                          if line and not line.startswith("#"))
+    if (compose_values.get("BLOG_SOURCE") != str(ROOT)
+            or compose_values.get("BLOG_REVISION") != manifest["blog_revision"]
+            or compose_values.get("CONFIG_UID") != str(os.geteuid())
+            or compose_values.get("CONFIG_GID") != str(os.getegid())):
+        raise ValueError("Compose source, revision or configuration owner differs from this installation")
+    if manifest["with_agent"]:
+        if compose_values.get("AGENT_REVISION") != manifest["agent_revision"]:
+            raise ValueError("Agent image selection differs from the installation manifest")
+        verify_source(Path(compose_values["AGENT_SOURCE"]), manifest["agent_revision"], "Dockerfile")
     version = run(["docker", "compose", "version", "--short"], capture_output=True, text=True).stdout
     numbers = re.search(r"(\d+)\.(\d+)", version)
     if not numbers or tuple(map(int, numbers.groups())) < (2, 30):
