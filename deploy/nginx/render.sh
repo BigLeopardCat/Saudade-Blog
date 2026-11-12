@@ -1,24 +1,7 @@
 #!/usr/bin/env bash
-# ═══════════════════════════════════════════════════════════════════════════════
-#  nginx 站点配置的渲染 —— **唯一实现**，两个调用方共用：
-#    · 裸机：deploy/install.sh（source 它，由 setup_nginx 落到 sites-available/blog）
-#    · 容器：deploy/docker/prepare.sh（渲染成 deploy/docker/generated/blog.conf，
-#            再由 compose 只读挂进 nginx 容器的 /etc/nginx/conf.d/blog.conf。
-#            注意**不止一处挂载**：blog-headers 那个 snippet 目录是另一行，
-#            站点配置里每个 location 都通配 include 它）
-#  共用原因：按结构标记切乙块的 awk 只能有一份；分家后改模板会漏掉一边，
-#  表现为 nginx -t 失败或静默保留 <你的域名> 占位符。
-#
-#  调用方提供的输入（全部是普通变量/函数，不 export）：
-#      DEPLOY_DIR  模板在哪（= 本文件所在的 deploy/）
-#      APP_DIR     站点根（裸机=仓目录；容器=/srv）
-#      DOMAIN      裸域名，空 = 只有 IP 的形态（会整块切掉乙块）
-#      CERT_NAME   乙块用的证书基名（甲块恒用 selfsigned，见函数内注释）
-#      WITH_IOT    1 = 解注那行 IoT include
-#      note() / die()   调用方的日志函数；docker 侧没有就由本文件补一对最小实现
-#
-#  输出：渲染结果走 **stdout**，调用方自己落地；人话一律走 stderr，否则会写进站点配置。
-# ═══════════════════════════════════════════════════════════════════════════════
+# 原生 nginx 站点模板渲染。容器网络配置由 deploy/stack.py 生成。
+# 调用方提供 DEPLOY_DIR、APP_DIR、DOMAIN、CERT_NAME、WITH_IOT。
+# 可提供 note()/die()；站点配置输出到 stdout，诊断输出到 stderr。
 
 # 有调用方的就用调用方的（sourcing 进来的同名函数不该被这里悄悄换掉），没有才补一对最小的。
 if ! command -v note >/dev/null 2>&1; then
@@ -48,7 +31,7 @@ render_nginx() {
     # ⚠️ 甲块（IP / 未知 Host 兜底）的证书路径在模板里**写死**是 selfsigned.*，
     #    那是刻意的、不要"顺手统一"成 --cert 给的那个名字：按 IP 访问时没有任何
     #    证书能对上名字（CN 只能是 localhost），拿正式证书去接只是白搭一张。
-    #    所以两张证书各管各的，$CERT_NAME 只作用于乙块（见 setup_tls）。
+    #    所以两张证书各管各的，$CERT_NAME 只作用于乙块。
 
     if [ -z "$DOMAIN" ]; then
         # 没给域名 → 乙块整块略去。留着 <你的域名> 会让 `nginx -t` 直接失败。
@@ -64,7 +47,7 @@ render_nginx() {
                 print "# ══ 乙：正式域名 —— 这次没给域名，整块略去 ═════════════════════════"
                 print "#   （占位符留在 server_name 上会让 nginx -t 直接失败，所以是去掉，"
                 print "#    不是留着当记号——别把这段当成\"还没填\"）"
-                print "#   有域名之后重跑：bash deploy/install.sh --domain 你的域名"
+                print "#   配置域名后按部署文档重新渲染原生 nginx 模板"
                 skip = 1; next
             }
             /^# ══ HTTP/ { skip = 0 }

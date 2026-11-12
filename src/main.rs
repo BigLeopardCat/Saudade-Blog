@@ -1,7 +1,7 @@
 use dotenvy::dotenv;
 use sea_orm::SqlxPostgresConnector;
 use std::env;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use saudade_blog::{create_router, AppState};
 
@@ -74,7 +74,11 @@ async fn main() {
         .and_then(|v| v.parse::<u16>().ok())
         .filter(|p| *p > 0)
         .unwrap_or(3000);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let host: IpAddr = env::var("BLOG_BIND_ADDRESS")
+        .unwrap_or_else(|_| "127.0.0.1".into())
+        .parse()
+        .expect("BLOG_BIND_ADDRESS must be an IP address");
+    let addr = SocketAddr::from((host, port));
     tracing::info!(service = "saudade-blog", pid = std::process::id(), address = %addr,
         event = "service_started", "HTTP server ready");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

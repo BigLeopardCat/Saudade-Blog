@@ -1,10 +1,5 @@
--- RAG chunk 向量：从文件（`saudade-blog-agent/data/rag_vectors/` 那三个）搬进 PG。
--- 装载 = `load_vectors.py`；位级对账 = `verify_vectors.py`。
---
--- ⚠️ **本文件是手写的**，与 `0000_schema.sql` 不同源：那份由 `mysql2pg.py` 从 MySQL
---    的 `information_schema` 生成，而这一份在 MySQL 那边**没有对应物**（向量从来没进过
---    MySQL）。所以「改结构 = 先改 MySQL 再重跑生成器」那条纪律在这里不适用，改这里就是
---    改这里。
+-- 可选的 PostgreSQL RAG 向量结构；当前向量存储与管理入口由 Agent 仓维护。
+-- 此迁移不属于博客默认安装集合，启用前核对扩展与 Agent 版本。
 --
 -- 为什么值得搬
 -- 盘上那套是「三个文件 + 一把 flock + (gen, fingerprint) 换视图」：任何写者漏加锁或

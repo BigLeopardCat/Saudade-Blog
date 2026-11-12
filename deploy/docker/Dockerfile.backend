@@ -1,44 +1,29 @@
-# Unsupported container draft; see deploy/README.md before use.
-# Keep dependency-cache invalidation, binary validation, certificates and timezone data.
-FROM rust:1.92-slim AS build
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libc6-dev cmake findutils \
- && rm -rf /var/lib/apt/lists/*
-
+FROM rust:1.92-bookworm AS build
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
-
-RUN mkdir -p src \
- && printf '\n' > src/lib.rs \
- && printf 'fn main() {}\n' > src/main.rs \
- && cargo build --release --locked
-
 COPY src ./src
+COPY LICENSE THIRD-PARTY.md /licenses/
+ENV CARGO_BUILD_JOBS=1
+RUN cargo build --release --locked --bins
 
-RUN find src -type f -exec touch {} +
-
-RUN cargo build --release --locked \
- && size="$(stat -c %s target/release/saudade_blog_bin)" \
- && if [ "$size" -lt 4194304 ] || ! grep -aq 'DATABASE_URL' target/release/saudade_blog_bin; then \
-        printf '\n✗ 编出来的 target/release/saudade_blog_bin 只有 %s 字节、里面没有 DATABASE_URL。\n  未生成有效的后端二进制，请检查源码复制与构建缓存。\n  先看那条 find…touch 还在不在。\n' "$size" >&2; \
-        exit 1; \
-    fi \
- && cp target/release/saudade_blog_bin /usr/local/bin/saudade_blog_bin
-
-RUN strip /usr/local/bin/saudade_blog_bin || true
-
-
-FROM debian:bookworm-slim AS runtime
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-ENV TZ=Asia/Shanghai
-
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 saudade && useradd --uid 10001 --gid 10001 --no-create-home saudade \
+    && mkdir -p /srv/logs/frontend /var/lib/saudade/uploads \
+    && chown -R 10001:10001 /srv /var/lib/saudade
 WORKDIR /srv
-RUN mkdir -p /srv/logs/frontend
-
-COPY --from=build /usr/local/bin/saudade_blog_bin /usr/local/bin/saudade_blog_bin
-
+COPY --from=build /build/target/release/saudade_blog_bin /usr/local/bin/
+COPY --from=build /build/target/release/saudade-bootstrap-admin /usr/local/bin/
+COPY --from=build /licenses /usr/share/doc/saudade
+ARG REVISION
+LABEL org.opencontainers.image.source=https://github.com/BigLeopardCat/Saudade-Blog \
+      org.opencontainers.image.revision=$REVISION
+ENV TZ=Asia/Shanghai BLOG_BIND_ADDRESS=0.0.0.0 BLOG_PORT=3000
+USER 10001:10001
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=4s --start-period=20s \
+    CMD curl --noproxy '*' --fail --max-time 2 --silent http://127.0.0.1:3000/api/health/ready >/dev/null
 ENTRYPOINT ["/usr/local/bin/saudade_blog_bin"]

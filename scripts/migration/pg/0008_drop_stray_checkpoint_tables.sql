@@ -49,6 +49,3 @@ BEGIN
   END IF;
   RAISE NOTICE '自查通过：四张 checkpoint 表都不在了';
 END $$;
-
--- 跑完顺手核一遍（不属于本文件，供人眼确认；`verify_parity.py` 那一条才是判据）：
---   python3 scripts/migration/pg/verify_parity.py      # 期望 0 处对不上

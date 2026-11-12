@@ -19,34 +19,16 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm,
 const profileRs = read('src/routes/profile.rs');
 const authRs = read('src/routes/auth.rs');
 const entityRs = read('src/entity/user.rs');
-const migration = read('scripts/migration/nickname_unique_20261002.sql');
+const migration = read('scripts/migration/pg/0000_schema.sql');
 const pageTsx = readFe('src/components/UserCenter/index.tsx') + readFe('src/components/UserCenter/useUserCenterModel.tsx');
 const types = readFe('src/interface/ProfileType.d.ts');
 const sass = readFe('src/components/UserCenter/index.sass');
 
-console.log('迁移 —— 函数索引与存量去重：');
-ok(/ADD UNIQUE KEY `uk_user_nickname` \(\(NULLIF\(TRIM\(nickname\), ''\)\)\)/.test(migration),
-    '唯一索引是**函数索引**且表达式外有双层括号（单层会被 MySQL 当成列名）');
-ok(migration.includes('VERSION()'), '先打印 MySQL 版本（函数索引需要 ≥ 8.0.13）');
-ok(/NULLIF\(TRIM\(nickname\), ''\) AS 归一组/.test(migration),
-    '分组表达式被**命名**（`AS 归一组`）——HAVING 里只能引别名，重写表达式会 1054');
-ok(migration.includes('GROUP BY 归一组') && migration.includes('HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL'),
-    '重复组判据带 IS NOT NULL——没设昵称的账号会一起落进 NULL 组，少了它"三个人都没设昵称"会被报成重名组');
-ok(migration.includes("ROW_NUMBER() OVER (PARTITION BY NULLIF(TRIM(nickname), '') ORDER BY id)"),
-    '存量去重的**分组口径 == 索引口径**（不是原始的 nickname）——按原始值分组会把空昵称账号算成一族');
-ok(/WHERE NULLIF\(TRIM\(nickname\), ''\) IS NOT NULL/.test(migration),
-    '④ 的派生表**排除空昵称**：NULL 在窗口分区里互为 peer，只换成 NULLIF 而不加 WHERE 等于 bug 挪个位置');
-ok(!/PARTITION BY (?!NULLIF)/.test(strip(migration)) && !/GROUP BY nickname\b/.test(strip(migration)),
-    '全文件再无**裸 nickname 分组**（strip 掉注释后仍不许出现——注释里刻意留着旧写法当反例）');
-ok(migration.includes('ROW_NUMBER() OVER'), '存量去重按注册先后编号（最早的保留原名）');
-ok(/nickname_auto_renamed` tinyint\(1\) NOT NULL DEFAULT 0/.test(migration),
-    '新增标记列 nickname_auto_renamed，默认 0');
-ok(migration.includes("AFTER `nickname`"), '列序 AFTER nickname（与 entity 的字段顺序一致）');
-ok(migration.includes("SET u.nickname = CONCAT(LEFT(TRIM(u.nickname), 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id)"),
-    '改名用 LEFT(...) 截到留得下后缀，不会把 varchar(64) 撑爆');
-ok(migration.indexOf('ADD UNIQUE KEY') < migration.indexOf("VALUES ('nickname_unique_20261002')"),
-    '打 flag 在建索引之后');
-ok(/回滚[\s\S]*DROP INDEX `uk_user_nickname`/.test(migration), '回滚段里有 DROP INDEX');
+console.log('PostgreSQL 昵称约束：');
+ok(/CREATE UNIQUE INDEX IF NOT EXISTS "uk_user_nickname" ON "user" \(\(NULLIF\(TRIM\("nickname"\), ''\)\)\)/.test(migration),
+    '当前 PostgreSQL 对非空白昵称建立表达式唯一索引');
+ok(/"nickname_auto_renamed" smallint NOT NULL DEFAULT 0/.test(migration),
+    '当前基线保留自动更名标记，默认值为 0');
 
 console.log('\nRust 实体 —— 列必须与迁移同时在场：');
 ok(/pub nickname_auto_renamed: i16,/.test(entityRs),

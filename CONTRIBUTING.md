@@ -28,7 +28,7 @@ python3 scripts/migration/pg/ci_schema_files.py
 ```
 
 执行迁移时启用 `psql -v ON_ERROR_STOP=1`。新增表使用应用角色执行，以保持表和序列所有权一致。
-新结构直接编写幂等的 PostgreSQL 迁移，不重新生成基线，也不执行 `scripts/migration/` 下的旧 MySQL SQL。
+新结构直接编写幂等的 PostgreSQL 迁移，不重新生成基线。MySQL 脚本和切库工具已移除，当前数据库入口统一在 `scripts/migration/pg/`。
 具体部署步骤见 [部署手册](deploy/README.md) 与 [运维手册](docs/deployment-and-ops.md)。
 
 ### 后端与前端

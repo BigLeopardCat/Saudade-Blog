@@ -141,9 +141,9 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
     const entity = readFileSync(path.join(repo, 'src/entity/note.rs'), 'utf8');
     ok(/pub user_id: Option<i32>/.test(entity), '实体里有 user_id 列（Option = 老文章那批没有记录）');
 
-    const sql = readFileSync(path.join(repo, 'scripts/migration/note_author_20261001.sql'), 'utf8');
-    ok(/ADD COLUMN `user_id` int NULL/.test(sql), '迁移文件真的加这一列（可空 ⇒ 存量行不动）');
-    ok(/note_author_20261001/.test(sql), '迁移带 flag（勿重跑）');
+    const sql = readFileSync(path.join(repo, 'scripts/migration/pg/0000_schema.sql'), 'utf8');
+    const noteSchema = sql.match(/CREATE TABLE IF NOT EXISTS "note" \(([\s\S]*?)\n\);/)?.[1] || '';
+    ok(/"user_id" integer,/.test(noteSchema), '当前 PostgreSQL 文章作者可空，历史文章无需伪造作者');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);

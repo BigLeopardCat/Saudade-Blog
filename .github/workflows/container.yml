@@ -1,0 +1,86 @@
+name: PostgreSQL container
+on:
+  pull_request:
+    branches: [cn_sora_blog]
+    paths: ['deploy/**', '.dockerignore', 'src/**', 'Cargo.*', 'frontend/**', 'scripts/migration/pg/**', '.github/workflows/container.yml']
+  push:
+    branches: [cn_sora_blog]
+    paths: ['deploy/**', '.dockerignore', 'src/**', 'Cargo.*', 'frontend/**', 'scripts/migration/pg/**', '.github/workflows/container.yml']
+  workflow_dispatch:
+    inputs:
+      package_images:
+        description: Export the verified images as a transferable archive
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COMPOSE_PARALLEL_LIMIT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Select disposable state directory
+        run: printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Configuration tests without Docker
+        run: python3 -m unittest discover -s tests/ops -p test_compose_install.py -v
+      - name: Prepare private disposable stack
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          key = Path(os.environ['RUNNER_TEMP']) / 'offline-model-key'
+          fd = os.open(key, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+          with os.fdopen(fd, 'w') as stream:
+              stream.write('ci-offline-no-model-request')
+          PY
+          bash deploy/install.sh --state-dir "$STACK_STATE" --with-agent --with-scheduler \
+            --model-key-file "$RUNNER_TEMP/offline-model-key" --prepare-only
+      - name: Build and start pinned stack
+        run: bash deploy/install.sh --state-dir "$STACK_STATE" --reuse
+      - name: Verify real PostgreSQL, private services and first login
+        run: python3 deploy/docker/ci-smoke.py
+      - name: Verify reuse preserves configuration
+        run: |
+          sha256sum "$STACK_STATE/backend.env" "$STACK_STATE/agent.env" "$STACK_STATE/administrator.json" > "$RUNNER_TEMP/config.sha256"
+          bash deploy/install.sh --state-dir "$STACK_STATE" --reuse --no-build
+          sha256sum --check "$RUNNER_TEMP/config.sha256"
+      - name: Package verified images without configuration or volumes
+        if: github.event_name == 'workflow_dispatch' && inputs.package_images
+        run: |
+          AGENT_SHA="$(python3 -c 'import json; print(json.load(open("deploy/docker/agent.lock.json"))["revision"])')"
+          docker image save "saudade-blog/backend:$GITHUB_SHA" "saudade-blog/frontend:$GITHUB_SHA" \
+            "saudade-blog/agent:$AGENT_SHA" postgres:16-bookworm | gzip > "$RUNNER_TEMP/saudade-images.tar.gz"
+          cd "$RUNNER_TEMP"
+          sha256sum saudade-images.tar.gz > saudade-images.sha256
+      - name: Upload transferable images
+        if: github.event_name == 'workflow_dispatch' && inputs.package_images
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: saudade-images-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/saudade-images.tar.gz
+            ${{ runner.temp }}/saudade-images.sha256
+          compression-level: 0
+          retention-days: 3
+      - name: Disposable CI diagnostics
+        if: failure()
+        run: |
+          docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
+            -f deploy/docker/compose.yaml --profile agent --profile scheduler ps -a
+          docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
+            -f deploy/docker/compose.yaml --profile agent --profile scheduler logs --tail 80
+      - name: Remove only this runner's disposable stack
+        if: always()
+        run: |
+          if test -f "$STACK_STATE/compose.env"; then
+            docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
+              -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15 --volumes
+          fi
