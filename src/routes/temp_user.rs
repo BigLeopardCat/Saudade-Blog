@@ -50,7 +50,7 @@ pub struct TempUserInfo {
     #[serde(rename = "chatQuotaLimit")]
     pub chat_quota_limit: i32,
     pub muted: bool,
-    /// 禁言截止时间使用数据库钟面格式；null 表示无禁言，9999-12-31 23:59:59 表示永久。
+    /// 禁言截止时间为原始库值；null 表示无禁言，9999-12-31 23:59:59 表示永久。
     #[serde(rename = "mutedUntil")]
     pub muted_until: Option<String>,
 }
