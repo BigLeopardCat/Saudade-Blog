@@ -181,8 +181,8 @@ async fn article_page<C: ConnectionTrait>(
     cursor: Option<&Cursor>,
 ) -> Result<FeedPage<super::notes::NoteSummary>, DbErr> {
     let mut rows = article_query(cursor)
-        .into_partial_model::<super::notes::NoteSummary>()
         .limit(limit + 1)
+        .into_partial_model::<super::notes::NoteSummary>()
         .all(db)
         .await?;
     let more = rows.len() as u64 > limit;

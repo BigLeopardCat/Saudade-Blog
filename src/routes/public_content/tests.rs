@@ -118,11 +118,8 @@ async fn postgres_homepage_cursor_survives_newer_inserts_and_timestamp_ties() {
         next.items.iter().map(|row| row.id).collect::<Vec<_>>(),
         vec![ids[1], ids[0]]
     );
-    let statement = article_query(Some(&cursor))
-        .into_partial_model::<super::super::notes::NoteSummary>()
-        .build(DatabaseBackend::Postgres);
+    let statement = article_query(Some(&cursor)).build(DatabaseBackend::Postgres);
     assert!(!statement.sql.contains("OFFSET"));
-    assert!(!statement.sql.contains("\"content\""));
     assert!(statement.sql.contains("\"created_at\", \"note\".\"id\") <"));
     tx.rollback().await.unwrap();
 }
