@@ -94,10 +94,29 @@ with PostgresSaver.from_conn_string(make_conninfo(os.environ['CHECKPOINT_DSN'], 
 """
         command("exec", "-T", "-e", "RECOVERY_CHECKPOINT=" + json.dumps(checkpoint),
                 "agent", "python", "-c", verify)
+        # Reject an invalid configuration, then restore the same verified image and credentials.
+        backend_hash = hashlib.sha256((state / "backend.env").read_bytes()).hexdigest()
+        invalid = backup / "invalid-backend.yaml"
+        invalid.write_text('services:\n  backend:\n    environment:\n      JWT_SECRET: short\n')
+        try:
+            command("-f", str(invalid), "up", "--no-build", "--no-deps", "--force-recreate",
+                    "--wait", "--wait-timeout", "15", "backend")
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise AssertionError("invalid configuration unexpectedly became ready")
+        finally:
+            command("up", "--no-build", "--no-deps", "--force-recreate",
+                    "--wait", "--wait-timeout", "180", "backend")
+        assert hashlib.sha256((state / "backend.env").read_bytes()).hexdigest() == backend_hash
+        ready = command("exec", "-T", "backend", "curl", "--noproxy", "*", "--fail",
+                        "--silent", "http://127.0.0.1:3000/api/health/ready").stdout
+        assert json.loads(ready)["ready"] is True
         for database in ["saudade_blog_restore", "saudade_agent_restore"]:
             command("exec", "-T", "postgres", "dropdb", "-U", "postgres", database)
         print(json.dumps({"database_restore": True, "checkpoint_restore": True,
-                          "uploads_restore": True, "sha256": hashes}))
+                          "uploads_restore": True, "failed_configuration_rollback": True,
+                          "sha256": hashes}))
 
 
 if __name__ == "__main__":

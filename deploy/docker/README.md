@@ -100,8 +100,9 @@ sha256sum blog.dump agent.dump uploads.tar > backup.sha256
 上传内容使用相同 UID/GID 恢复到隔离卷，私有配置按原权限恢复。验收管理员登录、文章、
 原图、Agent checkpoint 与版本组合后，再按维护窗口切换；恢复成功不代表允许重放未知写入。
 
-容器 CI 对完整安装执行实际 `pg_dump/pg_restore`、LangGraph checkpoint 重读及上传文件恢复，
-再使用独立新卷验证仅博客安装。演练使用合成数据，不证明生产备份仍有效；维护者仍应
+容器 CI 对完整安装执行实际 `pg_dump/pg_restore`、LangGraph checkpoint 重读、上传文件恢复，
+并拒绝无效配置后回到原镜像与凭据，再使用独立新卷验证仅博客安装。
+演练不执行破坏性 schema 降级，使用合成数据，不证明生产备份仍有效；维护者仍应
 在隔离环境恢复自己的最新备份。数据库回滚与应用镜像回滚分别评估。
 
 ## 升级与回滚
