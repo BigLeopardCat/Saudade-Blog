@@ -31,8 +31,8 @@ jobs:
         run: |
           printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'CORE_STATE=%s/saudade-core\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Configuration tests without Docker
-        run: python3 -m unittest discover -s tests/ops -p test_compose_install.py -v
+      - name: Configuration and recovery scope tests without Docker
+        run: python3 -m unittest discover -s tests/ops -p 'test_compose_*.py' -v
       - name: Prepare private disposable stack
         run: |
           python3 - <<'PY'
