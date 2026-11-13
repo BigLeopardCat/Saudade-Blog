@@ -102,7 +102,8 @@ with PostgresSaver.from_conn_string(make_conninfo(os.environ['CHECKPOINT_DSN'], 
             command("-f", str(invalid), "up", "--no-build", "--no-deps", "--force-recreate",
                     "--wait", "--wait-timeout", "15", "backend")
         except subprocess.CalledProcessError:
-            pass
+            rejected = command("logs", "--no-color", "--tail", "80", "backend")
+            assert "JWT_SECRET must be a private random key of at least 32 bytes" in rejected.stdout + rejected.stderr
         else:
             raise AssertionError("invalid configuration unexpectedly became ready")
         finally:

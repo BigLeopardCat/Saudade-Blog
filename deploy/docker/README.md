@@ -71,20 +71,12 @@ curl --fail http://127.0.0.1:8080/api/health/ready
 
 停止用 `stop`；移除容器用 `down`，保留命名卷。**不要添加 `down -v`**，它会删除数据库、上传内容和 Agent 状态。
 
-备份两个数据库、上传卷及整个私有目录，备份亦需 0700/0600。数据库使用容器内部连接，密码不进入参数：
+备份数据库、上传卷及整个私有目录，存放在站点目录之外并使用 0700/0600 权限。
+先停止应用写入，保留 PostgreSQL 运行；仅博客安装的停止命令只填写 `frontend backend`，
+省略 Agent 数据库备份。上传卷通过一次性容器读取，密码不进入参数：
 
 ```sh
 umask 077
-"${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_blog > blog.dump
-"${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_agent > agent.dump
-"${DC[@]}" exec -T backend tar -C /var/lib/saudade -cf - uploads > uploads.tar
-```
-
-备份存放在站点目录之外，并定期在隔离环境验证恢复。完整安装可先停止应用写入，
-保留 PostgreSQL 运行；仅博客安装的停止命令只填写 `frontend backend`。
-上传卷通过一次性容器读取，避免为备份重新开放写入：
-
-```sh
 "${DC[@]}" stop frontend backend agent scheduler
 "${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_blog > blog.dump
 "${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_agent > agent.dump

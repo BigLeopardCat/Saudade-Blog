@@ -24,15 +24,25 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
-          tool: cargo-audit@0.23.0
-      - name: Audit Cargo.lock against RustSec
-        run: cargo audit --json > "$RUNNER_TEMP/cargo-audit.json"
+          tool: cargo-deny@0.20.2
+      - name: Resolve the locked enabled dependency graph
+        run: |
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          cargo tree --locked --edges features > "$RUNNER_TEMP/cargo-features.txt"
+      - name: Audit enabled dependencies against RustSec
+        run: >-
+          cargo deny --locked --metadata-path "$RUNNER_TEMP/cargo-metadata.json"
+          --format json check advisories --audit-compatible-output
+          > "$RUNNER_TEMP/cargo-audit.json"
       - name: Preserve dependency findings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: cargo-audit-${{ github.sha }}
-          path: ${{ runner.temp }}/cargo-audit.json
+          path: |
+            ${{ runner.temp }}/cargo-audit.json
+            ${{ runner.temp }}/cargo-metadata.json
+            ${{ runner.temp }}/cargo-features.txt
           if-no-files-found: warn
           retention-days: 30
   frontend:
