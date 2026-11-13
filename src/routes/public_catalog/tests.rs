@@ -18,21 +18,19 @@ async fn query_failures_remain_errors() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_errors([DbErr::Custom("offline".into())])
         .into_connection();
-    assert!(tags::read(&db, &tags::TagQuery::default(), 5, 0)
-        .await
-        .is_err());
+    assert!(
+        tags::read(&db, &tags::TagQuery::default(), 5, 0)
+            .await
+            .is_err()
+    );
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_errors([DbErr::Custom("offline".into())])
         .into_connection();
-    assert!(super::super::catalog::articles::read_public(
-        &db,
-        &ArticleQuery::default(),
-        5,
-        0,
-        false
-    )
-    .await
-    .is_err());
+    assert!(
+        super::super::catalog::articles::read_public(&db, &ArticleQuery::default(), 5, 0, false)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -189,6 +187,28 @@ async fn postgres_public_counts_exclude_hidden_drafts_and_shadow_versions() {
             count
         );
     }
+    let named = tags::TagQuery {
+        parent_name: Some(name.clone()),
+        ..Default::default()
+    };
+    let (children, child_total) = tags::read(&txn, &named, 20, 0).await.unwrap();
+    assert_eq!(child_total, 1);
+    assert_eq!(children[0].id, one);
+    assert_eq!(children[0].level, 2);
+    assert_eq!(children[0].parent_id, Some(one));
+    assert_eq!(children[0].public_article_count, 1);
+    let missing = tags::TagQuery {
+        parent_name: Some(format!("{name}_missing")),
+        ..Default::default()
+    };
+    assert!(tags::read(&txn, &missing, 20, 0).await.is_err());
+    insert(
+        &txn,
+        "INSERT INTO tag_one(name) VALUES ($1) RETURNING id",
+        vec![name.into()],
+    )
+    .await;
+    assert!(tags::read(&txn, &named, 20, 0).await.is_err());
     let params = tags::TagQuery {
         parent_id: Some(i32::MAX),
         ..Default::default()
