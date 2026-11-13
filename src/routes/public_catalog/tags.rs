@@ -133,19 +133,43 @@ pub(super) async fn read<C: ConnectionTrait>(
     Ok((items, total))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagPage {
+    #[serde(flatten)]
+    page: ApiResponsePage<Vec<Tag>>,
+    resolved_parent_name: Option<String>,
+}
+
+fn error(message: &str) -> Json<TagPage> {
+    Json(TagPage {
+        page: ApiResponsePage::error(message),
+        resolved_parent_name: None,
+    })
+}
+
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<TagQuery>,
-) -> Json<ApiResponsePage<Vec<Tag>>> {
+) -> Json<TagPage> {
     if !valid_query(&params) {
-        return Json(ApiResponsePage::error("标签层级或父标签编号无效"));
+        return error("标签层级或父标签筛选无效");
     }
     let (limit, offset) =
         match super::super::pagination::bounded_window(params.page, params.page_size) {
             Ok(value) => value,
-            Err(message) => return Json(ApiResponsePage::error(message)),
+            Err(message) => return error(message),
         };
-    super::response(read(&state.db, &params, limit, offset).await)
+    match read(&state.db, &params, limit, offset).await {
+        Ok((items, total)) => Json(TagPage {
+            page: ApiResponsePage::success(items, Some(total)),
+            resolved_parent_name: params.parent_name,
+        }),
+        Err(error_value) => {
+            tracing::error!("public tag read failed: {error_value}");
+            error("父标签无法唯一匹配或标签暂时无法读取，请核对父标签编号")
+        }
+    }
 }
 
 fn valid_query(params: &TagQuery) -> bool {
