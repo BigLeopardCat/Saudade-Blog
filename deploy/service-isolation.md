@@ -57,7 +57,10 @@ EnvironmentFiles、ExecStart 和可写路径，再重启正式服务。验证就
 脚本，先备份 crontab，再仅移除被新 timer 接管的条目；线上维护不执行模型评测和测试套件。
 
 Rust 将已发布二进制只读 bind 到 `/srv/saudade-blog/saudade_blog_bin`，图谱挂载可选，
-核心博客无需安装 Agent。Agent 只挂载授权的 health/rust 日志；日志文件名和轮转策略保留。
+核心博客无需安装 Agent。宿主视图中的目标可以是零字节占位文件；实际二进制在服务的
+mount namespace 内可见。核对产物时记录 `/proc/<MainPID>/exe` 的 SHA256，并使用
+`nsenter --target <MainPID> --mount` 检查绑定路径，不能依据宿主占位文件判断损坏。
+Agent 只挂载授权的 health/rust 日志；日志文件名和轮转策略保留。
 部署失败时恢复备份的单元和 current，reload 后重启；使用同一份可写数据，不回滚新增会话或上传。
 
 ## 独立鉴权与 IoT
