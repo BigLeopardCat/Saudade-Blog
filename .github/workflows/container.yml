@@ -28,9 +28,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Select disposable state directory
-        run: printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - name: Configuration tests without Docker
-        run: python3 -m unittest discover -s tests/ops -p test_compose_install.py -v
+        run: |
+          printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'CORE_STATE=%s/saudade-core\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Configuration and recovery scope tests without Docker
+        run: python3 -m unittest discover -s tests/ops -p 'test_compose_*.py' -v
       - name: Prepare private disposable stack
         run: |
           python3 - <<'PY'
@@ -52,6 +54,15 @@ jobs:
           sha256sum "$STACK_STATE/backend.env" "$STACK_STATE/agent.env" "$STACK_STATE/administrator.json" > "$RUNNER_TEMP/config.sha256"
           bash deploy/install.sh --state-dir "$STACK_STATE" --reuse --no-build
           sha256sum --check "$RUNNER_TEMP/config.sha256"
+      - name: Restore both databases, framework checkpoint and uploads
+        run: python3 deploy/docker/ci-recovery.py
+      - name: Verify a fresh core-only installation without Agent
+        run: |
+          docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
+            -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15
+          bash deploy/install.sh --state-dir "$CORE_STATE" --prepare-only
+          bash deploy/install.sh --state-dir "$CORE_STATE" --reuse --no-build
+          STACK_STATE="$CORE_STATE" python3 deploy/docker/ci-smoke.py
       - name: Package verified images without configuration or volumes
         if: github.event_name == 'workflow_dispatch' && inputs.package_images
         run: |
@@ -80,7 +91,9 @@ jobs:
       - name: Remove only this runner's disposable stack
         if: always()
         run: |
-          if test -f "$STACK_STATE/compose.env"; then
-            docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
-              -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15 --volumes
-          fi
+          for state_dir in "$STACK_STATE" "$CORE_STATE"; do
+            if test -f "$state_dir/compose.env"; then
+              docker compose --project-directory "$state_dir" --env-file "$state_dir/compose.env" \
+                -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15 --volumes
+            fi
+          done

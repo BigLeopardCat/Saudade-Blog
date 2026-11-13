@@ -184,7 +184,8 @@ def prepare(args, output):
         "DATABASE_URL": f"postgresql://saudade_app:{quote(app_password)}@postgres:5432/saudade_blog",
         "BLOG_BIND_ADDRESS": "0.0.0.0", "BLOG_PORT": 3000, "SITE_URL": site,
         "JWT_SECRET": secrets.token_hex(32), "BLOG_DELEGATION_SECRET": secrets.token_hex(32),
-        "AGENT_ASSERTION_SECRET": assertion, "AGENT_URL": "http://agent:8010/chat",
+        "AGENT_ASSERTION_SECRET": assertion,
+        "AGENT_URL": "http://agent:8010/chat" if args.with_agent else "",
         "UPLOAD_DIR": "/var/lib/saudade/uploads", "IOT_ENABLED": "0",
     }))
     private_file(output / "agent.env", environment({

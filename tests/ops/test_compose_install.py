@@ -43,6 +43,7 @@ class ComposeInstall(unittest.TestCase):
         self.assertNotIn("JWT_SECRET", agent)
         self.assertNotIn("BLOG_DELEGATION_SECRET", agent)
         self.assertNotEqual(backend.split("@postgres")[0], agent.split("@postgres")[0])
+        self.assertIn("\nAGENT_URL=\n", backend)
 
     def test_reuse_preserves_existing_credentials_and_rejects_overwrite(self):
         self.prepare()
@@ -79,6 +80,7 @@ class ComposeInstall(unittest.TestCase):
         with patch.object(stack, "agent_source", return_value=(ROOT, "a" * 40)):
             output = self.prepare("--with-agent", "--model-key-file", str(key))
         self.assertIn("OPENCODE_API_KEY=" + key.read_text(), (self.state / "agent.env").read_text())
+        self.assertIn("AGENT_URL=http://agent:8010/chat\n", (self.state / "backend.env").read_text())
         self.assertNotIn(key.read_text(), output)
         self.assertFalse((ROOT / "SHOULD_NOT_EXIST").exists())
 
