@@ -80,7 +80,29 @@ umask 077
 "${DC[@]}" exec -T backend tar -C /var/lib/saudade -cf - uploads > uploads.tar
 ```
 
-备份存放在站点目录之外，并定期在隔离环境验证恢复。备份协调期间停止写入或使用一致快照流程。
+备份存放在站点目录之外，并定期在隔离环境验证恢复。完整安装可先停止应用写入，
+保留 PostgreSQL 运行；仅博客安装的停止命令只填写 `frontend backend`。
+上传卷通过一次性容器读取，避免为备份重新开放写入：
+
+```sh
+"${DC[@]}" stop frontend backend agent scheduler
+"${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_blog > blog.dump
+"${DC[@]}" exec -T postgres pg_dump -U postgres -Fc saudade_agent > agent.dump
+"${DC[@]}" run --rm --no-deps -T --entrypoint tar backend \
+  -C /var/lib/saudade -cf - uploads > uploads.tar
+sha256sum blog.dump agent.dump uploads.tar > backup.sha256
+"${DC[@]}" up --no-build --wait
+```
+
+恢复先在隔离主机使用同一版本的干净源码和私有配置，核对 `backup.sha256`。
+让新空 PostgreSQL 完成角色初始化后，停止应用写入，使用 `pg_restore --exit-on-error`
+恢复到独立空库，不向正在使用的生产库重放。角色、所有权和授权也必须保留。
+上传内容使用相同 UID/GID 恢复到隔离卷，私有配置按原权限恢复。验收管理员登录、文章、
+原图、Agent checkpoint 与版本组合后，再按维护窗口切换；恢复成功不代表允许重放未知写入。
+
+容器 CI 对完整安装执行实际 `pg_dump/pg_restore`、LangGraph checkpoint 重读及上传文件恢复，
+再使用独立新卷验证仅博客安装。演练使用合成数据，不证明生产备份仍有效；维护者仍应
+在隔离环境恢复自己的最新备份。数据库回滚与应用镜像回滚分别评估。
 
 ## 升级与回滚
 

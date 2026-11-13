@@ -11,8 +11,13 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = Path(os.environ["STACK_STATE"])
+INSTALLATION = json.loads((STATE / "installation.json").read_text())
 DC = ["docker", "compose", "--project-directory", str(STATE), "--env-file", str(STATE / "compose.env"),
-      "-f", str(ROOT / "deploy/docker/compose.yaml"), "--profile", "agent", "--profile", "scheduler"]
+      "-f", str(ROOT / "deploy/docker/compose.yaml")]
+for enabled, profile in [(INSTALLATION["with_agent"], "agent"),
+                         (INSTALLATION["with_scheduler"], "scheduler")]:
+    if enabled:
+        DC.extend(["--profile", profile])
 
 
 def command(*args):
@@ -26,10 +31,16 @@ def query(sql):
 
 def main():
     config = json.loads(command("config", "--format", "json"))
-    for service in ["postgres", "backend", "agent", "scheduler"]:
+    private_services = ["postgres", "backend"]
+    if INSTALLATION["with_agent"]:
+        private_services.append("agent")
+    if INSTALLATION["with_scheduler"]:
+        private_services.append("scheduler")
+    for service in private_services:
         assert not config["services"][service].get("ports"), "private service has published ports"
     assert config["services"]["backend"].get("read_only")
-    assert config["services"]["agent"].get("read_only")
+    if INSTALLATION["with_agent"]:
+        assert config["services"]["agent"].get("read_only")
     assert query("SELECT count(*) FROM public.\"user\" WHERE role = 'admin'") == "1"
     before = query('SELECT password FROM public."user" WHERE role = \'admin\'')
     assert before.startswith("$argon2id$"), "bootstrap must use the current password algorithm"
@@ -50,11 +61,18 @@ def main():
         assert json.load(response)["ready"] is True
     with urllib.request.urlopen("http://127.0.0.1:8080/build-info.json", timeout=10) as response:
         assert json.load(response)["sha"] == os.environ["GITHUB_SHA"]
-    probe = "import json,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8010/version',timeout=5)); assert r['sha']=='" + json.loads((STATE / "installation.json").read_text())["agent_revision"] + "'"
-    command("exec", "-T", "agent", "python", "-c", probe)
+    if INSTALLATION["with_agent"]:
+        probe = "import json,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8010/version',timeout=5)); assert r['sha']=='" + INSTALLATION["agent_revision"] + "'"
+        command("exec", "-T", "agent", "python", "-c", probe)
+    else:
+        assert config["services"]["backend"]["environment"]["AGENT_URL"] == ""
+    with urllib.request.urlopen("http://127.0.0.1:8080/api/public/notes", timeout=10) as response:
+        assert json.load(response)["code"] == 200, "core article reads require an optional service"
     command("exec", "-T", "frontend", "nginx", "-t")
     command("exec", "-T", "frontend", "test", "-s", "/usr/share/doc/saudade/ASSETS-LICENSE.md")
-    assert command("ps", "--status", "running", "--services").splitlines().count("scheduler") == 1
+    running = command("ps", "--status", "running", "--services").splitlines()
+    assert running.count("agent") == int(INSTALLATION["with_agent"])
+    assert running.count("scheduler") == int(INSTALLATION["with_scheduler"])
     print("Compose smoke passed: readiness, administrator login, idempotence, role isolation and pinned versions")
     # The same unprivileged nginx must read owner-only renewed TLS files.
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
