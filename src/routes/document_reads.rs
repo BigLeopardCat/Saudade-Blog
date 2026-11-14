@@ -25,6 +25,8 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
+const MAX_BODY_CHARS: usize = 32768;
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -175,7 +177,9 @@ fn validate_range(query: &ReadQuery) -> Result<(), (StatusCode, &'static str)> {
         ));
     }
     let locator = offset > 0 || (section.starts_with('s') && section[1..].parse::<usize>().is_ok());
-    if !(1..=24000).contains(&limit) || offset > i32::MAX as usize || section.chars().count() > 1024
+    if !(1..=MAX_BODY_CHARS).contains(&limit)
+        || offset > i32::MAX as usize
+        || section.chars().count() > 1024
     {
         return Err((StatusCode::BAD_REQUEST, "invalid document range"));
     }
