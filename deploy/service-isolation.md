@@ -9,7 +9,8 @@ Rust 使用 `saudade-blog`；Agent HTTP、scheduler 和保留清理任务使用
 | `/srv/saudade-agent/releases/<sha>` | 独立 venv 与固定提交；部署账号拥有、Agent 组只读 |
 | `/srv/saudade-agent/current` | 部署账号切换的发布链接 |
 | `/var/lib/saudade-blog/uploads` | Rust 上传目录，原有下载 URL 不变 |
-| `/var/lib/saudade-agent` | data、私有 trace、建图日志/缓存/报告与语音 |
+| `/var/lib/saudade-blog/article-graph` | 可选文章图谱产物，由 Rust 管理 |
+| `/var/lib/saudade-agent` | 本地运行数据、私有 trace、日志与评测缓存 |
 | `/var/cache/saudade-agent` | uv 等运行缓存 |
 | `/etc/saudade/*-runtime.env` | root 拥有，对应服务组可读，0640；不进入发布包 |
 
@@ -32,7 +33,7 @@ Rust 只读取 `/etc/saudade/blog-runtime.env`；Agent HTTP、scheduler 和维�
 发布工具只读取部署账号的私有 R2 文件，见[发布配置](../docs/deployment-and-ops.md#发布工具配置)。
 
 Agent 设置 `TRACE_DIR=/var/lib/saudade-agent/traces`、`BLOG_ROOT=/run/saudade-host`，
-检索和建图数据放在 `/var/lib/saudade-agent/data`；Rust 设置
+本地文件数据放在 `/var/lib/saudade-agent/data`，检索与向量索引存储在配置的 PostgreSQL；Rust 设置
 `UPLOAD_DIR=/var/lib/saudade-blog/uploads`、`GRAPH_ARTIFACT_DIR=/var/lib/saudade-blog/article-graph`。
 业务与 checkpoint/scheduling 数据库隔离。运行配置按 systemd EnvironmentFile 格式保存，
 由 root 拥有、相应服务组读取；发布账号拥有代码，服务账号没有 sudo 权限。
