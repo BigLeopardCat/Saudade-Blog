@@ -540,15 +540,12 @@ html
           overflow-x: auto !important
           font-size: 13px
 
-// Preserve diagram text size; wide diagrams scroll independently and support zoom.
+// Fit the full diagram in the reading column; the viewer provides detail zoom.
 .readContent .markdown-body .bytemd-mermaid
   position: relative
   max-width: 100%
   margin: 24px 0
   padding: 22px 16px 16px
-  overflow-x: auto
-  overscroll-behavior-x: contain
-  scrollbar-gutter: stable
   background: #fffdfa
   border: 1px solid var(--washi-line)
   border-radius: 14px
@@ -558,7 +555,10 @@ html
     outline-offset: 3px
   svg
     display: block
-    max-width: none
+    // Mermaid also writes an inline max-width in pixels.
+    max-width: 100% !important
+    height: auto
+    max-height: 70vh
     margin: 0 auto
   &::after
     content: '点击放大'

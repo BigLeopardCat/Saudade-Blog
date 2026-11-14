@@ -5,6 +5,7 @@ type ZoomPoint = { id: number; x: number; y: number }
 
 let overlay: HTMLDivElement | null = null
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null
+let resizeHandler: (() => void) | null = null
 let previousOverflow = {root:"",body:""}
 let previousFocus: HTMLElement | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -45,6 +46,10 @@ export const closeZoomOverlay = (): void => {
   if (keydownHandler) {
     document.removeEventListener("keydown", keydownHandler)
     keydownHandler = null
+  }
+  if (resizeHandler) {
+    window.removeEventListener("resize", resizeHandler)
+    resizeHandler = null
   }
   if (!overlay) return
   const el = overlay
@@ -162,14 +167,9 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     ty = 0
     apply()
   }
-  const reset = (): void => {
-    scale = readableScale()
-    tx = 0
-    ty = 0
-    apply()
-  }
-  reset()
-  // 提示语随档位变：窄屏起点是"能读"（整图被裁），双击的另一端是"整图"
+  fitView()
+  resizeHandler = fitView
+  window.addEventListener("resize", resizeHandler)
   tip.textContent =
     readableScale() > fitScale() + 1e-6
       ? '双指缩放 · 拖拽移动 · 双击切换「整图 / 细节」 · 单击空白关闭'
@@ -253,11 +253,13 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     }
     e.preventDefault()
     const fit = fitScale()
-    // 窄屏（起点是"能读"、整图被裁）：双击在「能读 ↔ 整图适配」之间切 —— 这两个端点才是
-    // 手机上真正要来回看的两个状态。桌面档照旧在「适配 ↔ 2.5× 适配」之间切。
+    // Mobile alternates between the full diagram and readable detail.
     if (readableScale() > fit + 1e-6) {
       if (Math.abs(scale - fit) < 0.02 && Math.abs(tx) < 1 && Math.abs(ty) < 1) {
-        reset()
+        scale = readableScale()
+        tx = 0
+        ty = 0
+        apply()
       } else {
         fitView()
       }

@@ -22,6 +22,110 @@ async function article(page: Page, cover: string, fields = {}) {
     }}))
 }
 
+const mermaidContent = [
+    'flowchart LR\n' + Array.from({length: 12}, (_, index) =>
+        `n${index}[步骤 ${index} 的完整节点文字]`).join(' --> '),
+    'flowchart TD\n' + Array.from({length: 16}, (_, index) =>
+        `n${index}[步骤 ${index} 的完整节点文字]`).join(' --> '),
+    'flowchart LR\nA[开始] --> B[结束]',
+    'sequenceDiagram\nparticipant A as 浏览器\nparticipant B as 服务端\n'
+        + Array.from({length: 14}, (_, index) => `A->>B: 请求 ${index}\nB-->>A: 返回完整结果`).join('\n'),
+].map(code => '```mermaid\n' + code + '\n```').join('\n\n')
+
+for (const viewport of [{width: 1440, height: 900}, {width: 375, height: 812}, {width: 812, height: 375}]) {
+    test.describe(`Mermaid ${viewport.width}×${viewport.height}`, () => {
+        test.use({viewport, hasTouch: viewport.width < 769})
+        test('文章及查看器默认显示整图，缩放与主题切换仍可用', async ({page, sandboxURL}) => {
+            await article(page, '', {noteContent: mermaidContent})
+            await page.goto(sandboxURL)
+            const diagrams = page.locator('#content .bytemd-mermaid')
+            await expect(diagrams.locator('svg')).toHaveCount(4)
+            for (let index = 0; index < 4; index++) {
+                const diagram = diagrams.nth(index)
+                await diagram.scrollIntoViewIfNeeded()
+                // Measure the viewBox's mapped corners, not just the SVG's outer box.
+                const inline = await diagram.evaluate(element => {
+                    const svg = element.querySelector('svg')!
+                    const bounds = svg.getBoundingClientRect()
+                    const view = svg.viewBox.baseVal
+                    const matrix = svg.getScreenCTM()!
+                    const start = new DOMPoint(view.x, view.y).matrixTransform(matrix)
+                    const end = new DOMPoint(view.x + view.width, view.y + view.height).matrixTransform(matrix)
+                    return {width: bounds.width, height: bounds.height,
+                        overflow: element.scrollWidth - element.clientWidth,
+                        left: start.x - bounds.left, top: start.y - bounds.top,
+                        right: bounds.right - end.x, bottom: bounds.bottom - end.y,
+                        naturalWidth: view.width, naturalHeight: view.height}
+                })
+                expect(inline.width).toBeGreaterThan(0)
+                expect(inline.height).toBeGreaterThan(0)
+                expect(inline.height).toBeLessThanOrEqual(viewport.height * .7 + 1)
+                expect(inline.overflow).toBeLessThanOrEqual(1)
+                for (const space of [inline.left, inline.top, inline.right, inline.bottom]) {
+                    expect(space, 'the full viewBox stays inside the SVG').toBeGreaterThanOrEqual(-1)
+                }
+                if (index === 0) expect(inline.naturalWidth).toBeGreaterThan(viewport.width)
+                if (index === 1) expect(inline.naturalHeight).toBeGreaterThan(viewport.height)
+                if (viewport.width < 769) {
+                    expect(await diagram.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('1')
+                }
+                await diagram.focus()
+                await page.keyboard.press('Enter')
+                const content = page.locator('.md-zoom-content')
+                await expect(content).toBeVisible()
+                const fitted = await content.boundingBox()
+                expect(fitted!.x).toBeGreaterThanOrEqual(0)
+                expect(fitted!.y).toBeGreaterThanOrEqual(0)
+                expect(fitted!.x + fitted!.width).toBeLessThanOrEqual(viewport.width)
+                expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(viewport.height)
+                // The diagram frame has real dimensions and its SVG has no inherited crop.
+                const svg = content.locator('svg')
+                const full = (await svg.boundingBox())!
+                expect(full.width).toBeGreaterThan(0)
+                expect(full.height).toBeGreaterThan(0)
+                expect(full.x).toBeGreaterThanOrEqual(fitted!.x)
+                expect(full.y).toBeGreaterThanOrEqual(fitted!.y)
+                expect(full.x + full.width).toBeLessThanOrEqual(fitted!.x + fitted!.width + 1)
+                expect(full.y + full.height).toBeLessThanOrEqual(fitted!.y + fitted!.height + 1)
+                const center = {x: viewport.width / 2, y: viewport.height / 2}
+                await page.mouse.dblclick(center.x, center.y)
+                expect((await content.boundingBox())!.width).toBeGreaterThan(fitted!.width * 1.05)
+                await page.mouse.dblclick(center.x, center.y)
+                expect((await content.boundingBox())!.width).toBeCloseTo(fitted!.width, 0)
+                await page.mouse.move(center.x, center.y)
+                await page.mouse.wheel(0, -150)
+                await expect.poll(async () => (await content.boundingBox())!.width).toBeGreaterThan(fitted!.width)
+                const before = (await content.boundingBox())!
+                await page.mouse.down()
+                await page.mouse.move(center.x + 30, center.y + 20)
+                await page.mouse.up()
+                const after = (await content.boundingBox())!
+                expect(after.x - before.x).toBeCloseTo(30, 0)
+                expect(after.y - before.y).toBeCloseTo(20, 0)
+                await page.keyboard.press('Escape')
+                await expect(page.locator('.md-zoom-overlay')).toHaveCount(0)
+                await expect(diagram).toBeFocused()
+            }
+            expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1)
+            await page.getByRole('button', {name: '切换主题'}).click()
+            await expect(page.locator('.frontDark')).toBeVisible()
+            for (let index = 0; index < 4; index++) {
+                expect(await diagrams.nth(index).evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+            }
+            await diagrams.first().click()
+            const rotated = {width: viewport.height, height: viewport.width}
+            await page.setViewportSize(rotated)
+            await expect.poll(async () => {
+                const box = (await page.locator('.md-zoom-content').boundingBox())!
+                return box.x >= 0 && box.y >= 0 && box.x + box.width <= rotated.width + 1
+                    && box.y + box.height <= rotated.height + 1
+            }).toBe(true)
+            await page.getByRole('button', {name: '关闭放大视图'}).click()
+            await expect(page.locator('.md-zoom-overlay')).toHaveCount(0)
+        })
+    })
+}
+
 for (const fit of ['contain', 'cover'] as const) {
     test(`article ${fit} cover persists through a real theme change without video`, async ({page, sandboxURL}) => {
         await page.emulateMedia({reducedMotion: 'no-preference'})

@@ -5,7 +5,7 @@ export const MERMAID_CONFIG = {
   theme: 'base',
   fontFamily:
     '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif',
-  // Wide diagrams retain their text size inside a scrollable, zoomable canvas.
+  // Keep intrinsic dimensions for detail zoom; the reading view fits the SVG with CSS.
   fontSize: 16,
   flowchart: { useMaxWidth: false, wrappingWidth: 220 },
   sequence: { useMaxWidth: false, wrap: true },
