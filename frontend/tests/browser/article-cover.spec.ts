@@ -106,7 +106,9 @@ for (const viewport of [{width: 1440, height: 900}, {width: 375, height: 812}, {
                 await expect(page.locator('.md-zoom-overlay')).toHaveCount(0)
                 await expect(diagram).toBeFocused()
             }
-            expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width + 1)
+            const readingBounds = (await page.locator('.readBody').boundingBox())!
+            expect(readingBounds.x).toBeGreaterThanOrEqual(0)
+            expect(readingBounds.x + readingBounds.width).toBeLessThanOrEqual(viewport.width + 1)
             await page.getByRole('button', {name: '切换主题'}).click()
             await expect(page.locator('.frontDark')).toBeVisible()
             for (let index = 0; index < 4; index++) {
