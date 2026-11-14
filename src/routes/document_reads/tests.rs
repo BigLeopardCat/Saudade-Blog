@@ -130,7 +130,7 @@ async fn bad_ranges_fail_before_database_and_missing_rows_remain_404() {
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
     for query in [
         ReadQuery {
-            limit: Some(24001),
+            limit: Some(MAX_BODY_CHARS + 1),
             ..Default::default()
         },
         ReadQuery {
@@ -523,4 +523,28 @@ fn metadata_is_not_a_body_read_and_rejects_body_ranges() {
         let query: ReadQuery = serde_json::from_value(input).unwrap();
         assert!(frame(source("body"), query).is_err());
     }
+}
+
+#[test]
+fn one_page_can_cover_a_long_article_and_still_enforces_the_upper_bound() {
+    let body = "原文🐈\n".repeat(7000);
+    let query = ReadQuery {
+        limit: Some(MAX_BODY_CHARS),
+        ..Default::default()
+    };
+    assert!(validate_range(&query).is_ok());
+    let value = frame(source(&body), query).unwrap();
+    assert_eq!(value["content"], body);
+    assert_eq!(value["readComplete"], true);
+    assert_eq!(value["nextOffset"], Value::Null);
+    assert_eq!(value["source"]["end"], body.chars().count());
+    assert_eq!(value["contentRevision"], content_revision("标题", &body));
+    let oversized = ReadQuery {
+        limit: Some(MAX_BODY_CHARS + 1),
+        ..Default::default()
+    };
+    assert_eq!(
+        validate_range(&oversized).unwrap_err().0,
+        StatusCode::BAD_REQUEST
+    );
 }
