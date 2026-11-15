@@ -138,7 +138,10 @@ async fn postgres_completed_work_stays_in_its_source_conversation_and_deleted_th
         status: completed(),
     };
     assert_eq!(
-        apply(&txn, uid, &value).await.unwrap().conversation_id,
+        apply(&txn, uid, &value)
+            .await
+            .unwrap_or_else(|_| panic!("delivery failed"))
+            .conversation_id,
         Some(cid)
     );
     value.conversation_id = Some(conversations[1]);
@@ -155,7 +158,10 @@ async fn postgres_completed_work_stays_in_its_source_conversation_and_deleted_th
     .unwrap();
     value.conversation_id = Some(cid);
     assert_eq!(
-        apply(&txn, uid, &value).await.unwrap().conversation_id,
+        apply(&txn, uid, &value)
+            .await
+            .unwrap_or_else(|_| panic!("delivery failed"))
+            .conversation_id,
         None
     );
     let row = txn
