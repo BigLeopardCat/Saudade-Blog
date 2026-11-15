@@ -206,7 +206,7 @@ pub async fn list(
         format!(
             "{} SELECT kind,p.id,p.conversation_id,version,reported FROM pending p \
          JOIN conversation c ON c.id=p.conversation_id AND c.user_id=$1 \
-         WHERE p.conversation_id=$2 ORDER BY p.created_at,p.id LIMIT 20",
+         WHERE p.conversation_id=$2 ORDER BY reported,p.created_at,p.id LIMIT 20",
             pending()
         ),
         vec![uid.into(), query.conversation_id.unwrap_or(0).into()],
