@@ -1,6 +1,7 @@
 //! Versioned announcement changes and their notification delivery share one transaction.
 
 mod targets;
+pub mod operations;
 #[cfg(test)]
 mod tests;
 
@@ -65,7 +66,7 @@ impl From<announcement::Model> for Announcement {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prepared {
     pub version: String,
@@ -73,13 +74,13 @@ pub struct Prepared {
     pub after: Option<Announcement>,
     pub notification_count: u64,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
     pub version: String,
     pub intent: Intent,
 }
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Outcome {
     pub changed: bool,

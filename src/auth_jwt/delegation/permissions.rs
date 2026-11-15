@@ -134,6 +134,7 @@ const READS: &[&str] = &[
     "/api/protected/article-actions/:id",
     "/api/protected/automation-actor",
     "/api/protected/automation-results/:run",
+    "/api/protected/announcement-operations/:digest",
 ];
 const POSTS: &[&str] = &[
     "/api/protected/catalog/search",
@@ -158,6 +159,7 @@ const POSTS: &[&str] = &[
     "/api/protected/account-actions",
     "/api/protected/account-actions/prepare",
     "/api/protected/announcement-actions",
+    "/api/protected/announcement-operations",
     "/api/protected/announcement-actions/prepare",
     "/api/protected/announcement-deletions",
     "/api/protected/announcement-deletions/prepare",
@@ -196,6 +198,17 @@ const DELETES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn announcement_receipts_are_typed_and_do_not_expand_background_writes() {
+        let path = format!("/api/protected/announcement-operations/{}", "a".repeat(64));
+        assert!(allows(Scope::Tools, &Method::GET, &path));
+        assert!(allows(Scope::Tools, &Method::POST, "/api/protected/announcement-operations"));
+        assert!(!allows(Scope::Background, &Method::POST, "/api/protected/announcement-operations"));
+        for suffix in ["short", "../private", "%61", "a/extra"] {
+            assert!(!allows(Scope::Tools, &Method::GET,
+                &format!("/api/protected/announcement-operations/{suffix}")));
+        }
+    }
     #[test]
     fn gallery_transfer_grants_are_typed_and_do_not_expand_background_writes() {
         assert!(allows(
