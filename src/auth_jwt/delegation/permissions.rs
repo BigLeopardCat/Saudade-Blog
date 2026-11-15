@@ -181,6 +181,7 @@ const POSTS: &[&str] = &[
     "/api/protect/gallery/folder-actions/prepare",
     "/api/protect/image-generation/jobs",
     "/api/protect/image-generation/jobs/:job/approve",
+    "/api/protect/image-generation/jobs/:job/revision",
     "/api/protect/image-generation/jobs/:job/accept",
 ];
 const PUTS: &[&str] = &[
@@ -220,6 +221,21 @@ mod tests {
                 Scope::Tools,
                 &Method::GET,
                 &format!("/api/protect/gallery/transfers/{suffix}")
+            ));
+        }
+    }
+    #[test]
+    fn image_revision_can_use_tools_but_cannot_renew_delegation() {
+        let path =
+            "/api/protect/image-generation/jobs/6b9e2bf1-56af-428c-8177-e3ad0641e036/revision";
+        assert!(allows(Scope::Tools, &Method::POST, path));
+        assert!(!allows(Scope::Background, &Method::POST, path));
+        assert!(!allows(Scope::Tools, &Method::GET, path));
+        for scope in [Scope::Tools, Scope::Background] {
+            assert!(!allows(
+                scope,
+                &Method::POST,
+                "/api/chat/confirmation/image-revision"
             ));
         }
     }
