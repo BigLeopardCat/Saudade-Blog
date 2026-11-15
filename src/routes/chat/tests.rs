@@ -354,7 +354,7 @@ fn token_jti_reads_payload_without_verifying() {
     assert_eq!(token_jti("!!**.sig"), "");
     assert_eq!(token_jti("bm90LWpzb24.sig"), ""); // "not-json"
     assert_eq!(token_jti("eyJ2IjoxfQ.sig"), ""); // {"v":1} 旧令牌没有 jti
-    // jti 解码不证明签名有效；签名授权由 Agent 校验。
+                                                 // jti 解码不证明签名有效；签名授权由 Agent 校验。
     let tampered = format!("{}.AAAA", SYNTHETIC.split('.').next().unwrap());
     assert_eq!(token_jti(&tampered), "00000000000000000000000000000001");
 }

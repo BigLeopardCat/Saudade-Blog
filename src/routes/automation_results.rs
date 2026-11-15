@@ -69,11 +69,21 @@ pub struct Delivery {
     run_id: String,
     title: String,
     content: String,
+    #[serde(default)]
+    conversation_id: Option<i32>,
+    #[serde(default)]
+    schedule_id: Option<String>,
+    #[serde(default = "completed")]
+    status: String,
+}
+fn completed() -> String {
+    "completed".into()
 }
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Receipt {
     notification_id: Option<i32>,
+    conversation_id: Option<i32>,
     replayed: bool,
 }
 
@@ -90,12 +100,93 @@ fn validate(value: &Delivery) -> Result<(), Failure> {
         || value.content.chars().count() > 1000
         || value.title.contains('\0')
         || value.content.contains('\0')
+        || value.conversation_id.is_some_and(|id| id <= 0)
+        || value.conversation_id.is_some() && value.schedule_id.is_none()
+        || !["completed", "incomplete", "failed", "unknown"].contains(&value.status.as_str())
+        || value.schedule_id.as_ref().is_some_and(|id| {
+            id.len() != 35
+                || !id.starts_with("sc_")
+                || !id[3..].bytes().all(|b| b.is_ascii_hexdigit())
+        })
     {
         return Err(failure(
             StatusCode::UNPROCESSABLE_ENTITY,
             "执行编号、标题或正文无效",
         ));
     }
+    Ok(())
+}
+
+async fn origin<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    value: &Delivery,
+) -> Result<Option<i32>, Failure> {
+    let cid = if let Some(cid) = value.conversation_id {
+        Some(cid)
+    } else if let Some(schedule) = &value.schedule_id {
+        let row = db.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "SELECT conversation_id FROM execution_log WHERE user_id=$1 AND tool='create_automation' \
+             AND (CASE WHEN payload IS JSON OBJECT THEN payload::jsonb ELSE '{}'::jsonb END) \
+                 ->'args'->>'schedule_id'=$2 ORDER BY id ASC LIMIT 1",
+            [owner.into(), schedule.clone().into()])).await.map_err(storage_error)?;
+        row.map(|r| r.try_get("", "conversation_id"))
+            .transpose()
+            .map_err(storage_error)?
+    } else {
+        None
+    };
+    let Some(cid) = cid else { return Ok(None) };
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT user_id FROM conversation WHERE id=$1 FOR SHARE",
+            [cid.into()],
+        ))
+        .await
+        .map_err(storage_error)?;
+    match row {
+        Some(row) if row.try_get::<i32>("", "user_id").map_err(storage_error)? != owner => {
+            Err(failure(StatusCode::FORBIDDEN, "任务来源会话不属于当前账号"))
+        }
+        Some(_) => Ok(Some(cid)),
+        None => Ok(None),
+    }
+}
+
+async fn saved_conversation<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    run: &str,
+) -> Result<Option<i32>, Failure> {
+    db.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT conversation_id FROM chat_task_result WHERE owner_id=$1 AND run_id=$2",
+        [owner.into(), run.into()],
+    ))
+    .await
+    .map_err(storage_error)?
+    .map(|r| r.try_get("", "conversation_id"))
+    .transpose()
+    .map_err(storage_error)
+}
+
+async fn save_chat_result<C: ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    cid: Option<i32>,
+    value: &Delivery,
+    version: &str,
+) -> Result<(), Failure> {
+    let (Some(cid), Some(schedule)) = (cid, &value.schedule_id) else {
+        return Ok(());
+    };
+    db.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO chat_task_result (owner_id,run_id,conversation_id,schedule_id,title,content,status,event_version) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [owner.into(), value.run_id.clone().into(), cid.into(), schedule.clone().into(),
+         value.title.clone().into(), value.content.clone().into(), value.status.clone().into(), version.into()]))
+        .await.map_err(storage_error)?;
     Ok(())
 }
 async fn apply<C: ConnectionTrait>(
@@ -105,6 +196,7 @@ async fn apply<C: ConnectionTrait>(
 ) -> Result<Receipt, Failure> {
     validate(value)?;
     authorized(db, owner, true).await?;
+    let conversation_id = origin(db, owner, value).await?;
     let digest = hex::encode(Sha256::digest(
         serde_json::to_vec(&(&value.title, &value.content)).unwrap(),
     ));
@@ -120,11 +212,17 @@ async fn apply<C: ConnectionTrait>(
         if previous != digest {
             return Err(failure(StatusCode::CONFLICT, "执行编号已对应其他结果"));
         }
+        let saved = saved_conversation(db, owner, &value.run_id).await?;
+        if saved.is_some() && conversation_id.is_some() && saved != conversation_id {
+            return Err(failure(StatusCode::CONFLICT, "任务结果已绑定其他会话"));
+        }
         return Ok(Receipt {
             notification_id: row.try_get("", "notification_id").map_err(storage_error)?,
+            conversation_id: saved,
             replayed: true,
         });
     }
+    save_chat_result(db, owner, conversation_id, value, &digest).await?;
     let notification_id = super::notice::push_notice_checked(
         db,
         owner,
@@ -147,6 +245,7 @@ async fn apply<C: ConnectionTrait>(
     .map_err(storage_error)?;
     Ok(Receipt {
         notification_id: Some(notification_id),
+        conversation_id,
         replayed: false,
     })
 }

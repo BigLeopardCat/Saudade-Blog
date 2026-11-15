@@ -82,39 +82,19 @@ pub(super) async fn save_result_reply<C: ConnectionTrait + TransactionTrait>(
     source_role: Option<String>,
     turn_id: &str,
     reply: String,
-    event: Option<&super::ImageEvent>,
+    event: Option<&super::CompletionEvent>,
 ) -> Result<(), DbErr> {
-    use sea_orm::{DbBackend, Statement};
     let txn = db.begin().await?;
     if !lock_turn(&txn, uid, conversation_id, turn_id).await? {
         return Err(DbErr::Custom("turn_discarded".into()));
     }
     if let Some(event) = event {
-        let row = txn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT reported_version FROM image_generation WHERE id::text=$1 \
-             AND owner_id=$2 AND conversation_id=$3 FOR UPDATE",
-                [
-                    event.job_id.clone().into(),
-                    uid.into(),
-                    conversation_id.into(),
-                ],
-            ))
-            .await?
-            .ok_or_else(|| DbErr::Custom("image event missing".into()))?;
-        let reported: Option<String> = row.try_get("", "reported_version")?;
-        if reported.as_deref() == Some(&event.version) {
+        if !event.claim(&txn, uid, conversation_id).await? {
             txn.commit().await?;
             return Ok(());
         }
-        txn.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE image_generation SET reported_version=$2 WHERE id::text=$1",
-            [event.job_id.clone().into(), event.version.clone().into()],
-        ))
-        .await?;
     }
+
     chat_history::Entity::insert(chat_history::ActiveModel {
         user_id: Set(uid),
         conversation_id: Set(conversation_id),

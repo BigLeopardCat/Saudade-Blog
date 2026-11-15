@@ -82,7 +82,7 @@ pub fn optional<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::super::ChatRequest;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     fn snapshot() -> Value {
         json!({"city":"Hangzhou","country_code":"CN","temperature_c":12,

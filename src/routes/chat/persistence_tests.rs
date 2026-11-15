@@ -50,7 +50,7 @@ async fn postgres_image_report_ack_is_atomic_with_reply_and_replay_is_deduplicat
         Some("admin".into()),
         &event.turn_id(),
         "invalid\0reply".into(),
-        Some(&event)
+        Some(&super::super::CompletionEvent::Image(event.clone()))
     )
     .await
     .is_err());
@@ -75,7 +75,7 @@ async fn postgres_image_report_ack_is_atomic_with_reply_and_replay_is_deduplicat
             Some("admin".into()),
             &event.turn_id(),
             "图片已生成，等待审阅。".into(),
-            Some(&event),
+            Some(&super::super::CompletionEvent::Image(event.clone())),
         )
         .await
         .unwrap();
@@ -95,7 +95,7 @@ async fn postgres_image_report_ack_is_atomic_with_reply_and_replay_is_deduplicat
         Some("admin".into()),
         &event.turn_id(),
         "foreign".into(),
-        Some(&event)
+        Some(&super::super::CompletionEvent::Image(event.clone()))
     )
     .await
     .is_err());
