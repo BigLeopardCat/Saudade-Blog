@@ -98,6 +98,26 @@ pub async fn create(state: &AppState, uid: i32, input: Draft, origin: &str) -> R
         references.push(reference);
         snapshots.push((mime, bytes));
     }
+    if !input.conversation_reference_ids.is_empty() {
+        let cid = input
+            .conversation_id
+            .ok_or_else(|| error("聊天参考图需要当前会话"))?;
+        let role = state
+            .db
+            .query_one(stmt(
+                "SELECT role FROM \"user\" WHERE id=$1",
+                vec![uid.into()],
+            ))
+            .await?
+            .ok_or_else(|| error("账号不存在"))?
+            .try_get::<String>("", "role")?;
+        for id in input.conversation_reference_ids {
+            let (reference, mime, bytes) =
+                references::conversation_snapshot(state, uid, cid, &role, &id).await?;
+            references.push(reference);
+            snapshots.push((mime, bytes));
+        }
+    }
     let request = Request {
         provider: settings.base.clone(),
         prompt: input.prompt,

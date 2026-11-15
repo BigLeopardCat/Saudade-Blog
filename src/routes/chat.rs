@@ -29,6 +29,8 @@ use axum::response::sse::{KeepAlive, Sse};
 use eventsource_stream::Eventsource;
 use protocol::{event as stream_event, Frame};
 mod approval;
+mod image_revision;
+pub use image_revision::handler as image_revision_handler;
 pub use approval::cancel_handler;
 use approval::claim_confirm_token;
 #[cfg(test)]

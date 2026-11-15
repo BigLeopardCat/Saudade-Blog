@@ -92,14 +92,14 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
             <Typography.Paragraph>{job.request.model} · {job.request.size} · {job.request.quality} · 1 张</Typography.Paragraph>
             <pre className="generationPrompt">{job.request.prompt}</pre>
             <Typography.Paragraph>{job.request.references.length?'参考图（批准时将发送这些固定快照）':'未使用参考图'}</Typography.Paragraph>
-            <div className="generationReferences">{job.request.references.map(ref=><figure key={ref.imageId}>
+            <div className="generationReferences">{job.request.references.map(ref=><figure key={ref.digest}>
               {ref.previewUrl&&<img src={resolveApiAssetUrl(ref.previewUrl)} alt={ref.name}/>}
               <figcaption>{ref.name}</figcaption>
             </figure>)}</div>
           </Card>
           {job.status==='pending'&&job.retrySourceStatus==='unknown'&&<Alert type="warning" showIcon message="原请求结果尚未核实。批准这个新草稿可能再次计费，请先核对服务商调用记录。"/>}
           {job.status==='pending'&&<Space wrap><Button type="primary" disabled={busy} loading={approving} onClick={()=>void updated(approve({id:job.id,version:job.requestHash}).unwrap())}>确认提示词与参考图，开始生成</Button>
-            <Button disabled={busy} onClick={()=>{setPrompt(job.request.prompt);setModel(job.request.model);setSize(job.request.size);setQuality(job.request.quality);setReferences(job.request.references.map(r=>r.imageId));setActive(null)}}>返回修改</Button></Space>}
+            <Button disabled={busy} onClick={()=>{if(job.request.references.some(ref=>ref.conversationImageId)){void message.info('聊天参考图保留在原会话，请在聊天卡片中修改，避免丢失参考图。');return}setPrompt(job.request.prompt);setModel(job.request.model);setSize(job.request.size);setQuality(job.request.quality);setReferences(job.request.references.flatMap(r=>typeof r.imageId === 'number' ? [r.imageId] : []));setActive(null)}}>返回修改</Button></Space>}
           {job.status==='generating'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在生成图片，可以关闭窗口，稍后回来审阅。请勿重复创建相同任务。"/>}
           {job.status==='saving'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在保存图片，可以关闭窗口，稍后回来核对入库结果。"/>}
           {job.previewUrl&&!job.imageRemoved&&<img className="generationResult" src={resolveApiAssetUrl(job.previewUrl)} alt="本次生成结果"/>}

@@ -1,7 +1,7 @@
 import {galleryApi} from './galleryApi'
 
 export interface GenerationDraft {prompt:string; model:string; size:string; quality:string; referenceIds:number[]}
-export interface GenerationReference {imageId:number; name:string; digest:string; previewUrl:string}
+export type GenerationReference = ({imageId:number; conversationImageId?:never} | {imageId?:never; conversationImageId:string}) & {name:string; digest:string; previewUrl:string}
 export interface GenerationJobSummary {id:string;status:string;title:string}
 export interface GenerationJob {
   id:string;request:{provider:string;prompt:string; model:string; size:string; quality:string;references:GenerationReference[]};

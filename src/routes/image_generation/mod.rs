@@ -1,7 +1,6 @@
 //! Human approval owns paid generation and acceptance; Agent proposes only immutable jobs.
 mod acceptance;
 pub mod chat;
-pub mod tasks;
 mod errors;
 pub mod events;
 mod history;
@@ -11,7 +10,9 @@ mod lifecycle_tests;
 mod provider;
 mod references;
 mod result_storage;
+pub mod revisions;
 mod settings;
+pub mod tasks;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -50,6 +51,8 @@ pub struct Draft {
     pub reference_ids: Vec<i32>,
     #[serde(default)]
     pub conversation_id: Option<i32>,
+    #[serde(default)]
+    pub conversation_reference_ids: Vec<String>,
 }
 impl Draft {
     fn validate(&self, models: &[String]) -> Result<(), DbErr> {
@@ -58,7 +61,22 @@ impl Draft {
             || !models.contains(&self.model)
             || !["1024x1024", "1536x1024", "1024x1536"].contains(&self.size.as_str())
             || !["low", "medium", "high", "auto"].contains(&self.quality.as_str())
-            || self.reference_ids.len() > 4
+            || self.reference_ids.len() + self.conversation_reference_ids.len() > 4
+            || (!self.conversation_reference_ids.is_empty() && self.conversation_id.is_none())
+            || self.conversation_reference_ids.iter().any(|id| {
+                !id.strip_prefix("img_").is_some_and(|hash| {
+                    hash.len() == 64
+                        && hash
+                            .bytes()
+                            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                })
+            })
+            || self
+                .conversation_reference_ids
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != self.conversation_reference_ids.len()
             || self.reference_ids.iter().any(|id| *id <= 0)
             || self
                 .reference_ids
@@ -73,9 +91,22 @@ impl Draft {
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ReferenceSource {
+    Gallery {
+        #[serde(rename = "imageId")]
+        image_id: i32,
+    },
+    Conversation {
+        #[serde(rename = "conversationImageId")]
+        image_id: String,
+    },
+}
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reference {
-    pub image_id: i32,
+    #[serde(flatten)]
+    pub source: ReferenceSource,
     pub name: String,
     pub digest: String,
     #[serde(default)]
