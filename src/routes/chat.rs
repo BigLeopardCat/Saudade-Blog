@@ -48,7 +48,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
+use super::chat_completions::TaskEvent;
 use super::image_generation::chat::ImageEvent;
+mod completion;
+use completion::CompletionEvent;
 pub use control::BrowserResult;
 
 #[derive(Deserialize)]
@@ -56,6 +59,8 @@ pub struct ChatRequest {
     pub message: String,
     #[serde(default)]
     pub image_event: Option<ImageEvent>,
+    #[serde(default)]
+    pub task_event: Option<TaskEvent>,
     #[serde(default)]
     pub task_id: String,
     #[serde(default)]
@@ -112,7 +117,7 @@ struct ChatCtx {
     turn_id: String,
     body: serde_json::Value,
     role: Option<String>,
-    image_event: Option<ImageEvent>,
+    completion: Option<CompletionEvent>,
 }
 
 /// 链路追踪：X-Request-ID 全链路透传（浏览器 → nginx → Rust → agent → LLM 日志）。
@@ -511,7 +516,7 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
         ctx.role,
         ctx.turn_id,
         trace_id,
-        ctx.image_event,
+        ctx.completion,
         upstream.bytes_stream(),
     );
 
@@ -540,7 +545,7 @@ fn forward_agent_stream(
     source_role: Option<String>,
     turn_id: String,
     trace_id: String,
-    image_event: Option<ImageEvent>,
+    completion: Option<CompletionEvent>,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
     stream! {
@@ -580,7 +585,7 @@ fn forward_agent_stream(
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
                             persistence::save_result_reply(&state.db, uid, conversation_id,
-                                source_role, &turn_id, reply, image_event.as_ref()).await
+                                source_role, &turn_id, reply, completion.as_ref()).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;

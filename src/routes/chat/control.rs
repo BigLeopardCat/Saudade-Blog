@@ -84,16 +84,25 @@ pub(super) fn valid(payload: &ChatRequest) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     };
     identifier(&payload.turn_id)
-        && payload.image_event.as_ref().is_none_or(|event| {
-            event.valid()
-                && payload.conversation_id.is_some_and(|id| id > 0)
+        && !(payload.image_event.is_some() && payload.task_event.is_some())
+        && payload
+            .image_event
+            .as_ref()
+            .is_none_or(|event| event.valid())
+        && payload
+            .task_event
+            .as_ref()
+            .is_none_or(|event| event.valid())
+        && ((payload.image_event.is_none() && payload.task_event.is_none())
+            || (payload.conversation_id.is_some_and(|id| id > 0)
                 && payload.message.trim().is_empty()
                 && payload.image.as_ref().is_none_or(|v| v.is_empty())
                 && payload.resume_task.is_empty()
                 && payload.confirm_token.as_deref().unwrap_or("").is_empty()
                 && payload.confirm_pick.as_deref().unwrap_or("").is_empty()
                 && payload.browser_result.is_none()
-        })
+                && !payload.task_inputs
+                && !payload.browser_feedback))
         && identifier(&payload.task_id)
         && identifier(&payload.resume_task)
         && payload.browser_result.as_ref().is_none_or(|result| {
@@ -197,6 +206,34 @@ mod tests {
         ] {
             let mut changed = request.clone();
             changed[key] = value;
+            assert!(!valid(&serde_json::from_value(changed).unwrap()), "{key}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn completion_control_cannot_mix_user_content_approval_or_other_event_kinds() {
+        let value = json!({"message":"", "conversation_id":42,
+            "task_event":{"run_id":"run_1","version":"a".repeat(64)}});
+        assert!(valid(&serde_json::from_value(value.clone()).unwrap()));
+        for (key, input) in [
+            ("message", json!("write")),
+            ("confirm_token", json!("approval")),
+            ("resume_task", json!("paused")),
+            ("task_inputs", json!(true)),
+            ("conversation_id", json!(null)),
+            (
+                "image_event",
+                json!({
+                "job_id":"11111111-1111-4111-8111-111111111111","version":"a".repeat(64)}),
+            ),
+        ] {
+            let mut changed = value.clone();
+            changed[key] = input;
             assert!(!valid(&serde_json::from_value(changed).unwrap()), "{key}");
         }
     }

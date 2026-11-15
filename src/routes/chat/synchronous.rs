@@ -107,7 +107,7 @@ pub async fn chat_handler(State(state): State<Arc<AppState>>, req: Request) -> R
                 &ctx.turn_id,
                 &reply,
                 events,
-                ctx.image_event.as_ref(),
+                ctx.completion.as_ref(),
             )
             .await
         })
@@ -138,7 +138,7 @@ async fn persist(
     turn_id: &str,
     reply: &str,
     events: Vec<ControlEvent>,
-    image_event: Option<&super::ImageEvent>,
+    image_event: Option<&super::CompletionEvent>,
 ) -> Result<Vec<ControlEvent>, sea_orm::DbErr> {
     let mut public = Vec::new();
     for mut event in events {

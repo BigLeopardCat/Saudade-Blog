@@ -59,6 +59,13 @@ fn matches(pattern: &str, path: &str) -> bool {
                 actual.parse::<i32>().is_ok_and(|n| n > 0)
                     && actual.bytes().all(|b| b.is_ascii_digit())
             }
+            ":run" => {
+                !actual.is_empty()
+                    && actual.len() <= 200
+                    && actual
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            }
             ":digest" => actual.len() == 64 && actual.bytes().all(|b| b.is_ascii_hexdigit()),
             ":job" => {
                 actual.len() == 36 && actual.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
@@ -126,6 +133,7 @@ const READS: &[&str] = &[
     "/api/protected/quota/actions/accounts/:id",
     "/api/protected/article-actions/:id",
     "/api/protected/automation-actor",
+    "/api/protected/automation-results/:run",
 ];
 const POSTS: &[&str] = &[
     "/api/protected/catalog/search",

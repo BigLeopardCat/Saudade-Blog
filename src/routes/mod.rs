@@ -16,6 +16,7 @@ pub mod image_generation;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
+pub mod chat_completions;
 mod chat_context;
 pub mod conversation;
 pub mod monitor;
@@ -336,6 +337,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tag-actions", post(tag_actions::change))
         .route("/api/protected/automation-actor", get(automation_results::actor))
         .route("/api/protected/automation-results", post(automation_results::deliver))
+        .route("/api/protected/automation-results/{id}", get(chat_completions::read))
+        .route("/api/chat/completions", get(chat_completions::list))
+        .route("/api/chat/completions/read", post(chat_completions::mark_read))
         .route("/api/protected/automation-announcements", post(automation_announcements::publish))
         .route("/api/protected/automation-changes", post(automation_changes::change))
         .route("/api/protected/notice-actions/prepare", post(notice_actions::prepare))

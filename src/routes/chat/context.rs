@@ -119,7 +119,12 @@ pub(super) async fn prepare_chat(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
-    if let Some(event) = &payload.image_event {
+    let completion = payload
+        .image_event
+        .clone()
+        .map(CompletionEvent::Image)
+        .or_else(|| payload.task_event.clone().map(CompletionEvent::Task));
+    if let Some(event) = &completion {
         if !role
             .as_deref()
             .is_some_and(crate::authz::can_access_console)
@@ -133,17 +138,14 @@ pub(super) async fn prepare_chat(
                 }),
             ));
         }
-        let verified =
-            crate::routes::image_generation::chat::verify(state, uid, conversation_id, event).await;
-        match verified {
+        match event.verify(state, uid, conversation_id).await {
             Ok(true) => {
                 payload.task_id = event.turn_id();
                 payload.turn_id = payload.task_id.clone();
             }
             result => {
                 if let Err(error) = &result {
-                    warn!(%error, uid, conversation_id, job_id=%event.job_id,
-                          "image completion report deferred");
+                    warn!(%error, uid, conversation_id, "completion report deferred");
                 }
                 return Err((
                     if result.is_ok() {
@@ -154,7 +156,7 @@ pub(super) async fn prepare_chat(
                     Json(ChatResponse {
                         reply: String::new(),
                         success: result.is_ok(),
-                        error: result.err().map(|_| "image_event_deferred".into()),
+                        error: result.err().map(|_| "completion_event_deferred".into()),
                     }),
                 ));
             }
@@ -225,6 +227,8 @@ pub(super) async fn prepare_chat(
     }
     let (quota, quota_blocked) = if is_confirm {
         (None, false)
+    } else if completion.is_some() {
+        (None, false)
     } else {
         let role_ref = user_row.as_ref().map(|u| u.role.as_str());
         if crate::quota::is_unlimited(role_ref) {
@@ -274,44 +278,43 @@ pub(super) async fn prepare_chat(
         Some(_) => format!("{}\n[图片]", payload.message),
         None => payload.message.clone(),
     };
-    let user_msg_id =
-        if is_confirm || !payload.resume_task.is_empty() || payload.image_event.is_some() {
-            None
-        } else {
-            match chat_context::append_user(
-                &state.db,
-                uid,
-                conversation_id,
-                role.as_deref(),
-                &payload.turn_id,
-                &stored_content,
-            )
-            .await
-            {
-                Ok(Some(id)) => Some(id),
-                Ok(None) => {
-                    return Err((
-                        StatusCode::CONFLICT,
-                        Json(ChatResponse {
-                            reply: String::new(),
-                            success: false,
-                            error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
-                        }),
-                    ))
-                }
-                Err(error) => {
-                    warn!(%error,conversation_id,"user message was not persisted");
-                    return Err((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Json(ChatResponse {
-                            reply: String::new(),
-                            success: false,
-                            error: Some("未能保存请求，请稍后重试。".into()),
-                        }),
-                    ));
-                }
+    let user_msg_id = if is_confirm || !payload.resume_task.is_empty() || completion.is_some() {
+        None
+    } else {
+        match chat_context::append_user(
+            &state.db,
+            uid,
+            conversation_id,
+            role.as_deref(),
+            &payload.turn_id,
+            &stored_content,
+        )
+        .await
+        {
+            Ok(Some(id)) => Some(id),
+            Ok(None) => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
+                    }),
+                ))
             }
-        };
+            Err(error) => {
+                warn!(%error,conversation_id,"user message was not persisted");
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("未能保存请求，请稍后重试。".into()),
+                    }),
+                ));
+            }
+        }
+    };
 
     // 图片按消息批量原子写入；失败保留已保存的用户文本并告警。
     // 删除随消息外键级联，确认请求没有新消息可挂靠。
@@ -392,7 +395,7 @@ pub(super) async fn prepare_chat(
         turn_id: payload.turn_id.clone(),
         body,
         role,
-        image_event: payload.image_event.clone(),
+        completion,
     })
 }
 
@@ -411,6 +414,7 @@ fn agent_request(
         "browser_feedback": payload.browser_feedback,
         "browser_result": payload.browser_result,
         "image_event": payload.image_event,
+        "task_event": payload.task_event,
         "conversation_id": conversation_id,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),

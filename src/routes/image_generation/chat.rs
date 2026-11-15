@@ -22,8 +22,10 @@ impl ImageEvent {
     }
 }
 
-pub(super) const VERSION: &str = "encode(sha256(convert_to(\
+pub(crate) const VERSION: &str = "encode(sha256(convert_to(\
     jsonb_build_array(status,output_hash,image_id,error)::text,'UTF8')),'hex')";
+
+pub(crate) const STATUS: &str = super::jobs::STATUS;
 
 pub(super) fn reportable(job: &Job) -> bool {
     matches!(
