@@ -22,7 +22,10 @@ fn failure(status: StatusCode, error: &str) -> Response {
 fn success(value: Value) -> Response {
     ([("Cache-Control", "no-store")], Json(value)).into_response()
 }
-async fn actor(state: &AppState, headers: &HeaderMap) -> Result<(i32, String, i32), Response> {
+pub(super) async fn actor(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(i32, String, i32), Response> {
     let uid = auth_jwt::auth_uid(&state.db, headers)
         .await
         .map_err(|_| failure(StatusCode::UNAUTHORIZED, "unauthorized"))?;

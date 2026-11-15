@@ -1,12 +1,11 @@
 //! Human draft changes are re-signed by the Agent; the host supplies verified identity.
-use crate::{auth_jwt, entity::user, routes::AppState};
+use crate::{auth_jwt, routes::AppState};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use sea_orm::EntityTrait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
@@ -29,14 +28,35 @@ struct Draft {
 fn failure(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"detail":message}))).into_response()
 }
+
+async fn revision_assertion(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(i32, String), Response> {
+    if auth_jwt::claims_from_headers(headers)
+        .is_some_and(|claims| claims.aud.as_deref() == Some("blog-tools"))
+    {
+        return Err(failure(StatusCode::UNAUTHORIZED, "请使用有效的登录会话"));
+    }
+    let (uid, role, version) = super::task_manager::actor(state, headers).await?;
+    if !crate::authz::can_access_console(&role) {
+        return Err(failure(StatusCode::FORBIDDEN, "仅管理员可修改生图请求"));
+    }
+    let assertion = auth_jwt::create_tool_assertion(uid, Some(&role), version);
+    if assertion.is_empty() {
+        return Err(failure(StatusCode::SERVICE_UNAVAILABLE, "工具委托暂不可用"));
+    }
+    Ok((uid, assertion))
+}
+
 pub async fn handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<Revision>,
 ) -> Response {
-    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(_) => return failure(StatusCode::UNAUTHORIZED, "请重新登录"),
+    let (uid, assertion) = match revision_assertion(&state, &headers).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
     };
     if req.token.is_empty()
         || req.token.len() > super::approval::MAX_CONFIRM_TOKEN_CHARS
@@ -53,16 +73,12 @@ pub async fn handler(
     ) {
         return failure(StatusCode::NOT_FOUND, "会话不存在");
     }
-    let role = match user::Entity::find_by_id(uid).one(&state.db).await {
-        Ok(Some(row)) if crate::authz::can_access_console(&row.role) => row.role,
-        _ => return failure(StatusCode::FORBIDDEN, "仅管理员可修改生图请求"),
-    };
     let client = match reqwest::Client::builder().no_proxy().build() {
         Ok(client) => client,
         Err(_) => return failure(StatusCode::BAD_GATEWAY, "Agent 暂不可用"),
     };
     let response=match client.post(format!("{}/confirmation/image-revision",crate::ai_services::agent_base_url()))
-        .header("X-Agent-Assertion",auth_jwt::create_agent_assertion(uid,Some(&role)))
+        .header("X-Agent-Assertion",assertion)
         .json(&json!({"user_id":uid,"conversation_id":req.conversation_id,"token":req.token,"draft":req.draft}))
         .timeout(Duration::from_secs(30)).send().await {
         Ok(response)=>response,Err(_)=>return failure(StatusCode::BAD_GATEWAY,"未能核对修改结果，请刷新当前卡片"),
@@ -105,4 +121,109 @@ pub async fn handler(
         "no-store".parse().unwrap(),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rate_limiter::LoginRateLimiter;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
+
+    #[tokio::test]
+    async fn browser_revision_receives_delegation_bound_to_current_session_and_role() {
+        let Ok(url) = std::env::var("TEST_PG_URL") else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "CI requires explicit TEST_PG_URL"
+            );
+            return;
+        };
+        let db = Database::connect(url).await.unwrap();
+        let uid:i32=db.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO \"user\"(username,password,role) VALUES($1,'fixture','admin') RETURNING id",
+            [format!("image_revision_actor_{}",uuid::Uuid::new_v4().simple()).into()]
+        )).await.unwrap().unwrap().try_get("","id").unwrap();
+        let state = AppState {
+            db,
+            rate_limiter: LoginRateLimiter::new(1, 60, 60),
+            post_limiter: crate::risk::PostRateLimiter::default(),
+            report_limiter: LoginRateLimiter::new(1, 60, 60),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {}", auth_jwt::create_token(uid, "admin", 0))
+                .parse()
+                .unwrap(),
+        );
+        let (_, assertion) = revision_assertion(&state, &headers)
+            .await
+            .unwrap_or_else(|_| panic!("valid admin session rejected"));
+        let payload: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(assertion.split('.').nth(1).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        let delegated = payload["delegation"]
+            .as_str()
+            .expect("tool capability missing");
+        let grant =
+            auth_jwt::delegation::verify(delegated).expect("delegation signature must verify");
+        assert_eq!(grant.sub, uid);
+        assert_eq!(grant.role, "admin");
+        assert_eq!(grant.ver, 0);
+        assert_eq!(grant.scope, auth_jwt::delegation::Scope::Tools);
+        let mut recursive = HeaderMap::new();
+        recursive.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {delegated}").parse().unwrap(),
+        );
+        assert_eq!(
+            revision_assertion(&state, &recursive)
+                .await
+                .unwrap_err()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        state
+            .db
+            .execute(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "UPDATE \"user\" SET role='user',token_version=1 WHERE id=$1",
+                [uid.into()],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            revision_assertion(&state, &headers)
+                .await
+                .unwrap_err()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {}", auth_jwt::create_token(uid, "user", 1))
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            revision_assertion(&state, &headers)
+                .await
+                .unwrap_err()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        state
+            .db
+            .execute(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "DELETE FROM \"user\" WHERE id=$1",
+                [uid.into()],
+            ))
+            .await
+            .unwrap();
+    }
 }
