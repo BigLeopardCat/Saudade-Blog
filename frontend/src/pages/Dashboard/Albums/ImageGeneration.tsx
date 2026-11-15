@@ -92,7 +92,7 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
             <Typography.Paragraph>{job.request.model} · {job.request.size} · {job.request.quality} · 1 张</Typography.Paragraph>
             <pre className="generationPrompt">{job.request.prompt}</pre>
             <Typography.Paragraph>{job.request.references.length?'参考图（批准时将发送这些固定快照）':'未使用参考图'}</Typography.Paragraph>
-            <div className="generationReferences">{job.request.references.map(ref=><figure key={ref.digest}>
+            <div className="generationReferences">{job.request.references.map(ref=><figure key={ref.imageId ?? ref.conversationImageId}>
               {ref.previewUrl&&<img src={resolveApiAssetUrl(ref.previewUrl)} alt={ref.name}/>}
               <figcaption>{ref.name}</figcaption>
             </figure>)}</div>
