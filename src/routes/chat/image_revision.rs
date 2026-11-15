@@ -73,14 +73,17 @@ pub async fn handler(
         Err(_) => return failure(StatusCode::BAD_GATEWAY, "修改结果不可读取"),
     };
     if status.is_success() {
-        if body["event"]["jti"] != super::approval::token_jti(&req.token)
+        if body["source_turn_id"]
+            .as_str()
+            .is_none_or(|value| value.is_empty())
+            || body["event"]["jti"] != super::approval::token_jti(&req.token)
             || body["confirmation"]["token"].as_str().is_none()
             || !super::pending::cancel(&state.db, uid, req.conversation_id, &body["event"]).await
             || !super::pending::save_pending_action(
                 &state.db,
                 uid,
                 req.conversation_id,
-                body["confirmation"]["task_id"].as_str().unwrap_or(""),
+                body["source_turn_id"].as_str().unwrap_or(""),
                 &body["pending_action"],
             )
             .await
@@ -94,6 +97,7 @@ pub async fn handler(
     if let Some(object) = body.as_object_mut() {
         object.remove("pending_action");
         object.remove("event");
+        object.remove("source_turn_id");
     }
     let mut response = (status, Json(body)).into_response();
     response.headers_mut().insert(
