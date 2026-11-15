@@ -91,9 +91,20 @@ pub async fn read(
     Query(query): Query<ConversationQuery>,
 ) -> Result<Json<ApiResponse<TaskResult>>, Failure> {
     let uid = actor(&state, &headers).await?;
-    let cid = query
-        .conversation_id
-        .ok_or_else(|| failure(StatusCode::BAD_REQUEST, "缺少来源会话"))?;
+    let cid = match query.conversation_id {
+        Some(cid) => cid,
+        None => state
+            .db
+            .query_one(stmt(
+                "SELECT conversation_id FROM chat_task_result WHERE owner_id=$1 AND run_id=$2",
+                vec![uid.into(), run.clone().into()],
+            ))
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(|| failure(StatusCode::NOT_FOUND, "任务结果不存在"))?
+            .try_get("", "conversation_id")
+            .map_err(unavailable)?,
+    };
     owns(&state.db, uid, cid).await?;
     let value = task_result(&state.db, uid, cid, &run)
         .await

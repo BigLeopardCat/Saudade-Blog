@@ -70,6 +70,8 @@ pub struct Delivery {
     title: String,
     content: String,
     #[serde(default)]
+    result_text: Option<String>,
+    #[serde(default)]
     conversation_id: Option<i32>,
     #[serde(default)]
     schedule_id: Option<String>,
@@ -96,6 +98,9 @@ fn validate(value: &Delivery) -> Result<(), Failure> {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
         || value.title.trim().is_empty()
         || value.title.chars().count() > 80
+        || value.result_text.as_ref().is_some_and(|text| {
+            text.trim().is_empty() || text.chars().count() > 64000 || text.contains('\0')
+        })
         || value.content.trim().is_empty()
         || value.content.chars().count() > 1000
         || value.title.contains('\0')
@@ -157,18 +162,25 @@ async fn origin<C: ConnectionTrait>(
 async fn saved_conversation<C: ConnectionTrait>(
     db: &C,
     owner: i32,
-    run: &str,
+    value: &Delivery,
 ) -> Result<Option<i32>, Failure> {
-    db.query_one(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        "SELECT conversation_id FROM chat_task_result WHERE owner_id=$1 AND run_id=$2",
-        [owner.into(), run.into()],
-    ))
-    .await
-    .map_err(storage_error)?
-    .map(|r| r.try_get("", "conversation_id"))
-    .transpose()
-    .map_err(storage_error)
+    let row = db.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "SELECT conversation_id,content,status FROM chat_task_result WHERE owner_id=$1 AND run_id=$2",
+        [owner.into(), value.run_id.clone().into()])).await.map_err(storage_error)?;
+    let Some(row) = row else { return Ok(None) };
+    if let Some(text) = &value.result_text {
+        if row
+            .try_get::<String>("", "content")
+            .map_err(storage_error)?
+            != *text
+            || row.try_get::<String>("", "status").map_err(storage_error)? != value.status
+        {
+            return Err(failure(StatusCode::CONFLICT, "执行编号已对应其他完整结果"));
+        }
+    }
+    row.try_get("", "conversation_id")
+        .map(Some)
+        .map_err(storage_error)
 }
 
 async fn save_chat_result<C: ConnectionTrait>(
@@ -185,7 +197,7 @@ async fn save_chat_result<C: ConnectionTrait>(
         "INSERT INTO chat_task_result (owner_id,run_id,conversation_id,schedule_id,title,content,status,event_version) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         [owner.into(), value.run_id.clone().into(), cid.into(), schedule.clone().into(),
-         value.title.clone().into(), value.content.clone().into(), value.status.clone().into(), version.into()]))
+         value.title.clone().into(), value.result_text.as_ref().unwrap_or(&value.content).clone().into(), value.status.clone().into(), version.into()]))
         .await.map_err(storage_error)?;
     Ok(())
 }
@@ -212,7 +224,7 @@ async fn apply<C: ConnectionTrait>(
         if previous != digest {
             return Err(failure(StatusCode::CONFLICT, "执行编号已对应其他结果"));
         }
-        let saved = saved_conversation(db, owner, &value.run_id).await?;
+        let saved = saved_conversation(db, owner, value).await?;
         if saved.is_some() && conversation_id.is_some() && saved != conversation_id {
             return Err(failure(StatusCode::CONFLICT, "任务结果已绑定其他会话"));
         }
@@ -222,7 +234,15 @@ async fn apply<C: ConnectionTrait>(
             replayed: true,
         });
     }
-    save_chat_result(db, owner, conversation_id, value, &digest).await?;
+    let version = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(
+            &value.title,
+            &value.status,
+            value.result_text.as_ref().unwrap_or(&value.content),
+        ))
+        .unwrap(),
+    ));
+    save_chat_result(db, owner, conversation_id, value, &version).await?;
     let notification_id = super::notice::push_notice_checked(
         db,
         owner,

@@ -15,6 +15,7 @@ fn requests_cannot_choose_recipient_or_overflow_notification() {
         assert!(validate(&Delivery {
             run_id: run.into(),
             title: title.into(),
+            result_text: None,
             conversation_id: None,
             schedule_id: None,
             status: completed(),
@@ -25,6 +26,7 @@ fn requests_cannot_choose_recipient_or_overflow_notification() {
     assert!(validate(&Delivery {
         run_id: "run".into(),
         title: "title".into(),
+        result_text: None,
         conversation_id: None,
         schedule_id: None,
         status: completed(),
@@ -49,6 +51,7 @@ async fn postgres_delivery_replays_atomically_and_rechecks_authority() {
         run_id: prefix,
         title: "定时提醒".into(),
         content: "保留\n原文😀".into(),
+        result_text: None,
         conversation_id: None,
         schedule_id: None,
         status: completed(),
@@ -133,6 +136,7 @@ async fn postgres_completed_work_stays_in_its_source_conversation_and_deleted_th
         run_id: uuid::Uuid::new_v4().simple().to_string(),
         title: "result".into(),
         content: "done".into(),
+        result_text: Some("complete task result".into()),
         conversation_id: Some(cid),
         schedule_id: Some(format!("sc_{}", "a".repeat(32))),
         status: completed(),
@@ -144,6 +148,25 @@ async fn postgres_completed_work_stays_in_its_source_conversation_and_deleted_th
             .conversation_id,
         Some(cid)
     );
+    let saved = txn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT content FROM chat_task_result WHERE owner_id=$1 AND run_id=$2",
+            [uid.into(), value.run_id.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        saved.try_get::<String>("", "content").unwrap(),
+        "complete task result"
+    );
+    value.result_text = Some("different complete result".into());
+    assert_eq!(
+        apply(&txn, uid, &value).await.unwrap_err().0,
+        StatusCode::CONFLICT
+    );
+    value.result_text = Some("complete task result".into());
     value.conversation_id = Some(conversations[1]);
     assert_eq!(
         apply(&txn, uid, &value).await.unwrap_err().0,
