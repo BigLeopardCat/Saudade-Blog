@@ -703,7 +703,7 @@ async fn retry_freezes_original_prompt_and_references_without_approving_unknown_
     };
     let bytes = png();
     let frozen = request(vec![Reference {
-        image_id: 123456,
+        source: ReferenceSource::Gallery { image_id: 123456 },
         name: "冻结参考图.png".into(),
         digest: digest(&bytes),
         preview_url: String::new(),
@@ -804,7 +804,7 @@ async fn retry_rejects_missing_corrupt_and_misordered_reference_snapshots() {
     };
     let bytes = png();
     let frozen = request(vec![Reference {
-        image_id: 1,
+        source: ReferenceSource::Gallery { image_id: 1 },
         name: "reference.png".into(),
         digest: digest(&bytes),
         preview_url: String::new(),
@@ -956,4 +956,181 @@ async fn postgres_sse_checks_owner_and_finishes_unchanged_jobs_at_its_deadline()
     assert!(reader.next().await.is_none());
     fixture.cleanup().await;
     other.cleanup().await;
+}
+
+#[tokio::test]
+async fn human_revision_freezes_new_version_and_rejects_old_or_cross_conversation_approval() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let cid: i32 = fixture
+        .state
+        .db
+        .query_one(stmt(
+            "INSERT INTO conversation(user_id,title) VALUES($1,'draft edit fixture') RETURNING id",
+            vec![fixture.uid.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "id")
+        .unwrap();
+    let original = request(vec![]);
+    let id = fixture.seed("pending", "agent", &original).await;
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "UPDATE image_generation SET conversation_id=$1 WHERE id::text=$2",
+            vec![cid.into(), id.clone().into()],
+        ))
+        .await
+        .unwrap();
+    let revision = revisions::Revision {
+        version: digest(&serde_json::to_vec(&original).unwrap()),
+        conversation_id: cid,
+        prompt: "exact human edited prompt".into(),
+        model: settings().models[0].clone(),
+        size: "1024x1536".into(),
+        quality: "low".into(),
+    };
+    let mut wrong = revision.clone();
+    wrong.conversation_id = cid + 1;
+    assert!(
+        revisions::revise(&fixture.state, fixture.uid, &id, wrong, &settings())
+            .await
+            .is_err()
+    );
+    assert!(revisions::revise(
+        &fixture.state,
+        fixture.uid + 1,
+        &id,
+        revision.clone(),
+        &settings()
+    )
+    .await
+    .is_err());
+    let updated = revisions::revise(
+        &fixture.state,
+        fixture.uid,
+        &id,
+        revision.clone(),
+        &settings(),
+    )
+    .await
+    .unwrap();
+    assert_ne!(updated.id, id);
+    assert_ne!(updated.request_hash, revision.version);
+    assert_eq!(updated.status, "pending");
+    assert_eq!(updated.request.as_ref().unwrap().prompt, revision.prompt);
+    assert_eq!(
+        jobs::read(&fixture.state, fixture.uid, &id)
+            .await
+            .unwrap()
+            .status,
+        "rejected"
+    );
+    let repeated = revisions::revise(
+        &fixture.state,
+        fixture.uid,
+        &id,
+        revision.clone(),
+        &settings(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(repeated.id, updated.id);
+    let mut different = revision.clone();
+    different.prompt = "a competing edit".into();
+    assert!(
+        revisions::revise(&fixture.state, fixture.uid, &id, different, &settings())
+            .await
+            .is_err()
+    );
+    let bytes = fixture
+        .state
+        .db
+        .query_one(stmt(
+            "SELECT request FROM image_generation WHERE id::text=$1",
+            vec![id.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        bytes.try_get::<JsonValue>("", "request").unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+    history::remove(&fixture.state, fixture.uid, &updated.id)
+        .await
+        .unwrap();
+    history::remove(&fixture.state, fixture.uid, &id)
+        .await
+        .unwrap();
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "DELETE FROM conversation WHERE id=$1",
+            vec![cid.into()],
+        ))
+        .await
+        .unwrap();
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+async fn conversation_references_are_scoped_and_frozen_from_uploaded_bytes() {
+    let Some(fixture) = Fixture::new().await else {
+        return;
+    };
+    let cid: i32=fixture.state.db.query_one(stmt("INSERT INTO conversation(user_id,title) VALUES($1,'chat reference fixture') RETURNING id",vec![fixture.uid.into()])).await.unwrap().unwrap().try_get("","id").unwrap();
+    let message: i32=fixture.state.db.query_one(stmt("INSERT INTO chat_history(user_id,conversation_id,source_role,role,content) VALUES($1,$2,'admin','user','reference fixture') RETURNING id",vec![fixture.uid.into(),cid.into()])).await.unwrap().unwrap().try_get("","id").unwrap();
+    let data = format!("data:image/png;base64,{}", STANDARD.encode(png()));
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "INSERT INTO chat_image(message_id,seq,data) VALUES($1,0,$2)",
+            vec![message.into(), data.clone().into()],
+        ))
+        .await
+        .unwrap();
+    let handle = format!("img_{}", digest(data.as_bytes()));
+    let (reference, mime, bytes) =
+        references::conversation_snapshot(&fixture.state, fixture.uid, cid, "admin", &handle)
+            .await
+            .unwrap();
+    assert_eq!(mime, "image/png");
+    assert_eq!(bytes, png());
+    assert_eq!(reference.digest, digest(&png()));
+    let json = serde_json::to_value(&reference).unwrap();
+    assert_eq!(json["conversationImageId"], handle);
+    assert!(json.get("imageId").is_none());
+    for (uid, cid, role) in [
+        (fixture.uid + 1, cid, "admin"),
+        (fixture.uid, cid + 1, "admin"),
+        (fixture.uid, cid, "user"),
+    ] {
+        assert!(
+            references::conversation_snapshot(&fixture.state, uid, cid, role, &handle)
+                .await
+                .is_err()
+        );
+    }
+    fixture
+        .state
+        .db
+        .execute(stmt(
+            "DELETE FROM conversation WHERE id=$1",
+            vec![cid.into()],
+        ))
+        .await
+        .unwrap();
+    assert!(
+        references::conversation_snapshot(&fixture.state, fixture.uid, cid, "admin", &handle)
+            .await
+            .is_err()
+    );
+    fixture.cleanup().await;
 }

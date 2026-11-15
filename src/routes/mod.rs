@@ -228,6 +228,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/task/inputs/status", post(chat::task_input_status_handler))
         .route("/api/chat/task/confirmation", post(chat::task_confirmation_handler))
         .route("/api/chat/confirmation/cancel", post(chat::cancel_handler))
+        .route("/api/chat/confirmation/image-revision", post(chat::image_revision_handler))
         // Conversation handlers validate ownership against persisted history.
         .route("/api/chat/history/text", get(own_reads::history::list))
         .route("/api/protected/my/board/page", get(own_reads::board::list))
@@ -264,6 +265,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/image-generation/jobs", get(image_generation::list).post(image_generation::create))
         .route("/api/protect/image-generation/jobs/{id}", get(image_generation::detail).delete(image_generation::remove))
         .route("/api/protect/image-generation/jobs/{id}/retry", post(image_generation::retry))
+        .route("/api/protect/image-generation/jobs/{id}/revision", post(image_generation::revisions::handler))
         .route("/api/protect/image-generation/jobs/{id}/events", get(image_generation::events::observe))
         .route("/api/protect/image-generation/jobs/{id}/approve", post(image_generation::approve))
         .route("/api/protect/image-generation/jobs/{id}/accept", post(image_generation::accept))

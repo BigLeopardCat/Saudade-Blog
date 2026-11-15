@@ -10,6 +10,7 @@ fn draft() -> Draft {
         size: "1536x1024".into(),
         quality: "high".into(),
         reference_ids: vec![],
+        conversation_reference_ids: vec![],
     }
 }
 #[test]
@@ -253,4 +254,20 @@ fn preview_token_is_audience_scoped_and_cannot_be_used_to_login() {
     .unwrap();
     assert!(decode_preview(&wrong, key).is_err());
     assert!(decode_preview(&token, "another-key").is_err());
+}
+
+#[test]
+fn gallery_and_conversation_reference_sources_do_not_share_an_identifier_type() {
+    let mut input = draft();
+    input.conversation_id = Some(42);
+    input.conversation_reference_ids = vec![format!("img_{}", "a".repeat(64))];
+    assert!(input.validate(&vec!["gpt-image-2".into()]).is_ok());
+    input.reference_ids = vec![1, 2, 3, 4];
+    assert!(input.validate(&vec!["gpt-image-2".into()]).is_err());
+    let json = json!({"imageId":7,"name":"gallery","digest":"a".repeat(64),"previewUrl":""});
+    let reference: Reference = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(serde_json::to_value(reference).unwrap(), json);
+    input.reference_ids.clear();
+    input.conversation_reference_ids = vec!["https://untrusted.test/image".into()];
+    assert!(input.validate(&vec!["gpt-image-2".into()]).is_err());
 }
