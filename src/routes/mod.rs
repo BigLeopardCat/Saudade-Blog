@@ -350,6 +350,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/announcement-deletions", post(removal_actions::change_announcements))
         .route("/api/protected/announcement-actions/prepare", post(announcement_actions::prepare))
         .route("/api/protected/announcement-actions", post(announcement_actions::change))
+        .route("/api/protected/announcement-operations", post(announcement_actions::operations::change))
+        .route("/api/protected/announcement-operations/{id}", get(announcement_actions::operations::read))
         .route("/api/protected/account-actions/eligibility", get(account_actions::eligibility::read))
         .route("/api/protected/account-actions/prepare", post(account_actions::prepare))
         .route("/api/protected/account-actions", post(account_actions::change))

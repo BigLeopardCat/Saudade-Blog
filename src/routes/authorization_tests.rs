@@ -25,6 +25,7 @@ async fn native_actions_require_authentication_before_reading_or_writing() {
         "/api/protected/tag-actions",
         "/api/protected/announcement-actions/prepare",
         "/api/protected/announcement-actions",
+        "/api/protected/announcement-operations",
         "/api/protected/notice-actions/prepare",
         "/api/protected/notice-actions",
     ] {
@@ -44,4 +45,8 @@ async fn native_actions_require_authentication_before_reading_or_writing() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
+    let path = format!("/api/protected/announcement-operations/{}", "a".repeat(64));
+    let response = app.oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

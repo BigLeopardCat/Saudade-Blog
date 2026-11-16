@@ -74,6 +74,7 @@ type(scope)!: 不兼容变更的描述
 `feat` · `fix` · `refactor` · `perf` · `test` · `docs` · `style` · `build` · `ci` · `chore` · `revert`
 
 - 标题不超过 60 个字符，说明最终变化；模块明确时使用小写 scope，如 `chat`、`auth`、`rag`、`ui`、`eval`。整个仓库的改动可省略 scope。
+- Dependabot 自动 PR 按事件中的真实作者识别，标题可至 256 字符，仍校验类型、格式和单行文本；人工 PR 与主线提交保持 60 字符限制。合并时使用简短的 Squash 标题。
 - `feat` 表示新增能力，`fix` 表示修复缺陷，`perf` 表示性能或成本改善，`refactor` 表示保持行为的结构调整。`style` 仅用于代码格式，界面变化按功能或修复归类。
 - 正文按需说明原因、必要取舍和影响，与标题空一行；可以使用自然段或列表。保留真实贡献者信息和标准 Git trailers。
 - 不兼容的接口、配置或数据变化使用 `!` 或 `BREAKING CHANGE:`，并在 PR 中说明迁移与发布顺序。
