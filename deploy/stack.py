@@ -60,6 +60,71 @@ def private_regular(path):
         raise ValueError("configuration must be a private regular file owned by the current user")
 
 
+def initial_password(path):
+    if not path:
+        return secrets.token_hex(20)
+    source = Path(path).expanduser()
+    private_regular(source)
+    with source.open("rb") as stream:
+        data = stream.read(1027)
+    try:
+        value = data.decode("utf-8").removesuffix("\n").removesuffix("\r")
+    except UnicodeDecodeError:
+        raise ValueError("administrator password file must contain UTF-8 text") from None
+    if not 12 <= len(value.encode("utf-8")) <= 1024 or any(c in value for c in "\r\n\x00"):
+        raise ValueError("administrator password must be one line of 12-1024 UTF-8 bytes")
+    return value
+
+
+def frontend_identity():
+    # A root-owned installation still runs nginx without root or extra capabilities.
+    uid, gid = os.geteuid(), os.getegid()
+    return (101, 101) if uid == 0 else (uid, gid or 101)
+
+
+def frontend_tls_owner(output, uid, gid):
+    descriptor = os.open(output / "tls", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(descriptor)
+        if info.st_mode & 0o777 != 0o700 or info.st_uid not in {os.geteuid(), uid}:
+            raise ValueError("TLS directory must be private (0700) and owned by the installation or frontend user")
+        for name in ["site.crt", "site.key"]:
+            try:
+                file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
+            except FileNotFoundError:
+                continue
+            try:
+                info = os.fstat(file)
+                if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o777 != 0o600
+                        or info.st_uid not in {os.geteuid(), uid}):
+                    raise ValueError("TLS files must be private regular files (0600)")
+                if os.geteuid() == 0:
+                    os.fchown(file, uid, gid)
+            finally:
+                os.close(file)
+        if os.geteuid() == 0:
+            os.fchown(descriptor, uid, gid)
+    finally:
+        os.close(descriptor)
+
+
+def configure_frontend(output):
+    path = output / "compose.env"
+    lines = path.read_text().splitlines()
+    values = dict(line.split("=", 1) for line in lines if line and not line.startswith("#"))
+    if (values.get("CONFIG_UID") != str(os.geteuid())
+            or values.get("CONFIG_GID") != str(os.getegid())):
+        raise ValueError("configuration owner differs from this installation")
+    uid, gid = frontend_identity()
+    frontend_tls_owner(output, uid, gid)
+    desired = {"FRONTEND_UID": str(uid), "FRONTEND_GID": str(gid)}
+    if any(values.get(key) != value for key, value in desired.items()):
+        lines = [line for line in lines if line.split("=", 1)[0] not in desired]
+        temporary = path.with_name("compose.env.next")
+        private_file(temporary, "\n".join(lines) + "\n" + environment(desired))
+        temporary.replace(path)
+
+
 def safe_path(path):
     if not re.fullmatch(r"/[A-Za-z0-9_./-]+", str(path)):
         raise ValueError("deployment paths must be absolute without whitespace or shell metacharacters")
@@ -145,6 +210,7 @@ def prepare(args, output):
         raise ValueError("administrator username must contain 3-64 ASCII letters, digits, _, . or -")
     if not args.admin_nickname.strip() or len(args.admin_nickname) > 64:
         raise ValueError("invalid administrator nickname")
+    password = initial_password(args.admin_password_file)
     if args.model_key_file:
         private_regular(Path(args.model_key_file))
     # Validate all user-controlled environment values before creating any files.
@@ -174,7 +240,7 @@ def prepare(args, output):
     app_password, agent_password, pg_password = (secrets.token_hex(24) for _ in range(3))
     assertion = secrets.token_hex(32)
     credentials = {"username": args.admin_user, "nickname": args.admin_nickname,
-                   "password": secrets.token_hex(20)}
+                   "password": password}
     private_file(output / "administrator.json", json.dumps(credentials, ensure_ascii=False) + "\n")
     private_file(output / "postgres.env", environment({
         "POSTGRES_PASSWORD": pg_password, "POSTGRES_DB": "postgres",
@@ -234,7 +300,8 @@ def main(argv=None):
     parser.add_argument("--agent-source"); parser.add_argument("--agent-revision")
     parser.add_argument("--model-key-file")
     parser.add_argument("--model", default="deepseek-v4.1-flash")
-    parser.add_argument("--admin-user", default="admin")
+    parser.add_argument("--admin-user", default="admin", help="first superadministrator login name")
+    parser.add_argument("--admin-password-file", help="private UTF-8 file containing the initial password; otherwise generate one")
     parser.add_argument("--admin-nickname", default="站长")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--no-build", action="store_true", help="use previously loaded SHA-tagged images")
@@ -242,6 +309,8 @@ def main(argv=None):
     parser.add_argument("--upgrade", action="store_true",
                         help="with --reuse, select the current clean blog revision after manual backup/schema review")
     args = parser.parse_args(argv)
+    if args.reuse and args.admin_password_file:
+        raise ValueError("--admin-password-file is only for first-install preparation; --reuse never resets passwords")
     if args.upgrade and not args.reuse:
         raise ValueError("--upgrade requires --reuse")
     if Path(args.state_dir).expanduser().is_symlink():
@@ -257,6 +326,7 @@ def main(argv=None):
             raise ValueError("unsupported installation format")
         for name in ["administrator.json", "backend.env", "agent.env", "postgres.env", "compose.env"]:
             private_regular(output / name)
+        configure_frontend(output)
         if args.upgrade:
             if run(["git", "-C", str(ROOT), "status", "--porcelain"],
                    capture_output=True, text=True).stdout:
@@ -279,7 +349,11 @@ def main(argv=None):
                     temporary.replace(output / name)
     else:
         manifest = prepare(args, output)
+        configure_frontend(output)
     print(f"Private configuration: {output}; administrator credentials: {output / 'administrator.json'}")
+    if not args.reuse:
+        print("The first empty-database startup automatically creates a superadministrator. "
+              "After your first sign-in, change the initial password in Personal Center.")
     if args.prepare_only:
         return 0
     verify_source(ROOT, manifest["blog_revision"], "deploy/docker/Dockerfile.backend")

@@ -31,6 +31,7 @@ jobs:
         run: |
           printf 'STACK_STATE=%s/saudade-container\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf 'CORE_STATE=%s/saudade-core\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'ROOT_STATE=%s/saudade-root\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Configuration and recovery scope tests without Docker
         run: python3 -m unittest discover -s tests/ops -p 'test_compose_*.py' -v
       - name: Prepare private disposable stack
@@ -63,6 +64,11 @@ jobs:
           bash deploy/install.sh --state-dir "$CORE_STATE" --prepare-only
           bash deploy/install.sh --state-dir "$CORE_STATE" --reuse --no-build
           STACK_STATE="$CORE_STATE" python3 deploy/docker/ci-smoke.py
+      - name: Verify a root-owned installation uses non-root nginx and private TLS
+        run: |
+          docker compose --project-directory "$CORE_STATE" --env-file "$CORE_STATE/compose.env" \
+            -f deploy/docker/compose.yaml down --timeout 15
+          python3 deploy/docker/ci-root-smoke.py
       - name: Package verified images without configuration or volumes
         if: github.event_name == 'workflow_dispatch' && inputs.package_images
         run: |
@@ -88,6 +94,10 @@ jobs:
             -f deploy/docker/compose.yaml --profile agent --profile scheduler ps -a
           docker compose --project-directory "$STACK_STATE" --env-file "$STACK_STATE/compose.env" \
             -f deploy/docker/compose.yaml --profile agent --profile scheduler logs --tail 80
+          if sudo -n test -f "$ROOT_STATE/compose.env"; then
+            sudo -n docker compose --project-directory "$ROOT_STATE" --env-file "$ROOT_STATE/compose.env" \
+              -f deploy/docker/compose.yaml logs --tail 80
+          fi
       - name: Remove only this runner's disposable stack
         if: always()
         run: |
@@ -97,3 +107,7 @@ jobs:
                 -f deploy/docker/compose.yaml --profile agent --profile scheduler down --timeout 15 --volumes
             fi
           done
+          if sudo -n test -f "$ROOT_STATE/compose.env"; then
+            sudo -n docker compose --project-directory "$ROOT_STATE" --env-file "$ROOT_STATE/compose.env" \
+              -f deploy/docker/compose.yaml down --timeout 15 --volumes
+          fi

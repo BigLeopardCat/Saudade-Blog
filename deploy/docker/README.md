@@ -17,7 +17,36 @@ bash deploy/install.sh --site-url http://localhost:8080
 
 默认绑定 `127.0.0.1:8080`，供本机反向代理使用。公开站点传入真实 `--site-url https://blog.example.com`，由宿主代理终止 TLS 并转发到该端口。该地址同时用于前端构建和公开链接，不能使用 Docker 服务名。
 
-私有目录默认 `~/.local/share/saudade/compose`，目录 0700、凭据 0600。可用 `--state-dir /absolute/private/path` 修改。首个管理员凭据在 `administrator.json`，通过私有编辑器读取，登录后修改密码。密码不输出到命令行或日志；重跑不会重置已有管理员。用户表非空且没有管理员时，初始化拒绝修改任何账号。
+私有目录默认 `~/.local/share/saudade/compose`，目录 0700、凭据 0600。可用 `--state-dir /absolute/private/path` 修改。密码不输出到命令行或日志。
+
+### 首次站长账号
+
+安装器自动生成 `administrator.json`；真正的账号在首次启动时由 `bootstrap` 服务创建，且只允许空用户表。
+首个账号是博客的**超级管理员 `superadmin`**，默认登录名 `admin`、昵称“站长”，初始密码随机生成。
+这不授予 PostgreSQL 超级用户权限，数据库应用账号仍只有业务 CRUD 权限。
+
+账号并非固定：可在首次准备时自定义登录名、昵称和密码。密码通过仅本人可读的文件提供，不作为命令行参数：
+
+```sh
+install -d -m 700 ~/.config/saudade
+install -m 600 /dev/null ~/.config/saudade/initial-password
+# 使用编辑器填写单行初始密码；不要把密码写入命令或 shell 历史。
+bash deploy/install.sh --site-url http://localhost:8080 \
+  --admin-user site-owner --admin-nickname '站长' \
+  --admin-password-file ~/.config/saudade/initial-password --prepare-only
+# 用私有编辑器审阅 ~/.local/share/saudade/compose/administrator.json。
+bash deploy/install.sh --reuse
+```
+
+省略 `--admin-password-file` 即生成随机密码。登录名为 3–64 个 ASCII 字母、数字或 `_.-`，
+昵称最多 64 字，密码为 12–1024 个 UTF-8 字节。不要在 JSON 中增加 `role` 字段，首次角色由服务端确定。
+也可只执行 `--prepare-only`，在首次启动前手动编辑 `administrator.json` 的 `username`、`nickname`、`password`，
+保持文件 0600，再使用同一私有目录执行 `--reuse`。准备配置阶段不会连接数据库或创建账号，不需要交互式终端。
+启用 Agent 时，应将账号参数与下一节的功能选项放在同一次首次准备命令中。
+
+**首次登录后建议在个人中心更换初始密码。** 初始凭据文件不会跟随登录后的密码变更自动更新。
+`--reuse`、重建镜像及修改初始 JSON 都不会重置已有密码或改变角色；已有 `admin` 或 `superadmin` 时跳过创建，
+不会把普通管理员自动提权。用户表非空但没有管理员时初始化失败，交由维护者核实，不接管已有账号。
 
 ## Agent 与可选功能
 
@@ -52,9 +81,19 @@ bash deploy/install.sh --site-url https://blog.example.com \
   --cert /private/fullchain.pem --key /private/privkey.pem
 ```
 
-证书复制到私有目录的 `tls/site.crt`、`tls/site.key`。续期后原子替换这两个文件，保留部署账号所有及 0600，再执行 `exec frontend nginx -t` 和 `exec frontend nginx -s reload`（Compose 命令见下文）。证书不会自动续期。HTTP 跳转使用配置的 origin，包括自定义端口；健康路径不跳转。未提供证书时，8443 映射不提供 TLS 服务。
+证书复制到私有目录的 `tls/site.crt`、`tls/site.key`，文件保持 0600，TLS 子目录保持 0700。
+这些副本归前端运行 UID/GID 所有；其他运行凭据仍归部署账号所有。非 root 安装使用部署账号的非零 UID，
+root 安装使用 nginx 的 `101:101`，不通过开放其他用户读取权限让 nginx 访问私钥。
 
-数据库、后端、Agent 无主机端口映射，只由 nginx 提供 HTTP(S)。后端和 Agent 使用固定非 root 用户；nginx 与首次初始化工具使用生成配置时的 UID/GID 读取私有文件，不要换账号复用目录。PostgreSQL 使用官方入口初始化并降权。应用根文件系统只读，持久状态使用独立卷。
+续期时用原部署账号原子替换这两个文件并保持 0600，执行
+`bash deploy/install.sh --state-dir /absolute/private/path --reuse --prepare-only` 校正副本归属，
+再执行 `exec frontend nginx -t` 和 `exec frontend nginx -s reload`（Compose 命令见下文）。
+证书不会自动续期。HTTP 跳转使用配置的 origin，包括自定义端口；健康路径不跳转。未提供证书时，8443 映射不提供 TLS 服务。
+
+数据库、后端、Agent 无主机端口映射，只由 nginx 提供 HTTP(S)。后端、Agent 和 nginx 均以非 root 用户运行。
+nginx 的 `/tmp` 是归运行 UID 所有的 0700 tmpfs，限制 64 MiB；PID 和请求临时文件只写该挂载，根文件系统保持只读，
+不添加 Linux capabilities。首次账号初始化工具使用部署账号 UID/GID 读取私有凭据，不要换账号复用安装目录。
+PostgreSQL 使用官方入口初始化并降权，持久状态使用独立卷。
 
 ## 运维与备份
 
@@ -93,7 +132,8 @@ sha256sum blog.dump agent.dump uploads.tar > backup.sha256
 原图、Agent checkpoint 与版本组合后，再按维护窗口切换；恢复成功不代表允许重放未知写入。
 
 容器 CI 对完整安装执行实际 `pg_dump/pg_restore`、LangGraph checkpoint 重读、上传文件恢复，
-并拒绝无效配置后回到原镜像与凭据，再使用独立新卷验证仅博客安装。
+并拒绝无效配置后回到原镜像与凭据；独立新卷验证仅博客安装、root 安装下的非 root nginx、
+私钥读取、TLS 重载与重建，以及首个超级管理员登录和已有账号保护。
 演练不执行破坏性 schema 降级，使用合成数据，不证明生产备份仍有效；维护者仍应
 在隔离环境恢复自己的最新备份。数据库回滚与应用镜像回滚分别评估。
 

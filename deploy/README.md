@@ -1,6 +1,6 @@
 # 部署入口
 
-新环境使用 [Docker Compose 安装指南](docker/README.md)：`install.sh` 生成私有配置、初始化 PostgreSQL 和首个管理员，并等待服务就绪。默认只安装博客，可选 Agent 和计划任务。
+新环境使用 [Docker Compose 安装指南](docker/README.md)：`install.sh` 生成私有配置、初始化 PostgreSQL 和首个站长超级管理员，并等待服务就绪。默认只安装博客，可选 Agent 和计划任务；登录名、昵称和初始密码可自定义，首次登录后建议更换初始密码。
 
 ```sh
 bash deploy/install.sh --site-url http://localhost:8080

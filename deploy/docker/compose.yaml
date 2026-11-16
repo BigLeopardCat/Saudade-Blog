@@ -94,7 +94,7 @@ services:
     mem_limit: 512m
 
   frontend:
-    user: "${CONFIG_UID:?}:${CONFIG_GID:?}"
+    user: "${FRONTEND_UID:?use deploy/install.sh}:${FRONTEND_GID:?use deploy/install.sh}"
     image: saudade-blog/frontend:${BLOG_REVISION}
     build:
       context: ${BLOG_SOURCE}
@@ -110,7 +110,8 @@ services:
     depends_on:
       backend: {condition: service_healthy}
     read_only: true
-    tmpfs: [/tmp]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=${FRONTEND_UID:?},gid=${FRONTEND_GID:?}"
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 128m

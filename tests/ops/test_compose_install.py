@@ -45,6 +45,81 @@ class ComposeInstall(unittest.TestCase):
         self.assertNotEqual(backend.split("@postgres")[0], agent.split("@postgres")[0])
         self.assertIn("\nAGENT_URL=\n", backend)
 
+    def test_custom_superadministrator_credentials_are_private_and_literal(self):
+        password = self.root / "initial-password"
+        value = 'strong-初始-password$(touch SHOULD_NOT_EXIST)"$'
+        password.write_text(value + "\n")
+        password.chmod(0o600)
+        output = self.prepare("--admin-user", "site-owner", "--admin-nickname", "自定义站长",
+                              "--admin-password-file", str(password))
+        credentials = json.loads((self.state / "administrator.json").read_text())
+        self.assertEqual(credentials, {"username": "site-owner", "nickname": "自定义站长", "password": value})
+        self.assertNotIn(value, output)
+        self.assertIn("superadministrator", output)
+        self.assertIn("change the initial password", output)
+        self.assertFalse((ROOT / "SHOULD_NOT_EXIST").exists())
+        before = (self.state / "administrator.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "never resets"):
+            self.prepare("--reuse", "--admin-password-file", str(password))
+        self.assertEqual((self.state / "administrator.json").read_bytes(), before)
+
+    def test_invalid_password_files_fail_before_configuration_is_written(self):
+        password = self.root / "password"
+        for value in [b"short", b"a" * 1025, b"long-password\nsecond-line", b"invalid-utf8-\xff\xff\xff"]:
+            password.write_bytes(value)
+            password.chmod(0o600)
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.prepare("--admin-password-file", str(password))
+            self.assertFalse(self.state.exists())
+        password.write_text("a long private password")
+        password.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "private regular"):
+            self.prepare("--admin-password-file", str(password))
+        self.assertFalse(self.state.exists())
+        password.chmod(0o600)
+        link = self.root / "linked-password"
+        link.symlink_to(password)
+        with self.assertRaisesRegex(ValueError, "private regular"):
+            self.prepare("--admin-password-file", str(link))
+        self.assertFalse(self.state.exists())
+
+    def test_nginx_identity_never_uses_root(self):
+        with patch.object(stack.os, "geteuid", return_value=0), patch.object(stack.os, "getegid", return_value=0):
+            self.assertEqual(stack.frontend_identity(), (101, 101))
+        with patch.object(stack.os, "geteuid", return_value=1001), patch.object(stack.os, "getegid", return_value=1002):
+            self.assertEqual(stack.frontend_identity(), (1001, 1002))
+
+    def test_reuse_adds_frontend_identity_without_resetting_private_configuration(self):
+        self.prepare()
+        path = self.state / "compose.env"
+        lines = [line for line in path.read_text().splitlines() if not line.startswith("FRONTEND_")]
+        path.write_text("\n".join(lines) + "\n")
+        secrets_before = {name: (self.state / name).read_bytes() for name in
+                          ["administrator.json", "backend.env", "agent.env", "postgres.env", "installation.json"]}
+        self.prepare("--reuse")
+        uid, gid = stack.frontend_identity()
+        self.assertIn(f"FRONTEND_UID={uid}\n", path.read_text())
+        self.assertIn(f"FRONTEND_GID={gid}\n", path.read_text())
+        self.assertEqual(secrets_before, {name: (self.state / name).read_bytes() for name in secrets_before})
+
+    def test_tls_permissions_and_symlink_targets_are_not_weakened(self):
+        self.prepare()
+        key = self.state / "tls/site.key"
+        key.write_text("private test key")
+        key.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "0600"):
+            self.prepare("--reuse")
+        key.unlink()
+        target = self.root / "unrelated-private-key"
+        target.write_text("unrelated")
+        target.chmod(0o600)
+        before = target.stat()
+        key.symlink_to(target)
+        with self.assertRaises(OSError):
+            self.prepare("--reuse")
+        self.assertEqual((target.stat().st_uid, target.stat().st_gid, target.stat().st_mode),
+                         (before.st_uid, before.st_gid, before.st_mode))
+
     def test_reuse_preserves_existing_credentials_and_rejects_overwrite(self):
         self.prepare()
         before = {file.name: file.read_bytes() for file in self.state.iterdir() if file.is_file()}

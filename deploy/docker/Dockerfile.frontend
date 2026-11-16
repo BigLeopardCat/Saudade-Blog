@@ -28,6 +28,7 @@ COPY --from=build /licenses /usr/share/doc/saudade
 ARG REVISION
 LABEL org.opencontainers.image.source=https://github.com/BigLeopardCat/Saudade-Blog \
       org.opencontainers.image.revision=$REVISION
+USER nginx
 EXPOSE 8080 8443
 HEALTHCHECK --interval=10s --timeout=3s \
     CMD wget -q --spider http://127.0.0.1:8080/healthz

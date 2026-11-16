@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise only the disposable Compose stack created by container CI."""
+import base64
 import json
 import http.client
 import importlib.util
@@ -10,7 +11,12 @@ import ssl
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-STATE = Path(os.environ["STACK_STATE"])
+if os.environ.get("GITHUB_ACTIONS") != "true":
+    raise ValueError("smoke requires disposable GitHub runner state")
+STATE = Path(os.environ["STACK_STATE"]).resolve()
+RUNNER = Path(os.environ["RUNNER_TEMP"]).resolve()
+if STATE == RUNNER or not STATE.is_relative_to(RUNNER):
+    raise ValueError("smoke requires disposable GitHub runner state")
 INSTALLATION = json.loads((STATE / "installation.json").read_text())
 DC = ["docker", "compose", "--project-directory", str(STATE), "--env-file", str(STATE / "compose.env"),
       "-f", str(ROOT / "deploy/docker/compose.yaml")]
@@ -41,11 +47,29 @@ def main():
     assert config["services"]["backend"].get("read_only")
     if INSTALLATION["with_agent"]:
         assert config["services"]["agent"].get("read_only")
-    assert query("SELECT count(*) FROM public.\"user\" WHERE role = 'admin'") == "1"
-    before = query('SELECT password FROM public."user" WHERE role = \'admin\'')
+    assert query("SELECT count(*) FROM public.\"user\" WHERE role = 'superadmin'") == "1"
+    before = query('SELECT password FROM public."user" WHERE role = \'superadmin\'')
     assert before.startswith("$argon2id$"), "bootstrap must use the current password algorithm"
     command("run", "--rm", "--no-deps", "bootstrap")
-    assert query('SELECT password FROM public."user" WHERE role = \'admin\'') == before, "bootstrap reset credentials"
+    assert query('SELECT password FROM public."user" WHERE role = \'superadmin\'') == before, "bootstrap reset credentials"
+    # Existing accounts are never promoted or reset, including an installation with no administrator.
+    try:
+        for role in ["admin", "user"]:
+            query(f"UPDATE public.\"user\" SET role = '{role}'")
+            snapshot = query('SELECT id,username,nickname,password,role FROM public."user" ORDER BY id')
+            if role == "admin":
+                command("run", "--rm", "--no-deps", "bootstrap")
+            else:
+                try:
+                    command("run", "--rm", "--no-deps", "bootstrap")
+                except subprocess.CalledProcessError as error:
+                    assert "bootstrap requires an empty user table" in error.stderr
+                else:
+                    raise AssertionError("bootstrap promoted an existing non-administrator")
+            assert query('SELECT id,username,nickname,password,role FROM public."user" ORDER BY id') == snapshot
+    finally:
+        query("UPDATE public.\"user\" SET role = 'superadmin'")
+    assert query('SELECT password FROM public."user"') == before
     assert query("SELECT has_table_privilege('saudade_app', 'public.note', 'INSERT')") == "t"
     assert query("SELECT has_schema_privilege('saudade_app', 'public', 'CREATE')") == "f"
     assert query("SELECT has_database_privilege('saudade_agent', 'saudade_blog', 'CONNECT')") == "f"
@@ -57,6 +81,10 @@ def main():
     with urllib.request.urlopen(request, timeout=10) as response:
         login = json.load(response)
     assert login["code"] == 200 and login["data"], "first administrator cannot log in"
+    payload = login["data"].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    assert claims["role"] == "superadmin", "first login did not receive superadministrator privileges"
+    assert query('SELECT username FROM public."user"') == credentials["username"]
     with urllib.request.urlopen("http://127.0.0.1:8080/api/health/ready", timeout=10) as response:
         assert json.load(response)["ready"] is True
     with urllib.request.urlopen("http://127.0.0.1:8080/build-info.json", timeout=10) as response:
@@ -68,6 +96,14 @@ def main():
         assert config["services"]["backend"]["environment"]["AGENT_URL"] == ""
     with urllib.request.urlopen("http://127.0.0.1:8080/api/public/notes", timeout=10) as response:
         assert json.load(response)["code"] == 200, "core article reads require an optional service"
+    frontend_uid, frontend_gid = config["services"]["frontend"]["user"].split(":")
+    assert int(frontend_uid) > 0
+    assert command("exec", "-T", "frontend", "id", "-u").strip() == frontend_uid
+    assert command("exec", "-T", "frontend", "stat", "-c", "%u:%g:%a", "/tmp").strip() == f"{frontend_uid}:{frontend_gid}:700"
+    assert config["services"]["frontend"]["read_only"] is True
+    assert config["services"]["frontend"]["cap_drop"] == ["ALL"]
+    status = command("exec", "-T", "frontend", "cat", "/proc/1/status")
+    assert int(next(line.split()[1] for line in status.splitlines() if line.startswith("CapEff:")), 16) == 0
     command("exec", "-T", "frontend", "nginx", "-t")
     command("exec", "-T", "frontend", "test", "-s", "/usr/share/doc/saudade/ASSETS-LICENSE.md")
     running = command("ps", "--status", "running", "--services").splitlines()
@@ -84,6 +120,9 @@ def main():
     spec = importlib.util.spec_from_file_location("stack", ROOT / "deploy/stack.py")
     stack = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(stack)
+    stack.configure_frontend(STATE)
+    assert (STATE / "tls").stat().st_mode & 0o777 == 0o700
+    assert command("exec", "-T", "frontend", "stat", "-c", "%u:%g:%a", "/etc/nginx/tls/site.key").strip() == f"{frontend_uid}:{frontend_gid}:600"
     (STATE / "nginx.conf").write_text(stack.nginx_text(True, "https://localhost:8443"))
     command("exec", "-T", "frontend", "nginx", "-t")
     command("exec", "-T", "frontend", "nginx", "-s", "reload")
@@ -116,7 +155,10 @@ def main():
         if attempt == 19:
             raise AssertionError(f"TLS redirect did not converge: {observed}")
         time.sleep(0.25)
-    print("TLS smoke passed: private certificate access, config reload, HTTPS readiness and canonical redirect")
+    command("up", "--no-build", "--no-deps", "--force-recreate", "--wait", "--wait-timeout", "60", "frontend")
+    with urllib.request.urlopen("https://127.0.0.1:8443/api/health/ready", context=context, timeout=10) as response:
+        assert json.load(response)["ready"] is True
+    print("TLS smoke passed: private certificate access, config reload, clean restart and canonical redirect")
 
 
 if __name__ == "__main__":

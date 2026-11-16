@@ -66,7 +66,7 @@ async fn run() -> Result<(), &'static str> {
         .execute(&mut *tx)
         .await
         .map_err(|_| "cannot lock administrator table")?;
-    let row = sqlx::query("SELECT count(*) AS total, count(*) FILTER (WHERE role = 'admin') AS admins FROM public.\"user\"")
+    let row = sqlx::query("SELECT count(*) AS total, count(*) FILTER (WHERE role IN ('admin', 'superadmin')) AS admins FROM public.\"user\"")
         .fetch_one(&mut *tx).await.map_err(|_| "cannot check administrator state")?;
     if row.get::<i64, _>("admins") > 0 {
         println!("Administrator already exists; credentials and roles unchanged");
@@ -76,13 +76,20 @@ async fn run() -> Result<(), &'static str> {
         return Err("bootstrap requires an empty user table; no existing account was changed");
     }
     let password = saudade_blog::utils::hash_password(&credentials.password);
-    sqlx::query("INSERT INTO public.\"user\" (username, nickname, password, role) VALUES ($1, $2, $3, 'admin')")
-        .bind(&credentials.username).bind(&credentials.nickname).bind(password)
-        .execute(&mut *tx).await.map_err(|_| "cannot create first administrator")?;
+    sqlx::query(
+        "INSERT INTO public.\"user\" (username, nickname, password, role) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&credentials.username)
+    .bind(&credentials.nickname)
+    .bind(password)
+    .bind(saudade_blog::authz::ROLE_SUPERADMIN)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| "cannot create first administrator")?;
     tx.commit()
         .await
         .map_err(|_| "cannot commit administrator bootstrap")?;
-    println!("First administrator created with Argon2id");
+    println!("First superadministrator created with Argon2id. Change the initial password in Personal Center after your first sign-in.");
     Ok(())
 }
 
