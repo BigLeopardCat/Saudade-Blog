@@ -56,9 +56,9 @@ jobs:
         with:
           node-version-file: .node-version
           package-manager-cache: false
-      - name: Audit locked production packages without installing them
+      - name: Audit locked runtime and development packages without installing them
         working-directory: frontend
-        run: npm audit --package-lock-only --omit=dev --audit-level=moderate --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/npm-audit.json"
+        run: npm audit --package-lock-only --include=dev --audit-level=moderate --json --registry=https://registry.npmjs.org > "$RUNNER_TEMP/npm-audit.json"
       - name: Preserve dependency findings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
