@@ -63,7 +63,7 @@ try {
  await page.screenshot({path:out+'/album.png'});console.log('album keyboard, viewport and stable dimensions checked');
  await page.keyboard.press('Escape');await page.waitForTimeout(160);assert.equal(await page.getByRole('dialog').count(),0);assert.equal((await stats()).paused,false);
  // Logged-out gate is still enforced.
- await page.getByRole('button',{name:'点一盏河灯',exact:false}).click();await page.getByRole('dialog',{name:'留言板公告'}).waitFor();await page.keyboard.press('Escape');assert.equal(posts.length,0);console.log('logged-out gate checked');
+ await page.getByRole('button',{name:'点一盏河灯',exact:false}).click();await page.getByRole('dialog',{name:'请先登录'}).waitFor();assert.equal(await page.getByRole('button',{name:'去登录',exact:true}).count(),1);assert.ok((await page.getByRole('dialog',{name:'请先登录'}).innerText()).includes('请先登录后再发布留言'));await page.keyboard.press('Escape');assert.equal(posts.length,0);console.log('logged-out gate checked');
  // Full authenticated three-step flow; pending is visibly unlit, never presented as approved.
  await page.evaluate(()=>localStorage.setItem('tokenKey','isolated-fixture-token'));
  await page.getByRole('button',{name:'点一盏河灯',exact:false}).click();

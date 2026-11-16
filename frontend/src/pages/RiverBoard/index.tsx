@@ -180,7 +180,7 @@ export default function RiverBoard() {
     const [wishAuthor, setWishAuthor] = useState("");
     /* 当前账号真实昵称（预填来源）：留名与之不一致时视为"匿名·自定义留名" */
     const profileNickRef = useRef("");
-    /* 未登录留言门禁：留言板公告 */
+    /* 未登录留言门禁：登录提示 */
     const [noticeOpen, setNoticeOpen] = useState(false);
 
     /* 布局：视口与投影常量 */
@@ -548,7 +548,7 @@ export default function RiverBoard() {
             setWishDone(true);
         } catch (err) {
             setWishError(err instanceof Error ? err.message : "放灯暂时未能完成，请重试");
-            // 登录失效/未登录 → 弹公告引导登录
+            // 登录失效时提示重新登录
             if (String(err).includes("登录")) setNoticeOpen(true);
         } finally {
             setWishBusy(false);
@@ -566,7 +566,7 @@ export default function RiverBoard() {
         setWishAuthor("");
     };
 
-    /* 此心为灯：未登录先弹留言板公告；已登录进入留言流程并预填账号昵称 */
+    /* 此心为灯：未登录先提示登录；已登录进入留言流程并预填账号昵称 */
     const openWishFlow = async () => {
         if (!localStorage.getItem("tokenKey")) {
             setNoticeOpen(true);
@@ -1165,21 +1165,19 @@ export default function RiverBoard() {
                 </div>
             )}
             {noticeOpen && (
-                <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="留言板公告">
+                <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="请先登录">
                     <div className="rz-modal-box rz-notice-box" onClick={(e) => e.stopPropagation()}>
                         <span className="rz-paper-heading" aria-hidden>渡口小笺</span>
-                        <h3 className="rz-notice-title">留言板公告</h3>
+                        <h3 className="rz-notice-title">请先登录</h3>
                         <div className="rz-notice-body">
-                            <p>尊敬的访客：</p>
-                            <p>本网站当前为非交互式个人站点。留言板等功能仅供内部测试、研究学习使用，暂不对公众开放交互服务。</p>
-                            <p>我们正在积极筹备交互式网站备案的转型工作，预计将于12月完成升级。</p>
-                            <p>届时，欢迎您再次来访，体验完整的河灯留言互动功能。</p>
-                            <p>Saudade Blog</p>
-                            <p>2026年8月21日</p>
+                            <p>请先登录后再发布留言。</p>
                         </div>
                         <div className="rz-notice-foot">
                             <button type="button" className="rz-wish-primary" onClick={() => setNoticeOpen(false)}>
-                                我知道了
+                                暂不登录
+                            </button>
+                            <button type="button" className="rz-wish-primary" onClick={() => navigate("/login")}>
+                                去登录
                             </button>
                         </div>
                     </div>

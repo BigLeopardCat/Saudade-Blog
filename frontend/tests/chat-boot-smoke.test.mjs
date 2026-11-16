@@ -26,7 +26,7 @@ globalThis.sessionStorage = {
   setItem: (k, v) => store2.set(k, String(v)),
   removeItem: (k) => store2.delete(k),
 };
-// 登录态：无 tokenKey 时 sendMessage 走游客合规门禁（只显示 notice 不发起 SSE）——
+// 登录态：无 tokenKey 时 sendMessage 走游客登录门禁（只显示 notice 不发起 SSE）——
 // 冒烟测真实对话链路，需种一个含 sub 的假 JWT（payload base64: {"sub":"123"}）
 store.set('tokenKey', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig');
 class BroadcastChannelStub {
@@ -151,6 +151,15 @@ tds = tdsOf();
 assert(round2, '第二轮共 4 条消息', msgs.length);
 assert(tds.length === 1, '间隔小 → 时间标签不重复', tds.length);
 assert(streamCount === 2, 'SSE 请求发起 2 次', streamCount);
+
+// Anonymous sending shows a login prompt and never opens another SSE request.
+store.delete('tokenKey');
+input.value = '未登录也想对话';
+sendBtn.click();
+await waitFor(() => msgsOf().some(row => row.querySelector('.msg-text')?.textContent.includes('请先登录')));
+assert(msgsOf().some(row => row.querySelector('.msg-text')?.textContent === '请先登录后再与助手对话。'),
+  '未登录时显示通用登录提示');
+assert(streamCount === 2, '未登录发送不发起 SSE 请求', streamCount);
 
 console.log('\n' + (failed === 0 ? '✅ 冒烟通过' : '❌ 冒烟失败') + `：${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);
