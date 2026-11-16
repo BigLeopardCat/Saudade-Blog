@@ -1,6 +1,6 @@
 # 部署与运维
 
-本页描述现有原生 systemd 发布。新环境另提供 [PostgreSQL 一键安装与 Docker Compose](../deploy/docker/README.md)，两种流程分别维护状态目录，不自动接管或转换现有实例。仓库不再维护 MySQL 安装器和一次性切库工具；当前 PostgreSQL 编号迁移继续保留。
+本页描述现有原生 systemd 发布。新环境另提供 [PostgreSQL 一键安装与 Docker Compose](../deploy/docker/README.md)，两种流程分别维护状态目录，不自动接管或转换现有实例。数据库初始化和升级使用 `scripts/migration/pg/` 的 PostgreSQL 迁移。
 
 ## 配置
 
@@ -60,7 +60,7 @@ Agent。迁移只新增操作回执表，旧公告入口保留；旧 Agent 不�
 该迁移新增来源会话结果表和生图结果已读版本；不会修改 DBOS 工作流或重放业务任务。
 应用回滚可以保留新增结构，不删除投递去重记录。
 
-使用独立开发/CI 实例测试迁移。基线 `scripts/migration/pg/0000_schema.sql` 用于空数据库，不在既有生产库重跑。其数据库名称和时区要求见[开发指南](../CONTRIBUTING.md)。增量结构通过新编号 PostgreSQL 迁移演进，不回到 MySQL 重新生成基线。
+使用独立开发/CI 实例测试迁移。基线 `scripts/migration/pg/0000_schema.sql` 用于空数据库，不在既有生产库重跑。其数据库名称和时区要求见[开发指南](../CONTRIBUTING.md)。增量结构通过新的编号 PostgreSQL 迁移演进。
 
 ```sh
 python3 scripts/migration/pg/ci_schema_files.py

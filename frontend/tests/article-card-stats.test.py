@@ -85,7 +85,7 @@ MARKUP = """
           {stats}
         </div>
         <h3 class="ArticleTitle" id="title">{title}</h3>
-        <!-- ⚠️ `.descSlot` 不能省（20260930）：简介现在是**槽内绝对定位**的，少了这层槽，
+        <!-- `.descSlot` 为绝对定位的简介提供布局槽；少了这层槽，
              它就相对 `.ArticleContent` 定位到内容区左上角、盖住分类行与标题——而本套件的
              判据全是"页脚/内容区"，两边一样坏 ⇒ 照样全绿。桩必须与 Article.tsx 同形。 -->
         <div class="descSlot" id="slot"><p class="ArticleDescription" id="desc">{desc}</p></div>

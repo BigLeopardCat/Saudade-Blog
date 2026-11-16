@@ -52,9 +52,7 @@ const Login: React.FC = () => {
     useAutoThemeSwitch();
     const isDark = useIsDarkMode();
 
-    // 页面底（含卡片外的部分、手机端回弹露出的部分）挂在 body 上：sass 里那份 `body`
-    // 规则从前是**无条件**的深色渐变，现在按这两颗类分档。`.login-page` 自己也带同一张
-    // 底，所以首帧不会闪一下白。
+    // body 和页面使用相同主题底色，覆盖首帧及手机回弹区域。
     useEffect(() => {
         document.body.classList.add('login-route');
         return () => document.body.classList.remove('login-route');

@@ -7,11 +7,7 @@ BEGIN
   RAISE NOTICE '① quota_request：删了 % 行孤儿申请', n;
 END $$;
 
--- ② 聊天家族：会话已不在、子行还在的。五张表全部扫一遍（理由见文件头 ② 那一段）。
---    语义与 `delete_conversation` 的级联删**完全一致**：这五张表都按 `conversation_id` 读，
---    会话没了就再也没有任何读取路径 ⇒ 留着只会永久占表。
---    `chat_image` 不在这里：它挂着 `chat_history` 的**真外键**（`ON DELETE CASCADE`），
---    删上面那行 `chat_history` 时它自己会跟着走。
+-- 清理缺少会话的子记录；chat_image 通过 chat_history 外键级联删除。
 DO $$
 DECLARE n int; total int := 0;
 BEGIN

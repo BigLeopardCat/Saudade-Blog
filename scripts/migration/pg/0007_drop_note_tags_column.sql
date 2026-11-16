@@ -15,12 +15,7 @@ BEGIN
   RAISE NOTICE '① 预检通过：每一篇的 note.tags 都能从 note_tag 逐字重算';
 END $$;
 
--- ② 删列。`IF EXISTS` 让重跑成为 no-op（第二次跑只印一行 NOTICE）。
---    ⚠️ 索引 / 外键不用管：这一列上两样都没有（`note` 的 12 条外键与 45 个索引里
+-- 一致性预检通过后删除原列；IF EXISTS 允许重复执行。
 ALTER TABLE "note" DROP COLUMN IF EXISTS "tags";
 
--- 跑完自查（**人工**跑一次）：
---
---   SELECT count(*) FROM information_schema.columns
---    WHERE table_name = 'note' AND column_name = 'tags';        -- 期望 0
---   SELECT count(*) FROM "note_tag";                            -- 期望 18
+-- 迁移后确认 note.tags 不存在，note_tag 关联数量以迁移前备份为准。

@@ -242,8 +242,7 @@ async fn liked_by(db: &DatabaseConnection, note_id: i32, who: Option<&Who>) -> b
         .is_some()
 }
 
-/// 尽力而为的身份：**失败一律当未登录**，不向上传播错误。
-/// 这正是模块头注第 1 条的落地——读接口不能因为"令牌过期"就整条请求失败。
+/// 读取统计时，身份解析失败按匿名处理，不中断公开读取。
 pub(super) async fn optional_who(db: &DatabaseConnection, headers: &HeaderMap) -> Option<Who> {
     identify(db, headers).await.ok().flatten()
 }

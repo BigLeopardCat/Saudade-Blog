@@ -43,9 +43,7 @@ def strip_comments(text, line_comments=True):
     return text
 
 
-# 一、源码锁
-# 这几条不是"渲染对不对"，是"别把这次拆开的三段又合回去"。合回去的写法每次都很自然
-# （把色值直接写进组件、把 import 挪回一行、给 logo 排去掉 flex-wrap），所以钉住。
+# 源码检查保证主题变量、样式导入和换行挂点保持接线。
 print("【一】源码锁：三段不许再合回去")
 
 foot_tsx = FOOT_TSX.read_text(encoding="utf-8")

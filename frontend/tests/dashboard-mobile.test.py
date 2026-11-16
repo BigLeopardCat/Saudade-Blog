@@ -186,9 +186,7 @@ GEO = """() => {
         zShell: z(document.querySelector('.shell.slider')),
         zBackdrop: z(bk),
         backdropShown: bk ? getComputedStyle(bk).display !== 'none' : false,
-        // 20261006 的教训：CSS 注释里出现「星号紧跟斜杠」会把注释当场关掉，
-        // 后面整块**静默消失**——浏览器不报错、`grep` 得到、`.mjs` 那两条正则也照样绿。
-        // 所以这里直接问 CSSOM "那一档在不在"，让这类"写了但没接上"当场现形。
+        // 检查实际 CSSOM 中的媒体规则，避免源码中的样式因注释截断而未生效。
         media1024: (() => {
             const s = [...document.styleSheets].find(x => (x.href || '').endsWith('dash.css'));
             return s ? [...s.cssRules].some(r => r.media && /1024/.test(r.media.mediaText)) : null;

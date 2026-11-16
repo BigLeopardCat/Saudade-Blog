@@ -233,9 +233,7 @@
       flex-direction: column
       gap: 4px
 
-    // **不许让链接吃浏览器默认色**：`<a>` 的默认蓝（#1668dc）在深色面板上只有
-    // 1.97:1，探针当场判红。这里继承面板文字色（antd token 在深色档翻白），
-    // 悬停才变色——颜色不是唯一的"这是链接"信号，下划线 + 光标才是。
+    // 链接继承面板文字色，悬停时用主题强调色并添加下划线。
     .akRankTitle
       overflow: hidden
       text-overflow: ellipsis
@@ -276,8 +274,7 @@
       font-size: 13px
       font-weight: 600
       font-variant-numeric: tabular-nums
-      // 同一条理由：数字是**文字**，深色档必须换成亮一档的色（#7880d1
-      // 在深色面板上只有 2.83:1）
+      // 数字使用与当前主题背景有足够对比度的强调色。
       color: var(--ak-accent)
 
       .dark &

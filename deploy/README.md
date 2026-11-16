@@ -13,4 +13,4 @@ bash deploy/install.sh --site-url http://localhost:8080
 - `nginx/`：原生反向代理模板与共享响应头；容器站点由 `stack.py` 生成。
 - `deploy.env.example`：原生 CI/R2 发布控制配置，不能用作应用运行配置。
 
-不再维护 MySQL 安装器或 MySQL 切库工具，旧文件可从 Git 历史查阅；当前 PostgreSQL 编号迁移继续保留。Agent 源码和镜像由[独立仓库](https://github.com/BigLeopardCat/saudade-blog-agent)维护，容器安装固定 `docker/agent.lock.json` 的完整提交。该锁与前端组件锁、Agent 的宿主契约锁分别管理。
+PostgreSQL 基线和编号迁移位于 `scripts/migration/pg/`。Agent 源码和镜像由[独立仓库](https://github.com/BigLeopardCat/saudade-blog-agent)维护，容器安装固定 `docker/agent.lock.json` 的完整提交。该锁与前端组件锁、Agent 的宿主契约锁分别管理。

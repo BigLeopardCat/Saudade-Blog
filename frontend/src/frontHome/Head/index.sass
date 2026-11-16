@@ -126,10 +126,10 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   background: transparent
   &.over-dark
     background: rgba(0, 0, 0, 0.30)
-  // 悬停整条落深底（原逻辑）
+  // 悬停时使用深色背景。
   &:hover
     background: rgba(0, 0, 0, 0.66)
-  // 滚动态：贴满整幅、去圆角、与页顶齐平（原 TSX 内联 background 的活）
+  // 吸顶时展开到页宽并与页顶对齐。
   &.is-stuck
     width: 100%
     margin: 0
@@ -268,7 +268,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       i
         margin-right: 5px
 
-      // 悬停 = 贴一张和纸胶带（原 `#517498` 深蓝块）
+      // 悬停使用和纸胶带背景。
       &:hover
         background: var(--washi-tape, rgba(255, 222, 238, 0.86))
         color: var(--washi-pink-deep, #d94f9a)

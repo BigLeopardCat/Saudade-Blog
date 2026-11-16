@@ -36,7 +36,7 @@
 {"version":"准备返回的摘要","intent":{"action":"mute","target":{"id":12},"mutedUntil":"2026-11-01T12:00:00"}}
 ```
 
-执行必须回送原准备 intent，不将 username 目标隐式替换成 id。返回 `{"changed":true,"beforeVersion":"准备摘要","state":Plan}`，`state` 是原已确认计划；若相关业务、操作者权限或版本改变，拒绝并要求重新确认。HTTP 业务错误仍沿用既有信封 `code != 200`，不是统一的新状态码设计。
+执行必须回送原准备 intent，不将 username 目标隐式替换成 id。返回 `{"changed":true,"beforeVersion":"准备摘要","state":Plan}`，`state` 是原已确认计划；若相关业务、操作者权限或版本改变，拒绝并要求重新确认。业务错误通过响应信封中的 `code != 200` 表示。
 
 ## 权限与副作用
 
@@ -52,7 +52,7 @@
 
 除冻结的安全撤销动作外，完全相同的目标状态不写库、不通知。禁言到期由现有 `authz::is_muted` 判定，自然过期不需要后台任务；对已过期但非 NULL 的列执行 unmute 会清除旧值并通知。通知正文及 created_at 使用固定+08，避免 UTC 开发机的时间偏差。
 
-行锁按操作者/目标编号排序，执行事务采用 SERIALIZABLE；更新结果核验和 `push_notice_checked_at` 均在该事务内，任何写入或通知失败都回滚。不自动重试序列化失败。旧 `/api/temp-users/{id}/status|mute|role` 入口复用同一服务；旧 hours 参数在入口转换一次为绝对北京时间，独立 `send_user_notice` 不受本变更影响。
+行锁按操作者/目标编号排序，执行事务采用 SERIALIZABLE；更新结果核验和 `push_notice_checked_at` 均在该事务内，任何写入或通知失败都回滚。不自动重试序列化失败。`/api/temp-users/{id}/status|mute|role` 入口复用同一服务，hours 参数在入口转换为绝对北京时间；`send_user_notice` 独立提供通知能力。
 
 Agent 继续使用现有签名确认、取消记录及持久执行账。确认重放应从执行账取回原结果；响应丢失或结果未知不得自动再次提交。后端也会以变化后的业务版本拒绝重复使用旧确认；无变化的重放没有写入副作用。该机制不声称跨进程的分布式 exactly-once。
 
@@ -81,3 +81,9 @@ TEST_PG_URL=postgres://postgres@127.0.0.1:55437/saudade_blog \
 ```
 
 测试复用现有 CI 的 `TEST_PG_URL`，在独立 UUID schema 创建最小 user/notification 表并应用真实 0017，结束删除该 schema。PR 的标准 `cargo test` 会运行本测试；无环境变量时打印跳过原因并返回，配置后连接或断言失败均使 CI 失败。该 URL 只能指向一次性测试库；禁止配置成生产连接。本机不运行旧整套 PostgreSQL 集成测试。
+
+## 实现入口
+
+`src/routes/account_actions/` 中，`model.rs` 定义输入与快照，`targets.rs` 负责身份、授权与只读计划，
+`transaction.rs` 负责行锁、指定字段更新、结果核验和事务通知，`mod.rs` 注册 HTTP 入口。
+身份解析复用 `auth_jwt`，权限复用 `authz`；离线与真实数据库用例分别在 `tests.rs`、`postgres_tests.rs`。

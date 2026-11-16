@@ -13,15 +13,13 @@ use sea_orm::{
 };
 use tower::ServiceExt; // for `oneshot`
 
-/// 前五个用例各占一个 note id（见文件头注）
+/// 各用例使用独立文章编号，避免并发夹具互相覆盖。
 const NOTE_SUM: i32 = 900000001;
 const NOTE_EMPTY: i32 = 900000002;
 const NOTE_COMMENTS: i32 = 900000003;
 const NOTE_LIKES: i32 = 900000004;
 
-/// 后五个用例各占一个**用户** id。**每个用例一个**：`cargo test` 默认多线程并发，
-/// 两个用例共用 uid 时，其中一个的 `make_user`（先 DELETE 再 INSERT）会把另一个
-/// 正在用的那一行抽走——症状是随机红，且只在并发时出现。
+/// 各用例使用独立用户编号；`make_user` 的删除与重建不能作用于其他并发用例。
 const QUOTA_UID: i32 = 900000011;
 const QUOTA_UID2: i32 = 900000016;
 const CONV_SEARCH_UID: i32 = 900000012;
@@ -34,10 +32,7 @@ const IMG_UNIQUE_UID: i32 = 900000019;
 const ADMIN_UID: i32 = 900000014;
 const APPLY_UID: i32 = 900000015;
 
-/// 打开被测库。`None` = 没设 `TEST_PG_URL`（调用方直接返回，即"跳过"）。
-///
-/// 这里**不做 `unwrap_or_else` 之类的兜底**：环境变量在场时任何一步不成功都必须 panic
-/// （见文件头注的门控那一段）。
+/// 未配置 `TEST_PG_URL` 时跳过；配置后连接、结构或断言失败均使测试失败。
 async fn connect() -> Option<DatabaseConnection> {
     let url = match std::env::var("TEST_PG_URL") {
         Ok(u) if !u.trim().is_empty() => u,
@@ -90,9 +85,7 @@ async fn ensure_schema(db: &DatabaseConnection) {
         "user_notification",
     ];
     let list = want.map(|t| format!("'{t}'")).join(",");
-    // `current_schema()` 是 MySQL `DATABASE()` 的**忠实对物**：两者都读作"这条连接当前把
-    // 不带限定的表名解析到哪个命名空间"。写死 `'public'` 只在 search_path 恰好是默认值时
-    // 等价——换个 schema 就会静默查空、误报"库结构不全"。
+    // 使用当前 search_path 解析到的 schema，避免把其他 schema 的测试库误判为缺表。
     let row = db
         .query_one(Statement::from_string(
             DbBackend::Postgres,
@@ -154,14 +147,7 @@ async fn make_user(db: &DatabaseConnection, id: i32, role: &str) {
     .await;
 }
 
-/// 取一个 `bigint` 标量（`COUNT(*)`、`SUM` 这一类）。
-///
-/// ⚠️ PG 与 MySQL 在这层有个**必须分宽**的差别：sqlx-postgres 的整数解码按 **OID 精确**
-/// 匹配（`i64` 只认 `int8`、`i32` 只认 `int4`），不像 sqlx-mysql 那样一个 `i64` 通吃所有
-/// 整数宽度。所以读 `int4` 列（`id` / `chat_quota_used` 那一族，`src/entity/` 里也是 `i32`）
-/// 要用 [`one_i32`]，读 `int8`（`COUNT(*)`）才用这里——用错宽度会当场报
-/// `Rust type i64 (as SQL type INT8) is not compatible with SQL type INT4`。
-/// 夹具的每一处断言都要绕开 `try_get_by_index` 的类型报错，收进这里免得每条用例各写一遍。
+/// 读取 `bigint` 标量。PostgreSQL 整数按 OID 解码：`int8` 用 `i64`，`int4` 用 [`one_i32`]。
 async fn one_i64<C: ConnectionTrait>(db: &C, sql: &str) -> Option<i64> {
     let row = db
         .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
@@ -366,10 +352,7 @@ async fn sum_views_decodes_as_integer() {
     )
     .await;
 
-    // PG 上 `SUM(<整数列>)` 本来就返回 `bigint`，所以这条不再是"防 DECIMAL 陷阱"（那是
-    // 切库前 MySQL 上的事故，历史锚点见文件头注），而是**在真连接上把 `SUM` 读回来并核对
-    // 值**——`counts_for` 的四条里只有这一条在真库上跑聚合求和，谁把 `sum_views`
-    // （src/routes/note_stats.rs）那一手弄歪、或让 sea-orm 解不回 `i64`，这里立刻红。
+    // 通过真实连接验证聚合阅读量及 `bigint` 到 `i64` 的解码。
     let got = counts_for(&db, &[NOTE_SUM]).await.expect(
         "counts_for 报错了。所有 `SUM(cnt)` 都必须从 src/routes/note_stats.rs::sum_views \
          出去（它把结果 cast 成 `BIGINT`，sea-orm 才按 `Option<i64>` 解得回）——见该处头注 \
@@ -503,9 +486,7 @@ async fn counts_for_likes_and_favorites_use_count() {
     exec(&db, &format!("DELETE FROM \"user\" WHERE id = {UID}")).await;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ⑤ 空 id 列表必须短路（`IN ()` 是语法错误——PG 与 MySQL 同）
-// ─────────────────────────────────────────────────────────────────────────────
+// 空 id 列表必须短路，避免生成非法的 `IN ()`。
 
 #[tokio::test]
 async fn counts_for_empty_ids_never_reaches_sql() {
@@ -544,15 +525,8 @@ async fn try_consume_charges_the_last_slot_exactly_once() {
         "扣完正好等于上限（不是 2、不是 4——一轮就是一轮）"
     );
 
-    // ★ 本文件最值钱的一条断言：配额用尽之后**计数器不许再动**。
-    //
-    // 判据住的正是 `try_consume` 头注 ① 那件事：`UPDATE ... WHERE used < limit`
-    // 匹配不到行 ⇒ `rows_affected == 0` ⇒ Exhausted。谁把这条 SQL"优化"成
-    // `CASE WHEN used < limit THEN used + 1 ELSE used END` 那种"匹配而不改变"的写法，
-    // `rows_affected` 会变成 1（PG 的 `UPDATE` 报的是**匹配到并重写的行数**，不区分
-    // "值到底变没变"——`WHERE` 只按 `id` 匹配就恒命中一行），0 的含义于是就在"没抢到"与
-    // "抢到了但没变"之间漂移。真正的坑是反过来把判断搬到应用层。
-    // 漂移的症状只有一个：**最后一格被扣两次** ⇒ 上限 500 的人实际只能聊 499 轮。
+    // 额度用尽后计数器不得变化；递增条件须在 SQL WHERE 中原子判断。
+    // PostgreSQL UPDATE 返回重写行数，不能以 CASE 保持原值代替条件过滤。
     for i in 0..2 {
         assert_eq!(
             quota::try_consume(&db, QUOTA_UID, LIMIT).await,
@@ -739,12 +713,8 @@ async fn conversation_list_pins_first_and_anchors_hits() {
     let mid = make_conversation(&db, CONV_LIST_UID, Some("mid")).await;
     let new = make_conversation(&db, CONV_LIST_UID, Some("spark title")).await;
 
-    // 时间必须显式拨开：`NOW()` 的秒精度让三条落在同一秒，排序就退化成按 id 兜底，
-    // 而"最后活动倒序"这条判据会**假绿**（id 顺序恰好与时间顺序一致）。
-    // 置顶那条刻意拨到很老：证明它排第一靠的是 `pinned`，与时间无关。
-    // `conversation.pinned` 在 PG 侧是**真 boolean**（不是 MySQL 的 tinyint）⇒ 写 `true`，
-    // 写 `1` 会被 PG 拒绝（integer 不能隐式转 boolean）。`src/entity/conversation.rs` 里
-    // 它也是 `bool`。
+    // 显式错开活动时间，避免排序断言仅命中 id 兜底。
+    // 置顶会话使用较早时间，验证 pinned 优先；该列使用 PostgreSQL boolean 字面量。
     exec(
         &db,
         &format!(
@@ -947,8 +917,7 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
         "认领写下的 status/handled_by 只该有一份"
     );
 
-    // ③ 驳回：没填理由 ⇒ 库里 `note` 是 NULL，通知正文回落成系统写的那一句。
-    //    **不往库里塞一句编好的话**是这条路径的承重纪律（模块头注 ②）。
+    // 驳回且未填理由时 note 保持 NULL，通知正文使用默认说明。
     exec(
         &db,
         &format!(
@@ -1066,12 +1035,8 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
         exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
     }
 
-    // 三篇文章。**只有第一行该被搜到**；另外两行都是 `is_public=false` 的负控
-    // （草稿那行见 `AGG_NOTE_DRAFT` 的头注：CHECK 之后"公开却是草稿"的行造不出来，
-    // 所以这条**不再**独立检验状态谓词 —— 别读成两条谓词各有一条负控）。
-    // 正文都刻意不含关键词 ⇒ 分数只来自标题（100），排序可预期。
-    // `is_public` 在 PG 侧是**真 boolean**（`src/entity/note.rs` 里也是 `bool`）⇒ 写
-    // `true`/`false`，写 `1`/`0` 会被 PG 拒绝。
+    // 仅公开文章应命中；其余两篇通过 is_public=false 验证过滤。
+    // 正文不含关键词，确保分数仅由标题决定。
     exec(
         &db,
         &format!(
@@ -1098,16 +1063,8 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     )
     .await;
 
-    // 反斜杠夹具：正文含**一个字面反斜杠**的 `c:\path`。
-    // 这是**唯一能抓住 `like_escape` 的判据**：用户搜 `c:\path` 时，未转义的
-    // LIKE 模式 `%c:\path%` 里 `\p` 会被 PG 当成转义的 `p`（等价于搜 `c:path`），
-    // 于是这一行**根本不会被取回来**，内存里那一遍再准也救不了——**丢的是命中**。
-    // 注意这条与"`%` 变成通配符"不同：那个方向只会多取行（内存会筛掉），抓不住。
-    //
-    // ⚠️ 字面量里是**单个**反斜杠（`'… c:\path …'`），不是 MySQL 时代那个 `\\`：
-    // PG 默认 `standard_conforming_strings = on`，字符串里的反斜杠就是反斜杠、不吃一层
-    // （MySQL 默认会吃一层，所以旧夹具才写 `\\`）。写成 `\\` 会存进两个反斜杠，
-    // 这条判据当场失去意义。
+    // 正文保存一个字面反斜杠；未转义的 LIKE 模式会漏掉该命中。
+    // PostgreSQL 默认 standard_conforming_strings=on，不在夹具中双写反斜杠。
     exec(
         &db,
         &format!(
@@ -1248,9 +1205,7 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     assert_eq!(j["data"]["counts"]["comment"], 0);
 }
 
-/// 夹具关键词。**必须纯 ASCII**——与 ⑩ 不同：⑩ 只用它当 POST body，这里它要进
-/// **查询串**，`http::Uri` 不收非 ASCII 字节（中文会 panic 在 `b.body(..).unwrap()`）。
-/// 它照旧是"真实内容里不可能出现的怪串"（精确集合断言的前提）。
+/// 查询串夹具使用独特 ASCII 关键词，兼容 `http::Uri` 并隔离其他内容。
 const BOARDQ_KW: &str = "qqzzboardkw";
 
 /// 调用方。**必须是管理员**——这条接口住在 `protected_routes` 域里，域上挂了
@@ -1749,9 +1704,7 @@ async fn deleting_a_message_cascades_to_its_images() {
     );
 }
 
-/// `(message_id, seq)` 唯一键：重放 / 双标签页重复提交**挡在库这一层**。
-/// 应用层去重做不到这件事——两个并发请求各自查一次"有没有"再各自插，中间那个窗口
-/// 就是第二次写（同族事故见 `quota::try_consume` 的头注）。
+/// `(message_id, seq)` 唯一键在数据库层阻止重放和并发重复提交。
 #[tokio::test]
 async fn chat_image_unique_key_blocks_a_replayed_seq() {
     let Some((db, _db_app)) = connect_pair().await else {
@@ -1983,8 +1936,7 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
         "`published` 是兼容别名，落库必须归一成 `public`（库里只该有一个「公开」词）"
     );
 
-    // ③ 未知状态词 ⇒ 拒收，**不许原样写库**（原样写库正是"库里出现没见过的词、
-    //    而黑名单时代它照旧被公开列出"的来路）。
+    // 未知状态词必须拒收，不能原样写库。
     let (st, j) = call(
         app,
         "POST",
@@ -2318,11 +2270,7 @@ async fn 公开文章列表里找得到自己刚种的那一篇() {
     exec(&db, &format!("DELETE FROM category WHERE id = {LIST_CAT}")).await;
 }
 
-/// 剥掉行注释与块注释（**跳过字符串字面量**）。
-///
-/// 判据读的是**代码**，不是注释。本仓的注释里到处在**举例**写那些被禁的写法 ——
-/// 这一版第一次跑就栽在这：`notes.rs` 的头注逐字写着那条被禁的组合，锁当场把自己红掉
-/// （"不剥注释"与"真用了"在源码文本上长得一模一样）。
+/// 剥除行注释与块注释，保留字符串字面量，避免源码断言命中说明中的示例。
 fn strip_rust_comments(src: &str) -> String {
     let b: Vec<char> = src.chars().collect();
     let mut out = String::with_capacity(src.len());
@@ -2381,7 +2329,7 @@ fn partial_model_two_hits(code: &str) -> Vec<String> {
     hits
 }
 
-/// `SelectTwo` 那版 `into_partial_model` **不许再出现**（见 ⑱ 头注）。
+/// 禁止使用会静默缺失投影列的 `SelectTwo::into_partial_model` 组合。
 #[test]
 fn 不许用_select_two_那版_partial_model() {
     // 判据自己的正控：剥注释**不能把代码也剥掉**。少了这一条，"strip 太狠 ⇒ 永远扫不到"
@@ -2440,8 +2388,7 @@ const TAGMOVE_ADMIN_UID: i32 = 900000080;
 const TAGAS_ADMIN_UID: i32 = 900000066;
 
 const TAGRT_NOTE: i32 = 900000071;
-/// ⚠️ 一级这个 id **比二级那个大**：这样"保序"与"按 id 排序"才分得开
-/// （今天的串恰好升序是历史巧合，不是语义 —— 见 `0006` 头注）。
+/// 一级 id 大于二级 id，区分保留输入顺序与按编号排序。
 const TAGRT_TAGONE: i32 = 900000082;
 const TAGRT_TAGTWO: i32 = 900000081;
 
@@ -2499,7 +2446,7 @@ async fn make_owned_note(db: &DatabaseConnection, id: i32, uid: i32) {
     .await;
 }
 
-/// 建一行一级标签。**先建标签再建文章**（本节头注那条不变量）。
+/// 建立一级标签；关联文章必须在标签之后创建。
 async fn make_tag_one(db: &DatabaseConnection, id: i32, name: &str) {
     exec(db, &format!("DELETE FROM tag_one WHERE id = {id}")).await;
     exec(
@@ -2564,7 +2511,7 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
         return;
     };
     make_user(&db, TAGRT_ADMIN_UID, "admin").await;
-    // 建：先标签、再文章（本节头注）。
+    // 先建立标签，再创建引用它的文章。
     make_tag_one(&db, TAGRT_TAGONE, "往返一级").await;
     make_tag_two(&db, TAGRT_TAGTWO, "往返二级").await;
     make_owned_note(&db, TAGRT_NOTE, TAGRT_ADMIN_UID).await;
@@ -2701,7 +2648,7 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
          但 agent 仓的 codec 逐字钉着这个形状"
     );
 
-    // 收尾：**先删文章、再删标签**（本节头注那条不变量）。
+    // 先删除文章，再删除标签，保持关联完整。
     exec(&db, &format!("DELETE FROM note WHERE id = {TAGRT_NOTE}")).await;
     exec(
         &db,
@@ -2762,8 +2709,7 @@ async fn note_tags_外键级联是按列生效的() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "删标签应当成功：{j}");
 
-    // ① 同篇里指向二级的那一行**还在**（旧 `prune_note_tags` 是"扫全表 + 按数字判"，
-    //    它和"按列级联"在这条上会给出不同的结果 —— 这条就是两者的分界线）。
+    // 删除一级标签不应影响同编号的二级标签关联。
     assert_eq!(
         count_of(
             &db,
@@ -2834,7 +2780,7 @@ async fn note_tags_撞号时归一级且只出现一次() {
         return;
     };
     make_user(&db, TAGCOL_ADMIN_UID, "admin").await;
-    // 同一个数字在两张表里各建一行：两条自增序列互相独立，同号完全合法（`0006` 头注）。
+    // 两级标签使用独立序列，同编号可同时存在。
     make_tag_one(&db, TAGCOL_TAGONE, "撞号一级").await;
     make_tag_two(&db, TAGCOL_TAGTWO, "撞号二级").await;
     make_owned_note(&db, TAGCOL_NOTE, TAGCOL_ADMIN_UID).await;
@@ -3018,11 +2964,7 @@ async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
     )
     .await;
     if let Err(e) = txn.execute_unprepared(migration).await {
-        // ⚠️ 这条 `expect` 会**连带**红在别人的残留上：0006 的守卫是扫全表的，只要库里
-        // 存在任何一篇"`note.tags` 指着已经不存在的标签"的文章，它就会中止整个迁移。
-        // 正常跑时不会（本节头注那条不变量），但**上一次跑挂在中途**会 —— 收尾整段被
-        // panic 跳过，残留就留在了库里。所以这里把"是谁把守卫绊倒的"直接问出来：
-        // 不然下一个人看到的是"回填失败了"，而真正的原因在上一次运行。
+        // 0006 预检扫描全部文章，失败时列出悬空标签引用以定位残留夹具。
         let dirty = one_text(&txn, DIAG_DIRTY_TAGS).await.unwrap_or_default();
         panic!(
             "跑 0006 的回填失败：{e}\n  \
@@ -3283,7 +3225,7 @@ async fn test_搜索预筛的四类命中与档内顺序() {
         return;
     };
 
-    // 先清自己的残留（上次跑挂了会留下行）。**先删文章、再删标签**（⑲ 头注那条不变量）。
+    // 清理本用例残留，先删文章再删标签。
     exec(
         &db,
         &format!(
@@ -3427,8 +3369,7 @@ async fn test_搜索预筛的大小写可见集合与转义() {
     )
     .await;
 
-    // `Router` 是 `Clone`（`DatabaseConnection` **不是**，见 `connect_pair` 头注）⇒ 真链路
-    // 那条句柄建一次、每条请求克隆一份。
+    // 复用 Router，每次请求克隆路由句柄。
     let app = test_app(db_app);
 
     // ── ① 大小写（文章）────────────────────────────────────────────────
@@ -3475,9 +3416,7 @@ async fn test_搜索预筛的大小写可见集合与转义() {
         "说说正文写 `VBN`、查询 `vbn` 必须命中（同上，`talk_hits` 的 `LIKE`）：{j}"
     );
 
-    // ── `%` / `_`：只钉"最终答案"，**钉不住转义**（见本节头注的 ⚠️）─────────
-    // 正面这一条仍然有意义：它是"含 `%` 的行必须**找得到**"，任何让预筛在 `%` 上炸掉的
-    // 实现（比如换成正则）都会在这里红。
+    // 验证百分号按字面命中；反斜杠夹具另行验证预筛选转义。
     let j = search_notes_of(app.clone(), "100%").await;
     assert!(
         note_keys(&j).contains(&SRCH_PCT_NOTE),
@@ -3633,8 +3572,7 @@ async fn comment_sort_hot_default_and_new_differ() {
     )
     .await;
 
-    // 票：`user_id` 全留 NULL、靠 `visitor_key` 区分（两种身份并排，见迁移文件头注）——
-    // 顺带钉住"匿名票也参与热度"这个**已知且已拍板的取舍**（后果写在 comment_votes.rs 头注）。
+    // 匿名票通过 visitor_key 区分，也参与评论热度。
     for (comment, key, value, n) in [
         (HOT_CMT_TOP, "hotfix-up", 1, 20),
         (HOT_CMT_TOP, "hotfix-dn", -1, 1),

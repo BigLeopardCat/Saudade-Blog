@@ -111,8 +111,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         setTo('')
         setMailTitle('')
         setBody('')
-        // 关窗也退出"正在写的那封"：留着 editingDraftId 而正文被清空，下次一按存草稿
-        // 就拿空内容覆盖掉原来那条草稿（后端只拦"三个字段全空"，拦不住只留标题的）。
+        // 清除草稿编号，避免下次打开时以空表单覆盖已保存草稿。
         setEditingDraftId(null)
         setOpened(null)
         setMailTab('in')

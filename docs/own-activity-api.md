@@ -1,7 +1,7 @@
 # 本人活动读取
 
 两个 GET 接口都在 handler 内验 JWT 并从数据库核对账号；没有可指定其他用户的 uid 参数。
-前端接口保持原契约；本人读取实现在 routes/own_reads，不并入聊天或留言模块。
+接口实现在 `src/routes/own_reads/`。
 
 ## GET /api/protected/my/board/page
 
@@ -21,11 +21,11 @@ limit 默认5、范围1..10；可选 before_id 向前翻页，或 message_id 读
 按 id 倒序取 limit+1，再按阅读顺序回传。hasMore 与 nextBeforeId 指向下一页更早窗口。
 列表每条最多300个 Unicode 字符，指定 message_id 时每片最多2000字符，均由 SQL SUBSTRING 裁取。
 可选 content_offset 从0计，只能与 message_id 一起使用；不能与 before_id 混用。
-每条新增 contentOffset/contentLength/nextContentOffset，nextContentOffset 为 null 表示读至末尾。
+每条包含 contentOffset/contentLength/nextContentOffset，nextContentOffset 为 null 表示读至末尾。
 contentTruncated 表示本片不是全文，末片缺少前文时仍为 true；通过游标合并各片才能还原全文。
 读取保持换行、缩进、代码和表情原文；偏移不是 UTF-8 字节数。越过正文长度返回错误，
 恰好等于长度返回空片且没有后续游标，不把删除或不存在的消息伪装为有内容。
-新增字段向后兼容，旧客户端可以忽略；未指定偏移时沿用第一片语义。
+未指定偏移时返回第一片正文。
 返回 data.ownerId/conversationId/items/hasMore/nextBeforeId/includesImages=false。
 不查询 chat_image，不把图片内容传给 Agent；仅允许 user/assistant 消息角色，其他角色报错。
 会话不存在与非本人会话使用同一失败语义；数据库故障不返回空历史。

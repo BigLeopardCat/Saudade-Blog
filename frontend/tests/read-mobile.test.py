@@ -25,12 +25,8 @@ SASS_JS = 'const sass=require("sass");process.stdout.write(sass.compile(process.
 
 SASS_FILE = FE / "src/frontHome/Content/ReadArticle/index.sass"
 RESET_CSS = FE / "src/frontHome/main.css"
-# 沙箱里**必须**有第三张表：编辑器那份（`components/Editor/index.css`，被 router 静态引入
-# ⇒ 线上对每一个 `.markdown-body` 都生效）。第 ⑦ 节量的那种缺陷**就是它漏进来的**
-#（`.markdown-body{padding:45px}` + 媒体档 15px，打在正文那两层嵌套上 ⇒ 桌面 45+45、
-# 手机 15+15 全叠）——不把它放进沙箱，判据测的是一个"没有编辑器样式表的世界"，
-# "手机档内边距 12px 10px 已经对了"这类断言就是这么落在空处的。
-# 次序照线上：编辑器表在前、本仓 sass 在后（产物里 `components/Editor` 在 ReadArticle 之前）。
+# 同时加载编辑器与文章样式，验证嵌套 markdown-body 的实际内边距。
+# 顺序与发布产物一致：编辑器样式在前，文章 Sass 在后。
 EDITOR_CSS = FE / "src/components/Editor/index.css"
 
 MARKUP = """

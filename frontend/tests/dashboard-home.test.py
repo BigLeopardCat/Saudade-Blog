@@ -108,8 +108,7 @@ export const Provider = ({ children }: any) => children;
         "const ArticleRecord = (_p: {isDark?: boolean}) => <div className='stub-record'/>;\n"
         "export default ArticleRecord;\n", encoding="utf-8")
 
-    # 边界③b：react-router-dom 的 import 兜底。本沙箱只渲染 Home，用不到路由，
-    # 但 Home 现在要 useNavigate（待审留言那行的跳转），缺了 esbuild 直接打包失败。
+    # Router 桩提供 Home 导航所需的 useNavigate。
     (stubs / "router.tsx").write_text('''\
 export const useNavigate = () => (to: string, opts?: any) => {
   const w = window as any;

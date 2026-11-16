@@ -138,9 +138,7 @@ console.log('\n排序 —— 默认热度（20261020 改口径），且判据不
         'SQL 排序只看时间与 id（把 up/down 掺进 SQL 排序 = 又一条真相源，与内存那份迟早分叉）',
         orders);
 
-    // 回复**恒**时间正序：讨论串内部被打乱就没法读了，而且"谁先回谁后回"本身就是那串话的
-    // 一部分。热度只作用在顶层——这一条没有被本次改动动过，所以单独钉住（它最容易被
-    // "顺手统一一下"）。
+    // 热度排序只作用于顶层评论，回复仍按会话顺序展示。
     const replyQuery = listBody.slice(listBody.indexOf('RootId.is_in'));
     ok(/order_by_asc\(note_comment::Column::CreatedAt\)/.test(replyQuery.slice(0, 600)),
         '回复子查询恒按 created_at 正序（热度只排顶层）');

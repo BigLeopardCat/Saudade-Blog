@@ -285,11 +285,7 @@ GEO = """() => {
     const allin = document.querySelector('.allin');
     const bcs = bar ? getComputedStyle(bar) : null;
     const before = bar ? getComputedStyle(bar, '::before') : null;
-    // 分隔线的位置只有两种形态，这里统一折算成**视口 y**：
-    //   · 修复后 = 工具栏自己的 `border-bottom`（流内）⇒ 它的上缘 = bottom - 宽度
-    //   · 修复前 = `.action_img::before` 那条绝对定位的线 ⇒ 相对 `.allin`（唯一带
-    //     `transform` 的祖先，也就是它的包含块）的 top 值 + `.allin` 的视口位置
-    // 归一之后，"线在按钮下面吗"这一条断言在两档上问的是同一个问题。
+    // 统一流内边框和绝对定位分隔线的视口坐标，供布局断言比较。
     const lineY = (() => {
         if (!bar) return null;
         const bw = parseFloat(bcs.borderBottomWidth) || 0;

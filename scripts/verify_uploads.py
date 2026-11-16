@@ -92,9 +92,8 @@ def _self_test():
     ck("连库串解析", parse_pg_url("postgres://u:p%40w@127.0.0.1:5432/blog"),
        ("u", "p@w", "127.0.0.1", "5432", "blog"))
     ck("缺端口回落 5432", parse_pg_url("postgres://u:p@db/blog")[3], "5432")
-    # 负控：`mysql://` 那条 URL 必须**不被接受**——留着它当"前缀真的只认一种"的判据，
-    # 否则把正则写宽成 `postgres(ql)?://` 也没人知道。
-    ck("mysql 串不再被接受", parse_pg_url("mysql://u:p@127.0.0.1:3306/blog"), None)
+    # 只接受 postgres://；其他数据库协议与长写协议均拒绝。
+    ck("拒绝非 PostgreSQL 协议", parse_pg_url("mysql://u:p@127.0.0.1:3306/blog"), None)
     ck("postgresql:// 长写也不接受", parse_pg_url("postgresql://u:p@h/blog"), None)
 
     ck("本地图取相对路径", url_to_relpath("/api/protect/download/2026_a.png"), "2026_a.png")
@@ -122,9 +121,7 @@ def pg_rows(conn, sql):
     prefix = shlex.split(os.environ.get("PSQL_BIN", "psql"))
 
     out = subprocess.run(
-        # ⚠️ 端口是**小写 `-p`**。大写 `-P` 在 psql 里是 `\pset`（打印选项），
-        # 传个端口号进去会报 `\pset: unknown option: 5432` —— 与 mysql 客户端的
-        # `-P` 大写端口**正好相反**，照抄必踩。
+        # psql 的小写 -p 指定端口，大写 -P 指定打印选项。
         prefix + ["-U", user, "-h", host, "-p", port, "-d", db,
                   # `-X` 不读 ~/.psqlrc（本机可能有影响输出的设置）；`-q` 静音。
                   "-X", "-q",

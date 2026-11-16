@@ -16,11 +16,7 @@ use crate::utils::ApiResponse;
 use super::note_stats::{identify, Who};
 use super::AppState;
 
-/// 请求体：`+1` 赞 / `-1` 踩 / `0` 撤回。
-///
-/// **连线协议有三个值、库里只有两个**：`0` 的含义是"把我那一行删掉"，不是"写一个 0"
-/// （`note_comment_vote.value` 是 NOT NULL 且只允许 ±1，见迁移文件头注）。
-/// 分层不同不矛盾——线协议要让前端一个函数表达三种动作，存储要让唯一键管住"投过没有"。
+/// 请求值 `+1` 为赞、`-1` 为踩、`0` 为撤回；撤回删除记录，数据库只保存 ±1。
 #[derive(Deserialize)]
 pub struct VoteBody {
     pub value: i16,
@@ -57,8 +53,7 @@ pub(super) async fn vote_counts_for(
     let mut out: HashMap<i32, (i64, i64)> = HashMap::new();
     for (cid, value, n) in rows {
         let slot = out.entry(cid).or_insert((0, 0));
-        // `value` 只有 ±1（库里没有别的取值，见迁移头注）；真出现别的值就当它不是票，
-        // **不折进任何一边**——计数宁可少一个，不要凭空把这个数算进赞或踩。
+        // 仅统计正负票，忽略不参与计数的零值。
         if value > 0 {
             slot.0 += n;
         } else if value < 0 {

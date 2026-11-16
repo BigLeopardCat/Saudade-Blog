@@ -146,8 +146,7 @@ with sync_playwright() as p:
         const r = document.getElementById('waifu').getBoundingClientRect();
         return [r.left + r.width / 2, r.top + r.height - 25];
     }""")
-    # 红基线：这个点必须真在 `#waifu` 盒内。少了它，"看板娘压得住页面"在探针点
-    # 根本没碰到看板娘时也是绿的（本次改动就是这么把它弄红的）。
+    # 命中测试必须覆盖看板娘所在区域。
     inside = pg.evaluate("""([x, y]) => {
         const r = document.getElementById('waifu').getBoundingClientRect();
         return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;

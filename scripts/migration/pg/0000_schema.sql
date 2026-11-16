@@ -239,8 +239,8 @@ CREATE TABLE IF NOT EXISTS "note_comment" (
   "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "note_comment_pkey" PRIMARY KEY ("id")
 );
-COMMENT ON TABLE "note_comment" IS '文章评论（20261002）：两层结构 root_id/parent_id，见迁移文件头注';
-COMMENT ON COLUMN "note_comment"."note_id" IS '所属文章 id（note.id）。无外键，理由见文件头注';
+COMMENT ON TABLE "note_comment" IS '文章评论：root_id/parent_id 表示两层回复结构';
+COMMENT ON COLUMN "note_comment"."note_id" IS '所属文章 id（note.id）；无外键';
 COMMENT ON COLUMN "note_comment"."user_id" IS '评论者 uid（恒 >0：发言强制登录）';
 COMMENT ON COLUMN "note_comment"."content" IS '评论正文（≤300 字，服务端校验；**不转义**，渲染走前端 markdown 管线）';
 COMMENT ON COLUMN "note_comment"."root_id" IS '顶层评论 id；NULL = 本行就是顶层（对回复的回复仍挂同一个顶层）';
@@ -268,11 +268,11 @@ CREATE TABLE IF NOT EXISTS "note_comment_vote" (
   "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "note_comment_vote_pkey" PRIMARY KEY ("id")
 );
-COMMENT ON TABLE "note_comment_vote" IS '评论点赞/踩（20261003）：一票一行，两种身份并排，见迁移文件头注';
-COMMENT ON COLUMN "note_comment_vote"."comment_id" IS '被投票的评论 id（note_comment.id）。无外键，理由见文件头注';
+COMMENT ON TABLE "note_comment_vote" IS '评论点赞/踩：一票一行，支持账号和匿名访客';
+COMMENT ON COLUMN "note_comment_vote"."comment_id" IS '被投票的评论 id（note_comment.id）；评论采用软删除';
 COMMENT ON COLUMN "note_comment_vote"."user_id" IS '投票的账号；**匿名投票为 NULL**（不用 0 当哨兵，同 note_like）';
 COMMENT ON COLUMN "note_comment_vote"."visitor_key" IS '匿名访客标识（浏览器生成、随 X-Visitor-Key 上报）；登录投票为 NULL';
-COMMENT ON COLUMN "note_comment_vote"."value" IS '+1=赞 / -1=踩。**没有 0**：撤回是 DELETE 行，见文件头注';
+COMMENT ON COLUMN "note_comment_vote"."value" IS '+1=赞 / -1=踩；撤回删除记录，不保存 0';
 COMMENT ON COLUMN "note_comment_vote"."created_at" IS '+08:00 本地钟面（库连接已设 timezone=+08:00）';
 COMMENT ON COLUMN "note_comment_vote"."updated_at" IS '改主意（赞↔踩）时刷新；没有任何端点读它，留作事后对账';
 
@@ -387,9 +387,9 @@ CREATE TABLE IF NOT EXISTS "quota_request" (
   "handled_by" integer,
   CONSTRAINT "quota_request_pkey" PRIMARY KEY ("id")
 );
-COMMENT ON COLUMN "quota_request"."user_id" IS '申请人（无外键，见头注 ④）';
+COMMENT ON COLUMN "quota_request"."user_id" IS '申请人 user.id；无外键';
 COMMENT ON COLUMN "quota_request"."reason" IS '申请理由（可空；前端与 agent 工具都提示填写，后端不硬闸）';
-COMMENT ON COLUMN "quota_request"."status" IS '0=待处理 / 1=已批准 / 2=已驳回（三值，见头注 ②）';
+COMMENT ON COLUMN "quota_request"."status" IS '0=待处理 / 1=已批准 / 2=已驳回';
 COMMENT ON COLUMN "quota_request"."note" IS '管理员驳回理由（批准时为 NULL）；写入上限见调用侧的 500 字校验';
 COMMENT ON COLUMN "quota_request"."created_at" IS '+08:00 本地钟面';
 COMMENT ON COLUMN "quota_request"."handled_at" IS '处理时间（未处理为 NULL）';
@@ -498,7 +498,7 @@ CREATE TABLE IF NOT EXISTS "user_message" (
   "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "user_message_pkey" PRIMARY KEY ("id")
 );
-COMMENT ON COLUMN "user_message"."title" IS '信件标题（选填，20260922 起；历史行全为 NULL）';
+COMMENT ON COLUMN "user_message"."title" IS '信件标题（可选）';
 COMMENT ON COLUMN "user_message"."created_at" IS '+08:00 本地钟面';
 
 CREATE INDEX IF NOT EXISTS "idx_message_pair_created" ON "user_message" (from_user_id, to_user_id, created_at);

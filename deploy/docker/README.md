@@ -1,6 +1,6 @@
 # PostgreSQL 容器部署
 
-适用于新安装和独立测试环境。博客使用 PostgreSQL 16、Rust 后端和 nginx 前端；Agent 与计划任务可选。原生生产实例继续按[运维指南](../../docs/deployment-and-ops.md)发布，不通过本安装器切库。
+适用于新安装和独立测试环境。博客使用 PostgreSQL 16、Rust 后端和 nginx 前端；Agent 与计划任务可选。原生 systemd 实例按[运维指南](../../docs/deployment-and-ops.md)发布。
 
 ## 首次安装
 

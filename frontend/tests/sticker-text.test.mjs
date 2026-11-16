@@ -119,8 +119,7 @@ console.log('\n── mdast 侧 ⇄ 片段侧 ──');
         '代码块里的 :头疼: 不动（叶子节点没有 children，遍历自动跳过）');
 }
 
-// 四、接线锁：新宿主确实用了这条渲染器
-// 判据再对，没接上也白搭——这三处是本次改动的真实落点。
+// 同时检查渲染、样式和编辑器三个调用入口。
 console.log('\n── 接线 ──');
 {
     const uc = readFileSync(path.join(root, 'src/components/UserCenter/index.tsx'), 'utf8');

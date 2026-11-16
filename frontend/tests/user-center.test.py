@@ -189,7 +189,7 @@ const http = async (cfg: any) => {
       unread: summary().messages,
     });
   }
-  // 草稿箱（20260923）。**精确路径必须排在 :id 之前**，否则 `/drafts` 会被当成 id 解析。
+  // 精确的 /drafts 路径必须排在 :id 之前，避免被当作编号解析。
   if (url === '/api/protected/messages/drafts') {
     if (method === 'GET') return env(state.drafts);
     const body = json(cfg.data);

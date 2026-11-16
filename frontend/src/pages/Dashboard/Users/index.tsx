@@ -17,12 +17,7 @@ import { RoleBadge } from "../../../components/RoleBadge";
 
 // The initial tab accepts review/comment/quota deep links; account filters stay above the scroll area.
 
-/** 账号是否已冻结。判据与后端 `crate::authz::is_frozen` **同一条**：
- *  `user.status` 里不是 0 的一律算冻结（未登记的取值也按冻结处理，不默认放行）。
- *  `undefined`（字段缺失）按 0 算——缺失只可能出现在"前端已上线、后端还没"这种
- *  部署顺序里，而这两半是同一次部署、迁移先跑，所以它不该发生；
- *  真发生了也宁可少标一个"冻结"（后端照样会拒它），而不是把整页账号标成冻结。
- *  这里刻意不做「=== 1 才算冻结」：那会与后端对不上，后端认的是 != 0。 */
+/** 非零 status 显示为冻结；缺失字段显示为正常，实际授权仍由后端检查。 */
 const isFrozen = (u: any) => Number(u.status ?? 0) !== 0
 
 const isMuted = (u: any) => !!u.muted

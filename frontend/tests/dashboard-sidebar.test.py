@@ -333,10 +333,7 @@ with sync_playwright() as p:
     check("全程无页面异常", not geo_page.errs, "; ".join(geo_page.errs[:3]))
     geo_page.close()
 
-    # 五、两枚填充型 SVG 图标（公告 / 用户管理）
-    # 换图标这件事的坑全在"看不到的那一半"：path 上留着原设计稿的 `fill="#77808F"` 时，
-    # 平时看着一切正常，只有夜间悬停**染色只变一半**——所以判据必须是 computedStyle 的
-    # svg.fill（继承自 .icon 的 color），外加"path 上没有写死 fill"。
+    # 同时检查 SVG 子路径的填充色，避免只改变外层颜色而图标仍不可读。
     print("\n【五】公告与用户管理的填充型 SVG")
     svg_dk = fresh_page(dark=True)
 

@@ -262,9 +262,7 @@ with sync_playwright() as p:
           f'{round(r["wrap"]["w"],1)} vs {round(2 * r["btn"]["w"] + r["wrapGap"],1)}')
 
     print("②b 文案/数字变长时件内内容**不挪位**，且内容始终装得下格子")
-    # ⚠️ 判据从"整簇的宽/左缘"改成了"**件内内容**的宽"。格子现在是定宽的
-    # （(180−6)/2 = 87px，由轨道算出来），文案变长只会在胶囊里把图标挤来挤去
-    # ——那正是 `3em` / `4ch` 这两条定宽存在的理由。
+    # 按单件内容尺寸测量，避免固定宽度格子掩盖图标或文字的布局差异。
     two = pg.evaluate(PAINT, {"markup": mk(faved="", text="收藏", views="7", likes="0",
                                            comments="0")})
     r4 = pg.evaluate(PAINT, {"markup": mk(faved=" isFaved", text="已收藏", views="1234",

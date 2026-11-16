@@ -193,10 +193,7 @@ with sync_playwright() as p:
         const body = r(a.querySelector('.ant-card-body'));
         const meta = r(a.querySelector('.ant-card-meta'));
         const clock = r(a.querySelector('.talk-clock'));
-        // 20261006 新增：署名行（.talk-head）与它里面的三个块、以及头像。
-        // **缺元素给 null，不抛**（`rn`）：红基线上 `.talk-head`/`.talk-title` 根本不存在，
-        // 抛异常会把整条 evaluate 连同后面所有检查一起带走 —— 那样只知道"红了"，
-        // 不知道是结构没落地还是几何不对。
+        // 读取署名行、标题和头像的实际几何位置；缺失元素返回 null，保留其他检查。
         const rn = (el) => el ? r(el) : null;
         const av = rn(a.querySelector('.ant-avatar'));
         const head = rn(a.querySelector('.talk-head'));

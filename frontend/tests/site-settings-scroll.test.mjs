@@ -56,7 +56,7 @@ const allinTag = /<div([^>]*className='allin'[^>]*)>/.exec(ucTsx);
 check('取到 .allin 那个 div 的开标签', Boolean(allinTag), allinTag ? allinTag[1] : '');
 check('★ .allin 的开标签上**没有内联 style**（padding/overflow 都在 index.sass 里）',
     Boolean(allinTag) && !/style=/.test(allinTag[1]), allinTag && allinTag[1].trim());
-// 页面本身也别再出现"内联 overflowY"（那是本仓点过名的头号敌人，且这次就是它骗过了所有人）
+// 检查可执行样式，避免页面通过内联 overflow 绕过共享滚动规则。
 check('UserControl 的 TSX 里不再出现内联 overflow',
     !/overflow[XY]?\s*:/.test(ucTsx.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
 

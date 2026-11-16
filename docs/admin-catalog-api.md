@@ -20,14 +20,17 @@ status 和 isPublic 分别保留数据库事实，NULL 不补成公开状态；�
 
 ## GET /api/protected/accounts
 
-可选参数：正整数 id、完整 username。username 不按昵称或模糊匹配。
+可选参数：正整数 id、完整 username、query；多个条件取交集。
+username 按原值精确匹配登录名，最多 255 字符；不把昵称当作登录名。
+query 最多 100 字符，在登录名和昵称上作不区分大小写的连续字串检索，百分号、下划线和反斜杠按字面匹配。
+拒绝空白检索词、无效编号与未支持的参数。
 在数据库计数与分页前从 authz::KNOWN_ROLES 和 is_listable_role 推导可见角色，排除超级管理员及未知角色。
-返回 id/username/role/frozen/quotaUsed/quotaLimit/muted/mutedUntil，按 id 升序。
+返回 id/username/nickname/role/frozen/quotaUsed/quotaLimit/muted/mutedUntil，按 id 升序。
 账号查询只投影必要列，不选择密码、令牌版本、邮箱或其他登录凭据。
-冻结、禁言和额度上限沿用既有业务含义，不新增变更能力。
+目录仅提供只读候选，不自动选择写入目标。账号变更使用[账号管理接口](account-actions.md)的明确身份、版本核验、授权和事务。
 
 ## 兼容和验收
 
-旧编辑器的 notes/list、notes/search 以及 temp-users 裸数组接口保留原有契约；本接口是有界只读目录。
+编辑器的 notes/list、notes/search 与 temp-users 裸数组接口独立维护；本页接口提供有界只读目录。
 共享 pagination 模块供工作队列与目录使用。PostgreSQL 集成测试使用显式 TEST_PG_URL 和可丢弃数据库，夹具在事务内回滚。
 Agent 文章目录默认每页 25 条、最多 50 条，不使用本页位置作为写入标识；元数据或标签节选显式标记截断。

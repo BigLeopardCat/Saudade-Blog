@@ -13,10 +13,7 @@ BEGIN
   RAISE NOTICE '① 预检通过：status 无 NULL、无未知词';
 END $$;
 
--- ② 收敛矛盾行：`is_public = true` 而状态词是 private/draft。
---    **可见性不变**：翻成白名单之后，这两种词本来就不在公开集合里，置 false 只是把
---    这个字段改成与事实一致。这些行今天在生产上是 0 行（要改之前那条 `{"is_public":true}`
---    的路造出来），所以这一条是**给存量兜底**，不是常规路径。
+-- 将私密和草稿文章的 is_public 收敛为 false，保持可见性不变。
 DO $$
 DECLARE n int;
 BEGIN
@@ -62,12 +59,6 @@ BEGIN
   END IF;
 END $$;
 
--- 跑完自查（**人工**跑一次，不是自动化判据——本文件在 CI 里按构造是空真的：CI 的库是
--- 从 `0000` + 清单现建的，那里面本来就没有违规行，DELETE/UPDATE 全是 no-op）：
---
---   SELECT status, is_public, count(*) FROM note GROUP BY 1,2 ORDER BY 1,2;
---     -- 期望：public/true 12、private/false 4、draft/false 4；**没有 published 那一行**
---   SELECT conname FROM pg_constraint WHERE conrelid='note'::regclass AND contype='c';
---     -- 期望：note_status_visibility_ck
---   INSERT INTO note (title, content, created_at, updated_at, is_public, status)
---     VALUES ('负控', 'x', NOW(), NOW(), true, 'private');  -- 期望：报错（约束拒绝）
+-- 迁移后检查状态分布和约束；存量数量以目标数据库为准。
+-- SELECT status, is_public, count(*) FROM note GROUP BY 1,2 ORDER BY 1,2;
+-- SELECT conname FROM pg_constraint WHERE conrelid='note'::regclass AND contype='c';

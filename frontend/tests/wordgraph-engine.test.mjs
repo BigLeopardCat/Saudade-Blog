@@ -298,8 +298,7 @@ console.log('== 大小写：索引原形(小写) vs 节点显示形（20260916 �
     const cam2 = engine.cameraFor(g, [{ w: 'jwt', s: 1 }, { w: 'c++', s: 1 }], CAM0);
     near(cam2.target[0], mixed[1].x, 1e-6, '混入未命中的词：仍定位到 JWT（不做平均拉偏）');
 
-    // 本地兜底路（locate.ts 的 keyOf 已改为 import wordKey）与向量路同判：
-    // 同一批小写查询词，两条路都必须命中显示形节点——这才是"两路一致"。
+    // 本地匹配与向量匹配共用 wordKey。
     const ws = locate.locateLocal('python', g).map((h) => h.w);
     truthy(ws.includes('Python'), "降级路也算命中 Python（两路同一 wordKey）", ws);
     const ws2 = locate.locateLocal('jwt token', g).map((h) => h.w);

@@ -67,16 +67,7 @@ const env0 = (body: any) => ({ status: 200, data: body });
 const wire = (d: any) => (d == null ? d : JSON.parse(JSON.stringify(d)));
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ⚠️ 桩必须**同时**是"可调用的函数"和"带方法的对象"——`axios.create()` 出来的实例
-// 本来就是这两者的合体，而这一页上的调用方两种写法都有：
-//   · 账号管理写的是 `http.get('/api/temp-users')`（方法形态）；
-//   · `apis/ProfileMethods.tsx`（个人中心那一族 + 额度管理页签）写的是
-//     `http({url, method})`（**直接调用**形态）。
-// 只做对象 ⇒ 后者是 TypeError，而组件里 `try{ await http(...) }catch{}` 会把它静静
-// 吃掉（只弹一条 message.error、桩里一条记录都没有），症状是"表格空着、零异常"——
-// 20260926 在"只做裸函数"那一侧踩过一次，20260929 额度管理页签在**另一侧**又踩了一次
-// （挂载超时现场：`.QuotaManage` 在、`.ant-table` 在、行 0、`__calls` 里只有
-// `/api/temp-users`）。两侧一起钉住，别只留一边。
+// axios 桩同时支持直接调用与 get/post 等方法，覆盖页面的两种请求形式。
 const req = async (cfg: any) => {
   const url = cfg.url as string;
   const method = (cfg.method || 'GET').toUpperCase();
@@ -101,10 +92,7 @@ const req = async (cfg: any) => {
     const u = ((window as any).__users as any[]).find((x) => x.id === id);
     const frozen = (cfg.data || {}).frozen === true;
     if (u) u.status = frozen ? 1 : 0;
-    // ⚠️ 人类可读的那句在 **data** 里、`message` 恒为字面量 'ok' —— 这是
-    // `utils::ApiResponse::success(data)` 的形状（message 写死 "ok"，见 src/utils.rs）。
-    // 桩要是把中文句放进 message，组件里 `message.success(res.data.message)` 那种
-    // 读错字段的写法就照样绿（用户 20260926 报的"只有一个 ok 的弹窗条"正是这么来的）。
+    // ApiResponse::success 将业务提示放在 data，message 固定为 ok。
     return env0({ code: 200, message: 'ok',
                   data: frozen ? '账号已冻结，其登录状态已全部失效' : '账号已解冻，请让对方重新登录' });
   }
@@ -174,10 +162,7 @@ const req = async (cfg: any) => {
       const u = ((window as any).__users as any[]).find((x) => x.id === row.userId);
       if (u) u.chatQuotaUsed = 0;
     }
-    // 两句**逐字抄** `src/routes/quota.rs::review_quota_request` 的 `ApiResponse::success`
-    // 那一行（人话在 `data` 里，`message` 恒为字面量 "ok"）。这里一度写着带
-    // 「额度已清零（N 轮）」的旧文案——那是 20260929 被用户否掉的说法（主人看到的是递减的
-    // 余额），而且与真后端不同 ⇒ 沙箱喊的就不是后端那句话。
+    // 成功响应与 review_quota_request 保持一致：提示正文在 data 中，message 为 ok。
     return env0({ code: 200, message: 'ok',
                   data: (approved ? '已批准账号「' : '已驳回账号「')
                         + row.username + '」的额度重置申请' });
@@ -211,13 +196,8 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Users from './src/pages/Dashboard/Users/index.tsx';
 
-// ── 令牌（20260926）────────────────────────────────────────────────────────
-// 这一页此前只有一枚假令牌 `'x.y.z'`（解析不出任何 claims）。现在页面上有**两个
-// 按钮的亮灭取决于"我是谁"**（同级管理员不可互冻、只有超管看得见变更身份），
-// 再用一枚解析不出的令牌，那两条判据就永远是"没亮"——断言写出来是绿的，
-// 却一条都没验到（新功能恒不出现的假绿）。所以改成真形状的 JWT：
-// 三段、payload 是 base64url 的 `{sub, role}`，`getRoleFromToken` 认得它。
-// 想要"解析不出的令牌"那条路径时用 `__setToken(null)`（仍回旧那枚 'x.y.z'）。
+// JWT 桩提供可解析的 sub 与 role，用于自身操作和同级管理员权限检查。
+// __setToken(null) 提供不可解析令牌的负控。
 const b64u = (o: any) => btoa(JSON.stringify(o))
   .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
 // uid 也要能指定：页面上"不能冻结自己"那条判据读的正是令牌的 `sub`
@@ -229,21 +209,8 @@ const b64u = (o: any) => btoa(JSON.stringify(o))
 };
 (window as any).__setToken('admin');   // 默认管理员视角；其它视角在第六节里切
 
-// 账号列表 20260926 起走共享 axios 客户端（桩在 FAKE_AXIOS 里，GET 回裸数组）。
-// 下面这个 fetch 桩是**残留的哨兵**：这一页现在一条 fetch 都不该发，桩留着只为
-// 「谁把某一处改回裸 fetch」时留下证据（见 zero_bare_fetch）。
-// 30 行 ⇒ 账号列表在 700 高的窗口里必然溢出，"只有列表滚"那条断言才不是空转。
-// status 与后端 `user.status` 同口径：0=正常 / 1=冻结（取值域见 src/authz.rs）。
-// 预置两行冻结（guest27/guest28 = id 126/127）——两行**一个是普通用户**，
-// 于是"角色筛选不排除冻结账号"与"冻结筛选只按状态"这两条才验得出来。
-// 额度字段（20260929）与后端 `TempUserInfo` 的两个 camelCase 字段同名（`chatQuotaUsed`
-// / `chatQuotaLimit`）。三行刻意各不相同，因为它们是**三种不同的事实**，前端那三个
-// 分支各对应一个：
-//   · root_admin：`chatQuotaLimit === 0` ⇒ **不限额**（管理员档；0 是"不限"而不是
-//     "上限为零"）。「重置额度」按钮在这一行必须是**禁用的**（后端也拒）。
-//   · guest1（i=0）：137/500 —— 行上那枚 chip 与额度管理页那两列的判据都是它。
-//   · guest27（i=26）：**刻意不带这两个字段** —— 那是"前端已上线、后端还没到"的形状，
-//     行上要显示「额度 —」而不是 0/0（0/0 会被读成"这个人用完了"）。
+// 账号列表只使用共享 axios；fetch 哨兵记录任何绕过客户端的请求。
+// 30 行数据使列表溢出，验证滚动仅发生在列表内。
 const USERS = [
   { id: 1, username: 'root_admin', role: 'admin', status: 0,
     chatQuotaUsed: 0, chatQuotaLimit: 0 },
