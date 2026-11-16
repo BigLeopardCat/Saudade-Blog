@@ -8,7 +8,7 @@ import '../../../src/frontHome/Content/ContentHome/index.sass'
 const shapes: [string, string, number][] = [
     ['短标题', ' ', 0],
     ['图谱文档', '一段简短介绍', 3],
-    ['异步并发：进程、线程、协程、任务与事件循环', '正文简介。'.repeat(20), 6],
+    ['异步并发：进程、线程、协程、任务与事件循环', '正文简介。'.repeat(80), 6],
     ['设备接入指南', '另一段介绍', 0],
     ['博客智能助手架构文档', '架构与工具说明'.repeat(8), 10],
     ['版本管理', ' ', 2],
@@ -20,7 +20,7 @@ const categories: CategoriesType[] = [{categoryKey: 1, key: 1, categoryTitle: '�
 const stamp = new Date('2026-01-01T00:00:00Z')
 const pendingCover = location.hash === '#loading-cover'
 const authorAvatar = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="20" fill="pink"/></svg>')
-createRoot(document.getElementById('root')!).render(<div className="ContentContainer">
+createRoot(document.getElementById('root')!).render(<div className="frontRoot"><div className="ContentContainer">
     <div className="allArticles">{Array.from({length: pendingCover ? 1 : 12}, (_, index) => {
         const [noteTitle, description, n] = shapes[index % shapes.length]
         const item: NoteType = {key: String(index), noteKey: String(index), noteCategory: '1',
@@ -31,4 +31,4 @@ createRoot(document.getElementById('root')!).render(<div className="ContentConta
         return <Article key={item.key} item={item} index={index} Categories={categories}
             tagList={tags} avatar="" name="示例作者" enter={false}/>
     })}</div>
-</div>)
+</div></div>)

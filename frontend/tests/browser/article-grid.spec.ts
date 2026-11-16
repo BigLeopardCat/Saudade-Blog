@@ -56,3 +56,29 @@ test('removing card flex growth reproduces the old narrow-card defect', async ({
         return cards.every(card => tracks.some(track => Math.abs(card.width - track) <= 1))
     }).toBe(true)
 })
+
+test('summary expansion keeps card geometry and date rows stable and resets scrolling', async ({page, sandboxURL}) => {
+    await page.setViewportSize({width: 1440, height: 900})
+    await page.goto(sandboxURL)
+    const card = page.locator('.ArticleCard').nth(2)
+    const summary = card.locator('.ArticleDescription')
+    await card.scrollIntoViewIfNeeded()
+    const before = (await card.boundingBox())!
+    const footer = (await card.locator('.ArticleFooter').boundingBox())!
+    const collapsedHeight = await summary.evaluate(element => element.clientHeight)
+    await summary.hover()
+    await expect.poll(() => summary.evaluate(element => element.clientHeight)).toBeGreaterThan(collapsedHeight)
+    const lines = await summary.evaluate(element => ({height: element.clientHeight, lineHeight: parseFloat(getComputedStyle(element).lineHeight)}))
+    expect(lines.height % lines.lineHeight).toBe(0)
+    const expanded = (await card.boundingBox())!
+    expect(Math.abs(expanded.height - before.height)).toBeLessThanOrEqual(1)
+    expect(Math.abs((await card.locator('.ArticleFooter').boundingBox())!.y - footer.y)).toBeLessThanOrEqual(1)
+    await summary.evaluate(element => { element.scrollTop = 80 })
+    expect(await summary.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await card.locator('.ArticleCover').hover()
+    await expect.poll(() => summary.evaluate(element => element.scrollTop)).toBe(0)
+    await expect.poll(() => summary.evaluate(element => element.clientHeight)).toBe(collapsedHeight)
+    const updated = (await card.locator('.post-date').last().boundingBox())!
+    const after = (await card.boundingBox())!
+    expect(updated.y + updated.height).toBeLessThanOrEqual(after.y + after.height)
+})

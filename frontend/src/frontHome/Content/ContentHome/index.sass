@@ -176,7 +176,13 @@
       .descSlot
         height: 42px
         position: relative
+        flex-shrink: 0
       .ArticleDescription
+        position: absolute
+        top: 0
+        left: 0
+        width: 100%
+        max-height: 42px
         margin: 0
         color: var(--scene-muted)
         font-size: 13px
@@ -190,7 +196,6 @@
           -webkit-line-clamp: unset
           max-height: 126px
           overflow-y: auto
-          position: relative
           z-index: 3
           background: var(--scene-surface)
       .tags

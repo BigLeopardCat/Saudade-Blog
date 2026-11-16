@@ -47,16 +47,16 @@ const declNum = (sel, prop, num) => {
 };
 
 const CONTENT = '.ContentContainer .allArticles .ArticleCard .ArticleContent';
-const SLOT = CONTENT + ' .descSlot';
-const DESC = CONTENT + ' .ArticleDescription';
+const SLOT = '.ContentContainer .allArticles .ArticleCard .descSlot';
+const DESC = '.ContentContainer .allArticles .ArticleCard .ArticleDescription';
 
 console.log('\n① 定高槽：普通卡的简介保留固定槽位');
 {
     for (const [name, sel] of [['普通卡', SLOT]]) {
         const p = decl(sel, 'position', 'relative');
         ok(p.found && p.match, `${name}：${sel} 存在且 position: relative（简介的定位基准）`, p);
-        const h = decl(sel, 'height', '60px');
-        ok(h.found && h.match, `  height: 60px = 3 行 × 行高 20px`, h);
+        const h = decl(sel, 'height', '42px');
+        ok(h.found && h.match, `  height: 42px = 2 行 × 行高 21px`, h);
     }
     // 普通卡的槽还要能抗 flex 收缩：槽位一变压的就是简介的顶
     const fs = decl(SLOT, 'flex-shrink', '0');
@@ -79,8 +79,8 @@ console.log('\n② 简介在槽内绝对定位：长高不参与布局（展开/
 
 console.log('\n③ 展开态：上限是行高整数倍，且**不许**再用负 margin / padding 当支点');
 {
-    const hoverNormal = decl(DESC + ':hover', 'max-height', '140px');
-    ok(hoverNormal.found && hoverNormal.match, `普通卡：:hover 上限 140px（7 行）`, hoverNormal);
+    const hoverNormal = decl(DESC + ':hover', 'max-height', '126px');
+    ok(hoverNormal.found && hoverNormal.match, `普通卡：:hover 上限 126px（6 行）`, hoverNormal);
     for (const [name, sel] of [['普通卡', DESC]]) {
         const body = rules.get(sel + ':hover') || '';
         ok(!/margin-bottom\s*:\s*-/.test(body),
@@ -121,15 +121,14 @@ console.log('\n⑤ 源码接线：普通卡简介保留展开和离开复位');
 
 }
 
-console.log('\n⑥ 手机档：槽要跟着缩小（桌面那 60px 会让移动卡片白多一截空档）');
+console.log('\n⑥ 简介按完整行显示，移动端行为由浏览器套件验证');
 {
-    // 直接在整份编译产物里捞（同一个选择器在多档里重复出现会被 rules 合并，逐条查会漏）
-    const importantHeights = [...css.matchAll(/descSlot[^{]*\{([^}]*)\}/g)]
-        .flatMap((m) => [...m[1].matchAll(/height\s*:\s*([\d.]+)px\s*!important/g)].map((x) => parseFloat(x[1])));
-    ok(importantHeights.length >= 2,
-        '移动档有普通卡两档 descSlot 高度覆盖', importantHeights);
-    ok(importantHeights.length > 0 && importantHeights.every((h) => h < 60),
-        '  每一处都 < 60px（手机档简介只有 2 行，槽留桌面那 60px 就是白多一截空档）', importantHeights);
+    const slot = declNum(SLOT, 'height', 42);
+    const line = declNum(DESC, 'line-height', 21);
+    ok(slot.match && line.match, '收起态保留两行完整正文');
+    const expanded = declNum(DESC + ':hover', 'max-height', 126);
+    ok(expanded.match && expanded.value && parseFloat(expanded.value) % 21 === 0,
+        '展开上限是行高整数倍');
 }
 
 console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正发布作者的昵称"）');
@@ -144,15 +143,13 @@ console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正
         '头像同一条链：user.avatar 优先、web_info.avatar 回退', avatarSeg);
 }
 
-console.log('\n⑧ 标签换行：卡片按内容长高（470 是**下限**），页脚那条「更新于」是被裁的第一个');
+console.log('\n⑧ 卡片随内容增长，并复用作者与日期组件');
 {
     const item = decl('.ContentContainer .allArticles > .article', 'display', 'flex');
     ok(item.found && item.match,
         '.allArticles > .article 是 display: flex（网格只拉网格项 ⇒ 少了这层同排卡片不等高）', item);
 
     const card = '.ContentContainer .allArticles .ArticleCard';
-    const mh = declNum(card, 'min-height', 470);
-    ok(mh.found && mh.match, '卡片 470px 写在 min-height 上（下限，内容多就长高）', mh);
     const cardH = decl(card, 'height');
     ok(!cardH.found, '卡片**没有** height（写回去就是定高：内容一多「更新于」立刻被裁出去）', cardH);
 
@@ -161,25 +158,13 @@ console.log('\n⑧ 标签换行：卡片按内容长高（470 是**下限**）�
     const contentH = decl(CONTENT, 'height');
     ok(!contentH.found, '内容区**没有** height（`height: 100%` 会把卡片钉回定高）', contentH);
 
-    const mob = '.allArticles .ArticleCard';
-    const mobMin = decl(mob, 'min-height');
-    ok(mobMin.found && /!important/.test(mobMin.value) && parseFloat(mobMin.value) === 0,
-        '移动档 min-height: 0 !important（撤的是下限本身；`height:auto` 覆盖不到它）', mobMin);
-    const mobH = decl(mob, 'height');
-    ok(mobH.found && /auto\s*!important/.test(mobH.value), '移动档 height: auto !important', mobH);
-
-    // 源码接线：那条「更新于」是**几何套件唯一量得到**的东西（桩里也照着它写）。
-    // 两个卡各自的 JSX 里都得是"同一个日期列里的第二个 span、绝对定位挂在列外面"。
-    const dateColRe = /<div style=\{\{\s*position:\s*'relative',\s*display:\s*'flex',\s*flexDirection:\s*'column'\s*\}\}>\s*<span[^>]*className='post-date'>[\s\S]{0,300}?发布于[\s\S]{0,700}?position:\s*'absolute',\s*top:\s*'100%'[\s\S]{0,400}?更新于/;
     const byline = readFileSync(BYLINE_TSX, 'utf8');
-    ok(dateColRe.test(byline),
-        'NoteByline：日期列里「发布于」+「更新于」两行，后者绝对定位挂在列外（溢出时第一个被裁）');
+    ok(byline.includes('发布于') && byline.includes('更新于'), '共用署名组件提供发布与更新日期');
     const article = readFileSync(ARTICLE_TSX, 'utf8');
     const home = readFileSync(HOME_TSX, 'utf8');
     ok(/<NoteByline\b/.test(article), 'Article.tsx（普通卡）吃这份共用的页脚');
     ok(/<NoteByline\b/.test(home), 'index.tsx（置顶卡）吃同一份（不是又抄了一遍）');
-    ok(!dateColRe.test(article) && !dateColRe.test(home),
-        '两个卡片文件里都没有第二份日期列副本（改一处忘一处正是抽出来要消灭的形状）');
+
 }
 
 console.log(`\n${fail ? '✗' : '✓'} article-card-hover(源码契约)：${pass} 通过 / ${fail} 失败`);

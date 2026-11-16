@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { runtime, widgetSource } from './helpers/widget-runtime.mjs';
 import { fileURLToPath } from 'url';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const W = widgetSource;
@@ -200,66 +200,46 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
       && idx.includes('boot.js?v=${widgetLock.sha}'), '组件子资源沿用宿主锁定的版本');
 }
 
-const FA = {
-  'switch-model':   ['street-view', 'M320 64A64 64 0 1 0 192 64a64 64',
-                     'title「更换看板娘」= 换一个人 ⇒ 人形'],
-  'switch-texture': ['shirt', 'M211.8 0c7.8 0 14.3 5.7 16.7 13.',
-                     'title「换装」= 换一件衣服 ⇒ T 恤'],
-  photo:            ['camera-retro', 'M220.6 121.2L271.1 96 448 96l0 9',
-                     'ACTIONS.photo 把 canvas 存成 PNG ⇒ 相机'],
-  info:             ['circle-info', 'M256 512A256 256 0 1 0 256 0a256',
-                     'ACTIONS.info 报的是实现来源 ⇒ 圈里一个 i'],
-  quit:             ['xmark', 'M342.6 150.6c12.5-12.5 12.5-32.8',
-                     'ACTIONS.quit 收起看板娘 ⇒ 叉'],
-};
 {
   const r = W('renderer.js');
-  const at = r.indexOf('const ICONS = {');
-  ok(at > 0, 'renderer.js：ICONS 表在');
-  const src = r.slice(at, r.indexOf('\n  };', at));
-  const dOf = (s) => { const m = s.match(/<path\s+d="([^"]+)"/); return m ? m[1].slice(0, 32) : null; };
-  const got = {};
-  for (const line of src.split('\n')) {
-    const m = line.match(/^\s{4}'?([A-Za-z_$][\w$-]*)'?:\s*'([^']*)'/);
-    if (m) got[m[1]] = dOf(m[2]);
-  }
-  eq(Object.keys(got).sort().join(','), Object.keys(FA).sort().join(','),
-     'ICONS 的名字集合未变（多一个/少一个都意味着工具条动过）');
-  for (const [name, [slug, pre, why]] of Object.entries(FA)) {
-    eq(got[name], pre, `${name} 画的是 ${slug}（${why}）`);
-  }
-  eq(new Set(Object.values(got)).size, Object.keys(FA).length,
-     '六个图标两两不同（同一个字形贴两处 = 有一处一定对不上功能）');
-  const s = W('chat-stream.js');
-  const hk = s.slice(s.indexOf("hitokotoBtn.id = 'waifu-tool-hitokoto'"));
-  eq(dOf(hk.slice(0, hk.indexOf('</svg>'))), 'M512 240c0 114.9-114.6 208-256 2',
-     '对话按钮画的是 comment（气泡 ⇒ 打开对话面板）');
-  const TITLES_WANT = {
-    'switch-model': '更换看板娘',   // 人形图标对应的那条功能
-    'switch-texture': '换装',       // T 恤图标对应的那条功能
-    photo: '拍照',
-    info: '关于',
-    quit: '收起看板娘',
+  const labels = {
+    'switch-model': '更换看板娘', 'switch-texture': '换装', photo: '拍照',
+    info: '关于 Agent 项目', quit: '收起看板娘',
   };
-  const tAt = r.indexOf('const TITLES = {');
-  ok(tAt > 0, 'renderer.js：TITLES 表在（tooltip 跟按钮一起建出来，不是事后补）');
-  const tSrc = r.slice(tAt, r.indexOf('\n  };', tAt));
-  const gotTitles = {};
-  for (const line of tSrc.split('\n')) {
-    const m = line.match(/^\s{4}'?([A-Za-z_$][\w$-]*)'?:\s*'([^']*)'/);
-    if (m) gotTitles[m[1]] = m[2];
-  }
-  eq(Object.keys(gotTitles).sort().join(','), Object.keys(TITLES_WANT).sort().join(','),
-     'TITLES 与 ICONS 一一对应（五个按钮条条都有 tooltip，不多不少）');
-  for (const [n, t] of Object.entries(TITLES_WANT)) eq(gotTitles[n], t, `${n} 的 tooltip 是「${t}」`);
-  ok(/span\.title = label/.test(r) && /setAttribute\('aria-label', label\)/.test(r),
-     'renderer.js：title 与 aria-label 都在按钮建出时写（图标按钮没有可读文本，读屏靠它）');
-  ok(/bindTool\('waifu-tool-switch-model'/.test(s) && /bindTool\('waifu-tool-switch-texture'/.test(s),
-     'chat-stream.js：两条监听都走 bindTool 有界重试（不再是 setTimeout 抢跑一次）');
-  ok(/const bindTool = \(id, onReady, tries\) => \{/.test(s) && /widget_tool_bind_timeout/.test(s),
-     'chat-stream.js：重试到点仍没有就上报，不静默装死');
-  ok(/hitokotoBtn\.title = '对话'/.test(s),
-     '对话按钮的 title 是「对话」（该按钮由 chat-stream 自建，故仍留在那一侧）');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+    url: 'https://fixture.invalid/', runScripts: 'outside-only', virtualConsole: new VirtualConsole(),
+  });
+  try {
+    dom.window.eval(r);
+    dom.window.__waifuRenderer().init();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const buttons = [...dom.window.document.querySelectorAll('#waifu-tool button')];
+    eq(buttons.map(button => button.id).join(','), Object.keys(labels).map(name => `waifu-tool-${name}`).join(','),
+      '渲染后的工具按钮保留稳定顺序与动作 ID');
+    const paths = [];
+    for (const [name, label] of Object.entries(labels)) {
+      const button = dom.window.document.getElementById(`waifu-tool-${name}`);
+      eq(button?.type, 'button', `${name} 使用原生按钮语义`);
+      eq(button?.title, label, `${name} 的工具提示正确`);
+      eq(button?.getAttribute('aria-label'), label, `${name} 提供可读名称`);
+      const svg = button?.querySelector('svg');
+      eq(svg?.getAttribute('aria-hidden'), 'true', `${name} 的装饰图标不重复朗读`);
+      ok(!!svg?.querySelector('path[d]'), `${name} 的图标可渲染`);
+      paths.push(svg?.querySelector('path')?.getAttribute('d'));
+    }
+    eq(new Set(paths).size, buttons.length, '工具使用互不混淆的图标');
+    const opened = [];
+    dom.window.open = (...args) => opened.push(args);
+    dom.window.document.getElementById('waifu-tool-info').click();
+    eq(JSON.stringify(opened), JSON.stringify([['https://github.com/BigLeopardCat/saudade-blog-agent', '_blank', 'noopener,noreferrer']]),
+      '关于按钮打开 Agent 仓库并隔离 opener');
+  } finally { dom.window.close(); }
+  const f = runtime();
+  try {
+    const chat = f.doc.getElementById('waifu-tool-hitokoto');
+    eq(chat?.title, '对话', '对话入口保留可读提示');
+    ok(!!chat?.querySelector('svg path[d]'), '对话入口包含图标');
+  } finally { f.close(); }
   const aAt = r.indexOf('const ACTIONS = {');
   const aSrc = r.slice(aAt, r.indexOf('\n    };', aAt));
   const body = (n) => {

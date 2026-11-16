@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import path from 'path';
+import {compile} from 'sass';
 import { fileURLToPath } from 'url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ const ok = (cond, name, detail) => {
 
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 const tsx = strip(readFileSync(HOME_TSX, 'utf8'));
-const sass = strip(readFileSync(HOME_SASS, 'utf8'));
+const css = compile(HOME_SASS).css;
 
 /** 从源码里读一个 `const NAME = 数字;`。读不出一律 null —— 后面的断言会当场报出来，
  *  不会拿一个假的值继续算（"缺键绝不编 0"）。 */
@@ -63,15 +64,15 @@ if (expr === null || [FALLBACK, MAXP, DROWS, NCOLS, NROWS].some((v) => !v)) {
 }
 
 const pageSizeFor = buildPageSizeFor(expr);
-/** 手机档的列数 = `index.sass` 手机档写死的那个数（下面的前提断言会核对它还是 2）。 */
-const MOBILE_COLS = 2;
+/** 移动端使用单列卡片；分页量仍按实际列数折算。 */
+const MOBILE_COLS = 1;
 
 console.log('\n② 窄屏一次四行（用户第 5 条的主判据）');
 {
     ok(pageSizeFor(MOBILE_COLS) === MOBILE_COLS * NROWS,
-        `2 列的手机一页 ${MOBILE_COLS * NROWS} 张 = 四行（从前是 ${MOBILE_COLS * DROWS} 张两行）`,
+        `${MOBILE_COLS} 列的手机一页 ${MOBILE_COLS * NROWS} 张 = 四行（从前是 ${MOBILE_COLS * DROWS} 张两行）`,
         { got: pageSizeFor(MOBILE_COLS), want: MOBILE_COLS * NROWS });
-    ok(pageSizeFor(MOBILE_COLS) === 8, '就是用户看到的那个数：一次多加载 8 张', pageSizeFor(MOBILE_COLS));
+    ok(pageSizeFor(MOBILE_COLS) === 4, '单列移动端每批加载四张卡片', pageSizeFor(MOBILE_COLS));
     ok(NROWS === 4, '`NARROW_ROWS` = 4（改它是允许的，但上面两条会跟着报出新数）', NROWS);
     // 单列（比手机更窄的档，比如极窄视口退化成一列）：仍按"四行"算 ⇒ 4 张。
     // 这里不钉 4 这个数，钉的是"只跟行数有关、不跟列数乘第二遍"。
@@ -102,15 +103,11 @@ console.log('\n④ 边界：量不到列数走回退、超宽钳在上限');
         '上限至少是窄屏一页的两倍（否则"窄屏四行"在超宽列数下会被钳回两行）', MAXP);
 }
 
-console.log('\n⑤ 前提：手机档真的是 2 列（这条住在 index.sass，不在这页 TSX 里）');
+console.log('\n⑤ 移动端样式与分页列数一致');
 {
-    // 判据的前提搬到别人家里 —— 手机档哪天改成 3 列，"8 张 = 四行"就不成立了，
-    // 而 TSX 一个字都不用改。所以在这里就地看一眼。
-    const mobile = sass.match(/@media screen and \(max-width: 768px\)[\s\S]*?\.allArticles\s*\n\s*grid-template-columns:\s*repeat\((\d+),\s*1fr\)/);
-    ok(!!mobile, '在手机档（≤768px）里找到了 `.allArticles` 的列数声明', mobile && mobile[0].slice(-60));
-    ok(mobile && Number(mobile[1]) === MOBILE_COLS,
-        `手机档就是 ${MOBILE_COLS} 列 ⇒「一页 8 张」读作四行这句话才成立`,
-        mobile && mobile[1]);
+    const mobile = css.match(/@media \(max-width: 768px\)[\s\S]*?\.ContentContainer \.allArticles \{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    ok(!!mobile, '移动端使用单列网格');
+    ok(MOBILE_COLS === 1 && pageSizeFor(MOBILE_COLS) === NROWS, '单列移动端每批四行');
 }
 
 console.log('\n⑥ 接线：首屏与自动加载 用同一个折算，没有第二处"每页几张"');
