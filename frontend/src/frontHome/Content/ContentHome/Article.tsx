@@ -1,3 +1,4 @@
+import '../../../scene.css'
 import SweepLoading from '../../../components/SweepLoading'
 import AssetImage from "../../../components/AssetImage";
 import NoteByline from "../../../components/NoteByline";
@@ -103,7 +104,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                         </h4>
                         <NoteStats item={item} />
                     </div>
-                    <h3 className='ArticleTitle'>{item.noteTitle}</h3>
+                    <h3 className='ArticleTitle'><a href={`/article/${item.key}`} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>{item.noteTitle}</a></h3>
                     <div className="descSlot">
                         <p className="ArticleDescription" onMouseLeave={resetDescScroll}>{item.description}</p>
                     </div>

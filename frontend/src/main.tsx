@@ -1,3 +1,5 @@
+import {applyScene, readScene} from './sceneTheme';
+import {readDarkMode} from './theme';
 import {startAuthExpiry} from './utils/authSession';
 import ReactDOM from 'react-dom/client'
 import './index.css'
@@ -9,6 +11,9 @@ import store from "./store";
 import {HelmetProvider} from "react-helmet-async";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { recoverFromStaleChunk } from "./utils/staleChunk";
+
+applyScene(readScene());
+document.documentElement.dataset.sceneDark = String(readDarkMode());
 
 window.addEventListener('vite:preloadError', (e) => {
     if (recoverFromStaleChunk()) e.preventDefault()

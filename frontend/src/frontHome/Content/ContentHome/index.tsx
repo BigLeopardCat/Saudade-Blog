@@ -3,7 +3,8 @@ import SeoHelmet from "../../../components/SeoHelmet";
 import {SITE_TITLE, SITE_DESCRIPTION} from "../../../utils/siteUrl";
 import './index.sass'
 // Section styles override the home defaults.
-import './sections.sass'
+import '../../../scene.css'
+import SceneIcon from '../../../components/SceneIcon'
 import './featured.sass'
 import FeaturedArticles from './FeaturedArticles'
 import SocialButton from "../../../components/Buttons/SocialButton";
@@ -12,7 +13,6 @@ import {hasArticleInvalidation} from "../../../components/UserCenter/agentTurn.t
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
-import { motion } from 'framer-motion';
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
@@ -125,16 +125,19 @@ const ContentHome = () => {
         if (!hero) return;
         const video = hero.querySelector('video');
         if (!video) return;
-        video.playbackRate = 2.25;
-        const observer = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting) {
-                video.play().catch(() => {});
-            } else {
-                video.pause();
-            }
-        }, { threshold: 0.05 });
+        video.playbackRate = 1;
+        let visible = false;
+        const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const update = () => {
+            if (visible && !document.hidden && !reduced.matches) video.play().catch(() => {});
+            else video.pause();
+        };
+        const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; update(); }, {threshold: 0.05});
         observer.observe(hero);
-        return () => observer.disconnect();
+        document.addEventListener('visibilitychange', update);
+        reduced.addEventListener('change', update);
+        update();
+        return () => { observer.disconnect(); video.pause(); document.removeEventListener('visibilitychange', update); reduced.removeEventListener('change', update); };
     }, []);
 
     const fetchFirst = (ps: number, opts?: { silent?: boolean }) => {
@@ -198,10 +201,7 @@ const ContentHome = () => {
         return Promise.all([refreshTop, invalidate ? feed.refresh() : feed.first(pageSizeRef.current, true)]).then(() => {});
     }, { poll: false, agentEvent: hasArticleInvalidation });
     const handleScrollDown = () => {
-        window.scrollTo({
-            top: window.innerHeight,
-            behavior: 'smooth'
-        });
+        document.getElementById('home-articles')?.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
     }
     useEffect(() => {
         if (!feedState.loaded || feedState.pending || feedState.error || !hasMoreArticles) return;
@@ -216,30 +216,14 @@ const ContentHome = () => {
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
+        <section className="homeFirstScreen" aria-label="首页与置顶文章">
         <div className="SelfDescription" ref={heroRef}>
-            <div className="collageBg" aria-hidden="true">
-                <span className="blob blobA"/>
-                <span className="blob blobB"/>
-                <span className="blob blobC"/>
-            </div>
-            <div className="petals" aria-hidden="true">
-                {[0, 1, 2, 3, 4, 5, 6].map((i) => <span key={i} className={`petal p${i + 1}`}/>)}
-            </div>
-
             <div className="SayWords">
                 <div className="heroTag">
                     <span className="heroTagStar">✦</span>
                     <span>{author} の 记录室</span>
                 </div>
                 <h1 className="home-title-h3">Sereno da Saudade</h1>
-                <div className="heroTerminal" aria-hidden="true">
-                    <span className="termUser">saudade@blog</span>
-                    <span className="termSep">:</span>
-                    <span className="termPath">~</span>
-                    <span className="termSep">$</span>
-                    <span className="termCmd">cat ./about.md</span>
-                    <span className="termCaret"/>
-                </div>
                 <div className="Social">
                     {social?.socialQQ && <SocialButton SocialName='QQ' copyText={social.socialQQ}/>}
                     {social?.socialGithub && <SocialButton SocialName='Github' url={social.socialGithub}/>}
@@ -256,34 +240,25 @@ const ContentHome = () => {
                         poster={heroPoster}
                         muted
                         loop
-                        autoPlay
                         playsInline
-                        preload="auto"
+                        preload="metadata"
                         disablePictureInPicture
                         aria-hidden="true"
                     />
-                    <span className="heroPanelTape tapeL"/>
-                    <span className="heroPanelTape tapeR"/>
                 </figure>
 
             </div>
-            <motion.div
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 1 }}
-                className="heroBottom"
-            >
-                <p className="home-one-say">{oneSay}</p>
-                <i className="iconfont icon-rcd-angle-double-down upAndDown heroScroll"
-                   onClick={handleScrollDown}/>
-            </motion.div>
         </div>
-        <div className="ContentContainer dark-pic">
-            {topError && <div role="status" className="homeLoadError">
-                置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button>
-            </div>}
-            {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories}
-                avatar={avatar} name={name} tags={tagList}/>}
+        <div className="homePinned">
+            {topError && <div role="status" className="homeLoadError">置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button></div>}
+            {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
+        </div>
+        <div className="heroBottom">
+            <p className="home-one-say">{oneSay}</p>
+            <button className="heroScroll sceneTool" type="button" aria-label="浏览全部文章" onClick={handleScrollDown}><SceneIcon name="down"/></button>
+        </div>
+        </section>
+        <div className="ContentContainer dark-pic" id="home-articles">
             <div className="homeSectionHeading">
                 <div className="allContent"><i className="iconfont icon-wenzhang2" aria-hidden="true"/>文章</div>
             </div>

@@ -132,3 +132,8 @@ chrono、jsonwebtoken、argon2、reqwest 等）绝大多数是 MIT 或 Apache-2.
   分发给第三方时，代码随 GPL-2.0、美术随 CC BY-NC-SA 4.0，边界按"文件是代码还是美术"划。
 
 同理，Live2D Cubism Core 与 GSAP 各有自己的条款，都不并入本仓库的 GPL-2.0 声明。
+
+## 场景主题背景
+
+`frontend/src/assets/scenes/` 的河岸、车站、画室及雨后街景背景与缩略图由本项目使用 AI 生图工具生成，
+不包含导航、文字或角色；页面图标由项目内 SVG 路径绘制。现有视频与看板娘资源仍适用各自的许可声明。

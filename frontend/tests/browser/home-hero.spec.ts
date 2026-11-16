@@ -38,7 +38,7 @@ for (const width of [375, 1440]) {
     await expect(page.locator('.heroPanel')).toBeVisible()
   })
 
-  test(`homepage keeps the original pinned design at a smaller size and preserves cover crops at ${width}px`, async ({page, sandboxURL}) => {
+  test(`homepage shows compact pinned cards before the scrolling article feed at ${width}px`, async ({page, sandboxURL}) => {
     await page.setViewportSize({width, height: 900})
     await page.emulateMedia({reducedMotion: 'reduce'})
     await images(page)
@@ -53,32 +53,21 @@ for (const width of [375, 1440]) {
     await featured.scrollIntoViewIfNeeded()
     await expect(featured).toBeVisible()
     await expect(page.getByRole('button', {name: 'More', exact: true})).toHaveCount(0)
-    for (const [container, ratio] of [[page.locator('.ArticleCover').first(), 16 / 9], [page.locator('.featuredCover'), 1]] as const) {
-      const box = await container.boundingBox()
-      expect(box!.width / box!.height).toBeCloseTo(ratio, 2)
-    }
     const title = (await page.locator('.featuredContent h2').boundingBox())!
     const content = (await page.locator('.featuredContent').boundingBox())!
     const card = (await page.locator('.featuredCard').boundingBox())!
-    const grid = (await page.locator('.allArticles:not(.allArticlesMeasure)').boundingBox())!
+    const cover = (await page.locator('.featuredCover').boundingBox())!
+    const firstScreen = (await page.locator('.homeFirstScreen').boundingBox())!
+    const feed = (await page.locator('#home-articles').boundingBox())!
     expect(title.x).toBeGreaterThanOrEqual(content.x)
     expect(title.x + title.width).toBeLessThanOrEqual(content.x + content.width + 1)
-    expect(Math.abs(card.x + card.width / 2 - grid.x - grid.width / 2)).toBeLessThanOrEqual(1)
-    expect(card.width).toBeLessThan(grid.width)
-    expect(card.width).toBeLessThanOrEqual(width < 769 ? 420 : 1000)
-    expect(card.height).toBeLessThanOrEqual(width < 769 ? 700 : 640)
-    const cover = (await page.locator('.featuredCover').boundingBox())!
-    if (width < 769) {
-      expect(content.y).toBeGreaterThanOrEqual(cover.y + cover.height - 1)
-      expect(card.width).toBeCloseTo(width * .9, 0)
-    } else {
-      expect(cover.width / card.width).toBeCloseTo(.6, 2)
-      expect(content.x).toBeGreaterThanOrEqual(cover.x + cover.width - 1)
-    }
-    const updated = (await featured.locator('.post-date').last().boundingBox())!
-    expect(updated.y + updated.height).toBeLessThanOrEqual(card.y + card.height + 1)
+    expect(content.x).toBeGreaterThanOrEqual(cover.x + cover.width - 1)
+    expect(card.y + card.height).toBeLessThanOrEqual(firstScreen.y + firstScreen.height)
+    expect(card.y + card.height).toBeLessThanOrEqual(900)
+    expect(feed.y).toBeGreaterThanOrEqual(900)
+    expect(card.height).toBeLessThan(360)
+    expect(await page.locator('.featuredCover img').evaluate(el => getComputedStyle(el).objectFit)).toBe('cover')
     await expect(featured.locator('.featuredTape')).toHaveText('置顶')
-    expect(await page.locator('.featuredCover').evaluate(el => getComputedStyle(el, '::after').backgroundImage)).not.toBe('none')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     await expect(featured.locator('h2 a')).toHaveAttribute('href', '/article/1')
     await page.getByRole('button', {name: '查看置顶文章 2'}).click()

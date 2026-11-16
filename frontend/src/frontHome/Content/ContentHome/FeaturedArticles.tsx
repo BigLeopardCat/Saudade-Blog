@@ -1,3 +1,4 @@
+import SceneIcon from '../../../components/SceneIcon'
 import {useEffect, useRef, useState} from 'react'
 import {Link, useNavigate} from 'react-router-dom'
 import type {NoteType} from '../../../interface/NoteType'
@@ -48,7 +49,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
         onFocusCapture={() => setFocused(true)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}>
-        <div className="featuredLabel"><span className="featuredTape"><i className="iconfont icon-sticky1" aria-hidden="true"/>置顶</span></div>
+        <div className="featuredLabel"><span className="featuredTape"><SceneIcon name="pin" size={15}/>置顶</span></div>
         <article className="featuredCard" onClick={event => {
             if (!(event.target as Element).closest('a,button')) navigate(`/article/${item.key}`)
         }}>

@@ -108,223 +108,81 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
   transform: translateX(0)
 
+// The sticky header has zero layout height; its floating navigation overlays the page.
 .headContainer
-  z-index: -1
+  z-index: 1
   position: absolute
-  width: 98%
-  height: 60px
   display: flex
-  flex-direction: row
-  justify-content: space-between
   align-items: center
-  border-radius: 20px
-  margin: 1% 1% 1% 1%
-  font-size: 18px
-  font-weight: 600
-  transition: 0.6s
-  // Transparent until hovered or scrolled; text colors follow the theme.
-  background: transparent
-  &.over-dark
-    background: rgba(0, 0, 0, 0.30)
-  // 悬停时使用深色背景。
-  &:hover
-    background: rgba(0, 0, 0, 0.66)
-  // 吸顶时展开到页宽并与页顶对齐。
-  &.is-stuck
-    width: 100%
-    margin: 0
-    border-radius: 0
-    background: rgba(0, 0, 0, 0.66)
-    box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16))
-  &:hover, &.is-stuck, &.over-dark
-    .webTitle, .headBar li
-      color: #f3e8f6
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35)
-  // 窄屏（≤1200px）那一档显示的是汉堡钮 + 标题，不吃上面的 `.headBar li`：
-  // 汉堡钮的颜色来自 `--phoneBar-font-color`（白天 `#717171`），压在深色横幅上
-  // 同样读不出，一并换浅。
-  &.over-dark .phoneBar
-    color: #f3e8f6
-  @media only screen and (max-width: 1200px)
-    border-radius: 0
-    border-radius: 10px
-    background: transparent
-    justify-content: space-between
-    &:hover
-      background: transparent
-  @media only screen and (max-width: 1200px)
-    display: block
-  .phoneBar
-    color: var(--phoneBar-font-color)
-    display: none
-    @media only screen and (max-width: 1200px)
-      height: 100%
-      display: flex
-      flex-direction: row
-      justify-content: center
-      align-items: center
-      position: absolute
+  justify-content: space-between
   .webTitle
     cursor: pointer
-    margin-left: 20px
-    margin-right: 30px
-    // 透明态的字色（原为 `white`：只在悬停/滚动的黑底上成立，首屏未滚动时压
-    // 淡彩纸 = 看不见）。`--washi-ink` 白天是深墨紫、夜间自动切浅色 ⇒ 两档都读得清；
-    // 一旦落深底，由上面的 `&:hover, &.is-stuck` 组统一改回浅色。
-    color: var(--washi-ink, #4a3550)
-    @media only screen and (max-width: 1200px)
-      margin-right: 10px
-      height: 100%
+  .phoneBar
+    display: none
+  .headBar
+    ul
+      list-style: none
+      margin: 0
       display: flex
       align-items: center
-      float: right
-
-    .firstTitle
-      // 原为 `#ace0f9` 浅蓝 chip 托白字（同样是悬停黑底才成立的一组）
-      background: var(--washi-tape, rgba(255, 222, 238, 0.86))
-      color: var(--washi-pink-deep, #d94f9a)
-      border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-      padding: 2px 6px
-      border-radius: 10px
-      margin-right: 5px
-
-  .headBar
-    width: 100%
-    margin-right: 0
-    height: 100%
-    @media only screen and (max-width: 1200px)
-      display: none
+    li
+      display: flex
+      align-items: center
+      padding: 8px
+      border-radius: 9px
+      cursor: pointer
+      &:hover
+        background: color-mix(in srgb, var(--scene-accent) 10%, transparent)
     .Category
       position: relative
-      &:hover
+      &:hover, &:focus-within
         .CategoryList
-          display: flex
+          display: block
     .CategoryList
-      width: 100%
-      left: 0
-      top: 15px
-      padding-top: 15px
-      background: transparent
-      border-radius: 5px
-      position: absolute
       display: none
-      z-index: 1000
-      animation: cardIn 0.5s forwards
+      position: absolute
+      top: 100%
+      left: -20px
+      padding-top: 10px
+      z-index: 10
       ul
-        background: rgba(0, 0, 0, 0.66)
         display: flex
         flex-direction: column
-        width: 100%
-        height: auto
-        gap: 5px
-        padding: 10px
-        border-radius: 5px
-        position: relative
-        align-items: center
-      
-      // Fixing the triangle/icon
-      .icon-Rrl_s_045
-        display: none !important
-        position: absolute
-        left: 50%
-        top: -18px
-        transform: translateX(-50%)
-        color: rgba(0, 0, 0, 0.66) !important
-        font-size: 30px !important
-        z-index: 1001
-        text-align: center
-
+        align-items: stretch
       li
-        text-align: center
-        font-size: 15px
-        width: 100%
-        justify-content: center
-        i
-            margin-right: 8px
-
-    ul
-      width: 100%
-      height: 100%
-      list-style: none
-      display: flex
-      flex-direction: row
-      justify-content: space-evenly
-      align-items: center
-      gap: 40px
-
-    li
-      // 透明态的字色（原为 `#eeeeee`：白字只在悬停黑底上读得清，压在淡彩首屏上
-      // 约 1.2:1）。深底态由上面 `&:hover, &.is-stuck` 那组改回浅色。
-      color: var(--washi-ink, #4a3550)
-      display: flex
-      justify-content: center
-      align-items: center
-      height: 30px
-      width: 100%
-      padding: 10px
-      border-radius: 8px
-      cursor: pointer
-
-      i
-        margin-right: 5px
-
-      // 悬停使用和纸胶带背景。
-      &:hover
-        background: var(--washi-tape, rgba(255, 222, 238, 0.86))
-        color: var(--washi-pink-deep, #d94f9a)
-
+        justify-content: flex-start
   .homeRight
     display: flex
-    justify-content: center
     align-items: center
-    @media only screen and (max-width: 1200px)
-      display: none
-    .homeLogo
-      margin-left: 20px
-      margin-right: 20px
-      // Fixed ring geometry prevents inline baseline space from shifting the avatar.
-      width: 46px
-      height: 46px
-      flex: 0 0 46px
-      padding: 0
-      display: flex
-      justify-content: center
-      align-items: center
-      border: 3px solid rgba(255,255,255,0.66)
-      border-radius: 50%
-      cursor: pointer
-      position: relative
-      transition: 0.3s
-      @media only screen and (max-width: 1200px)
-        display: none
-
-      &.BigAvatar
-        transform: scale(2) translateY(15px) translateX(-10px)
-
+    flex-shrink: 0
+  .homeLogo
+    width: 46px
+    height: 46px
+    flex: 0 0 46px
+    display: flex
+    align-items: center
+    justify-content: center
+    border: 3px solid transparent
+    border-radius: 50%
+    position: relative
+    cursor: pointer
+    transition: transform .2s
+    &.BigAvatar
+      transform: scale(2) translateY(15px) translateX(-10px)
   .loginCard
     position: absolute
-    // Center against the avatar ring instead of transform-specific pixel offsets.
     left: 50%
-    right: auto
     top: calc(100% + 5px)
     transform: translateX(-50%)
-    z-index: 100
+    z-index: 10
     display: flex
     flex-direction: column
-    gap: 0
-    padding: 0
-    background: transparent
-    transition: 0.6s
-    animation: cardIn 0.6s
-    animation-fill-mode: forwards
-    justify-content: center
     align-items: center
-
-    
+    background: transparent
 
 .ant-modal-mask.search-mask
   background: rgba(0, 0, 0, 0.62)
-  backdrop-filter: blur(10px)
+
 
 .searchModal
   display: flex

@@ -15,7 +15,7 @@ import AnnouncementModal from "./components/AnnouncementModal";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 function App() {
-    const [isDark, setDark] = useState(false);
+    const [isDark, setDark] = useState(readDarkMode);
     const [scrollHeight, setScrollHeight] = useState(0);
     useEffect(() => {
         setDark(readDarkMode());

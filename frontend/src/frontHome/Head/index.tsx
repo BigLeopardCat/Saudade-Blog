@@ -3,8 +3,9 @@ import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
-import Switch from "../../components/Switch";
-import SearchButton2 from "../../components/Buttons/SearchButton2";
+import ScenePicker from "../../components/ScenePicker";
+import SceneIcon from "../../components/SceneIcon";
+
 import TopMao from "../../components/TopMao";
 import {fetchCategories} from "../../store/components/categories.tsx";
 import {useDispatch, useSelector} from "react-redux";
@@ -21,22 +22,6 @@ import { useUnread } from "../../components/UserCenter/unread";
 import { useViewerAvatar } from "../../components/UserCenter/identity";
 import getToken from "../../apis/getToken.tsx";
 import { isAdminToken } from "../../utils/auth.ts";
-
-/* 留言板（河灯）导航图标：古风信箱 */
-const GuestbookIcon = (
-    <svg className="hb-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden focusable="false">
-        <path d="M608.256 681.984l-61.44 24.576-8.192-65.536z" fill="#FFCC7C"/>
-        <path d="M987.136 202.752l-22.528-14.336 14.336-24.576c6.144-10.24 2.048-22.528-8.192-28.672 8.192-12.288 12.288-26.624 12.288-40.96 0-28.672-14.336-55.296-40.96-71.68-18.432-10.24-40.96-14.336-61.44-8.192-20.48 6.144-38.912 18.432-49.152 38.912-4.096-2.048-10.24-4.096-16.384-2.048-4.096 2.048-10.24 4.096-12.288 10.24l-131.072 225.28H40.96c-10.24 0-20.48 10.24-20.48 20.48v534.528c0 12.288 10.24 20.48 20.48 20.48h268.288V962.56c0 8.192 4.096 14.336 10.24 18.432 4.096 2.048 6.144 2.048 10.24 2.048s8.192-2.048 12.288-4.096l174.08-116.736H819.2c10.24 0 20.48-8.192 20.48-20.48V403.456l104.448-180.224 22.528 12.288s2.048 2.048 0 6.144c0 8.192-6.144 28.672-49.152 63.488-38.912 30.72-57.344 57.344-57.344 81.92 0 14.336 4.096 26.624 16.384 36.864 4.096 4.096 8.192 6.144 14.336 6.144 6.144 0 10.24-2.048 14.336-6.144 8.192-8.192 8.192-20.48 0-28.672-4.096-2.048-4.096-4.096-4.096-4.096 0-4.096 4.096-20.48 43.008-51.2 57.344-45.056 65.536-79.872 65.536-102.4-2.048-14.336-10.24-28.672-22.528-34.816z" fill="#1C2754"/>
-        <path d="M798.72 475.136v346.112H501.76l-4.096 4.096-145.408 100.352v-81.92c0-12.288-10.24-20.48-20.48-20.48H61.44V327.68h585.728l-153.6 266.24c-2.048 2.048-2.048 6.144-2.048 10.24v4.096l12.288 88.064H163.84c-10.24 0-20.48 10.24-20.48 20.48s10.24 20.48 20.48 20.48h346.112c0 6.144 4.096 12.288 10.24 14.336 4.096 2.048 6.144 2.048 10.24 2.048 2.048 0 4.096 0 8.192-2.048l120.832-49.152h2.048c2.048 0 2.048-2.048 4.096-2.048h2.048l2.048-2.048c2.048-2.048 2.048-2.048 2.048-4.096L798.72 475.136z" fill="#FFCC7C"/>
-        <path d="M897.67936 139.89888l-84.992 147.21024-23.552 40.79616-178.176 308.61312-70.94272-40.96 154.624-267.81696 23.552-40.79616 108.544-188.0064z" fill="#B2C8FF"/>
-        <path d="M933.15072 160.37888l-93.184 161.3824-40.96 70.9632-152.576 264.27392-35.47136-20.48 178.176-308.61312 23.552-40.79616 84.992-147.21024z" fill="#B2C8FF"/>
-        <path d="M935.89504 114.66752l-70.94272-40.96c5.12-8.86784 13.78304-15.68768 24.9856-18.67776 2.78528-0.75776 7.3728-0.49152 10.15808-1.2288 7.3728-0.47104 13.7216 0.8192 20.80768 4.9152 19.49696 11.264 26.25536 36.4544 14.99136 55.95136z" fill="#789EFF"/>
-        <path d="M606.43328 681.20576l-59.2896 24.8832-8.11008-63.7952z" fill="#C1CDEB"/>
-        <path d="M490.94656 602.70592s-1.024 1.76128 0.75776 2.78528l0.73728 2.80576-1.49504-5.59104z" fill="#1C2754"/>
-        <path d="M163.84 450.56h225.28c12.288 0 20.48 8.192 20.48 20.48s-8.192 20.48-20.48 20.48H163.84c-12.288 0-20.48-8.192-20.48-20.48s8.192-20.48 20.48-20.48z" fill="#1C2754"/>
-        <path d="M163.84 573.44h225.28c12.288 0 20.48 8.192 20.48 20.48s-8.192 20.48-20.48 20.48H163.84c-12.288 0-20.48-8.192-20.48-20.48s8.192-20.48 20.48-20.48z" fill="#1C2754"/>
-    </svg>
-);
 
 interface HeadProps {
     setDark: (value: (((prevState: boolean) => boolean) | boolean)) => void,
@@ -56,6 +41,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const navigate = useNavigate();
     const overDarkBanner = useLocation().pathname.startsWith('/article/');
     const [animation,setAnimation] = useState('');
+    useEffect(() => {
+        if (!animation) return;
+        const timer = setTimeout(() => setAnimation(''), 1100);
+        return () => clearTimeout(timer);
+    }, [animation]);
     const categoryList = useSelector((state: any) => state.categories.categories)
     const viewerAvatar = useViewerAvatar()
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
@@ -207,6 +197,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
             <div id="public-navigation-drawer" aria-hidden={!phoneBarShow} className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
+                    {phoneBarShow && <button type="button" className="sceneTool drawerClose" aria-label="关闭导航菜单" onClick={closePhoneBar}><SceneIcon name="close"/></button>}
                     <div className="barLogo" onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={100} />, 100)}
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
@@ -223,28 +214,23 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     <input className="mSearchInput" type="search" placeholder="搜索..." onClick={() => { closePhoneBar(); showModal(); }} readOnly />
                     <div className="barContent">
                         <ul className='oneBar'>
-                            <li onClick={() => { closePhoneBar(); navigate('/'); }}><i className="iconfont icon-shouye4"
-                                                                style={{fontSize: 30}}></i>首页
+                            <li onClick={() => { closePhoneBar(); navigate('/'); }}><SceneIcon name="home"/>首页
                             </li>
-                            <li onClick={() => { closePhoneBar(); navigate('times'); }}><i className="iconfont icon-guidang3"
-                                                                     style={{fontSize: 25}}></i>归档
+                            <li onClick={() => { closePhoneBar(); navigate('times'); }}><SceneIcon name="archive"/>归档
                             </li>
                             <li onClick={() => setShowMobileCategory(!showMobileCategory)}>
-                                <div style={{height: 30}}><i className="iconfont icon-fenlei"
-                                         style={{fontSize: 30}}></i>分类</div>
+                                <div style={{height: 30}}><SceneIcon name="category"/>分类</div>
                             </li>
                             {showMobileCategory && <ul className='twoBar'>
                                 {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                     <li key={item.categoryKey} onClick={() => { closePhoneBar(); navigate(`category/${item.pathName}`); }} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
                                 ))}
                             </ul>}
-                            <li onClick={() => { closePhoneBar(); navigate('talk'); }}><i className="iconfont icon-riji"
-                                                                    style={{fontSize: 30}}></i>说说
+                            <li onClick={() => { closePhoneBar(); navigate('talk'); }}><SceneIcon name="message"/>说说
                             </li>
-                            <li onClick={() => { closePhoneBar(); navigate('guestbook'); }}>{GuestbookIcon}留言板
+                            <li onClick={() => { closePhoneBar(); navigate('guestbook'); }}><SceneIcon name="book"/>留言板
                             </li>
-                            <li onClick={() => { closePhoneBar(); navigate('about'); }}><i className="iconfont icon-leaf-01"
-                                                                     style={{fontSize: 30}}></i>关于我
+                            <li onClick={() => { closePhoneBar(); navigate('about'); }}><SceneIcon name="leaf"/>关于我
                             </li>
                         </ul>
                     </div>
@@ -252,31 +238,18 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             </div>
             <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
-                    {phoneBarShow ? <button type="button" aria-label="关闭导航菜单" aria-expanded="true" aria-controls="public-navigation-drawer" className="iconfont icon-guanbi2" style={{
-                            background: 'transparent', border: 0, padding: 0, minWidth: 36, minHeight: 44,
-                            fontSize: 35,
-                            marginLeft: 260,
-                            cursor: 'pointer',
-                            transition: '0.5s',
-                            color: 'rgba(255,0,0,0.7)'
-                        }} onClick={() => setPhoneBarShow(false)} /> :
-                        <button type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="public-navigation-drawer" className="iconfont icon-bars"
-                           style={{background: 'transparent', border: 0, padding: 0, minWidth: 36, minHeight: 44, fontSize: 35, marginLeft: 10, cursor: 'pointer', transition: '0.5s'}}
-                           onClick={() => setPhoneBarShow(true)} />}
+                    <button type="button" aria-label="打开导航菜单" aria-expanded={phoneBarShow} aria-controls="public-navigation-drawer" className="sceneTool" onClick={() => setPhoneBarShow(value => !value)}><SceneIcon name={phoneBarShow ? 'close' : 'menu'}/></button>
                 </div>
                 <div className="webTitle" onClick={()=>navigate('/')}>
                     <h2><span className="firstTitle">{blogTitle}</span>Blog</h2>
                 </div>
                 <div className="headBar">
                     <ul>
-                        <li onClick={() => navigate('/')}><i className="iconfont icon-shouye4"
-                                                             style={{fontSize: 30}}></i>首页
+                        <li onClick={() => navigate('/')}><SceneIcon name="home"/>首页
                         </li>
-                        <li onClick={() => navigate('times')}><i className="iconfont icon-guidang3"
-                                                                 style={{fontSize: 25}}></i>归档
+                        <li onClick={() => navigate('times')}><SceneIcon name="archive"/>归档
                         </li>
-                        <li style={{position: 'relative'}} className='Category'><i
-                            className="iconfont icon-fenlei" style={{fontSize: 30}}></i>分类
+                        <li style={{position: 'relative'}} className='Category'><SceneIcon name="category"/>分类
                             <div className='CategoryList'>
                                 <i className="iconfont icon-Rrl_s_045" style={{
                                     fontSize: 40,
@@ -292,15 +265,16 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                 </ul>
                             </div>
                         </li>
-                        <li onClick={()=>navigate('talk')}><i className="iconfont icon-liaotian1" style={{fontSize: 30}}></i>说说</li>
-                        <li onClick={()=>navigate('guestbook')}>{GuestbookIcon}留言板</li>
-                        <li onClick={()=>navigate('about')}><i className="iconfont icon-leaf-01" style={{fontSize: 30}}></i>关于我</li>
+                        <li onClick={()=>navigate('talk')}><SceneIcon name="message"/>说说</li>
+                        <li onClick={()=>navigate('guestbook')}><SceneIcon name="book"/>留言板</li>
+                        <li onClick={()=>navigate('about')}><SceneIcon name="leaf"/>关于我</li>
                     </ul>
                 </div>
 
                 <div className="homeRight">
-                    <div onClick={showModal}><SearchButton2 /></div>
-                    <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
+                    <button type="button" className="sceneTool" aria-label="搜索" title="搜索" onClick={showModal}><SceneIcon name="search"/></button>
+                    <ScenePicker dark={isDark}/>
+                    <button type="button" className="sceneTool homeSwitch" aria-label={isDark ? "切换日间模式" : "切换夜间模式"} title={isDark ? "切换日间模式" : "切换夜间模式"} aria-pressed={isDark} onClick={handleModeSwitch}><SceneIcon name={isDark ? "sun" : "moon"}/></button>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}
                         onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={40} />, 40)}
