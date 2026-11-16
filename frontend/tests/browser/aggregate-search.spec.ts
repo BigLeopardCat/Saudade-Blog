@@ -23,7 +23,7 @@ for (const width of [375, 390, 1440]) {
       if (width < 1200) {
         await page.getByRole('button', { name: '打开导航菜单' }).click()
         await page.locator('.mSearchInput').click()
-      } else await page.locator('.homeRight > div').first().click()
+      } else await page.getByRole('button', {name: '搜索', exact: true}).click()
       await expect(page.getByRole('combobox', { name: '搜索站内内容' })).toBeVisible()
       await page.getByRole('combobox').fill('河灯部署')
       await expect(page.getByRole('option')).toHaveCount(4)

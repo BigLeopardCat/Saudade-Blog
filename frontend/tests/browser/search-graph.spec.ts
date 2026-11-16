@@ -26,7 +26,7 @@ for (const {width, signedIn, available, lexical} of [
     await page.route('**/default-avatar.png', route => route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}))
     await page.goto(sandboxURL)
     if (width < 1200) { await page.getByRole('button', {name:'打开导航菜单'}).click(); await page.locator('.mSearchInput').click() }
-    else await page.locator('.homeRight > div').first().click()
+    else await page.getByRole('button', {name: '搜索', exact: true}).click()
     const input = page.getByRole('combobox', {name:'搜索站内内容'})
     await input.fill('Python')
     await expect(page.getByText('未找到相关内容')).toBeVisible()
