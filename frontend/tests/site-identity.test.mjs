@@ -18,7 +18,7 @@ const lacks = (hay, needle, name) => ok(!hay.includes(needle), name, { needle })
 
 const SITE_VARS = [
     'VITE_SITE_URL', 'VITE_SITE_AUTHOR', 'VITE_SITE_TITLE',
-    'VITE_SITE_DESCRIPTION', 'VITE_SITE_KEYWORDS',
+    'VITE_SITE_DESCRIPTION', 'VITE_SITE_KEYWORDS', 'VITE_PORTABLE_SITE',
 ];
 const clearSiteVars = () => SITE_VARS.forEach((k) => { delete process.env[k]; });
 
@@ -109,6 +109,33 @@ try {
     has(q, '&quot;', '引号被转义成 &quot;');
     has(q, '&lt;script&gt;', '尖括号被转义');
     lacks(q, 'content="a"b<c>d&e"', '属性值里没有未转义的引号（否则整条 meta 会被撕成两半）');
+
+    console.log('④ 可移植构建不固定部署域名');
+    clearSiteVars();
+    process.env.VITE_PORTABLE_SITE = '1';
+    process.env.VITE_SITE_URL = 'https://build-machine.invalid';
+    const cfgPortable = await bundle('portable');
+    const portable = transform(cfgPortable, htmlIn);
+    lacks(portable, 'build-machine.invalid', '可移植 HTML 不保留构建机域名');
+    lacks(portable, 'property="og:url"', 'HTML 外壳不提供错误域名的 og:url');
+    lacks(portable, 'property="og:image"', 'HTML 外壳不提供错误域名的 og:image');
+    has(portable, 'content="个人博客与内容分享。"', '通用构建使用中性描述');
+    pluginOf(cfgPortable).generateBundle.call({emitFile: file => {emitted = file;}});
+    lacks(emitted.source, 'Sitemap:', '静态 robots 不固定域名，容器按 SITE_URL 提供 sitemap 地址');
+    const previousWindow = globalThis.window;
+    try {
+        for (const [index, origin] of ['https://reader.example', 'https://another.example:8443'].entries()) {
+            const destination = path.join(out, `portable-site-${index}.mjs`);
+            await esbuild.build({entryPoints:[path.join(root,'src/utils/siteUrl.ts')],bundle:true,
+                format:'esm',platform:'browser',outfile:destination,define:cfgPortable.define,logLevel:'error'});
+            globalThis.window = {location:{origin}};
+            const metadata = await import(pathToFileURL(destination).href);
+            ok(metadata.SITE_URL === origin, '站点链接使用当前部署 origin', {origin,actual:metadata.SITE_URL});
+        }
+    } finally {
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
+    }
 
     console.log('④ 源码契约（防回潮：这几个文件里不许再写死站名 / 描述）');
     const spots = [

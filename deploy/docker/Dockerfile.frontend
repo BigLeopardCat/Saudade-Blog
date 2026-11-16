@@ -7,9 +7,10 @@ RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend/ ./
 COPY LICENSE THIRD-PARTY.md /licenses/
 ARG VITE_SITE_URL
+ARG VITE_PORTABLE_SITE=1
 ARG NODE_HEAP=1536
 ARG REVISION
-ENV NODE_OPTIONS=--max-old-space-size=${NODE_HEAP} VITE_SITE_URL=$VITE_SITE_URL
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_HEAP} VITE_SITE_URL=$VITE_SITE_URL VITE_PORTABLE_SITE=$VITE_PORTABLE_SITE
 RUN npm run fetch:widget && npm run vendor:live2d && npm run build \
     && test -f dist/live2d-widgets/chat-stream.js \
     && test -f dist/live2d_model/agent_2.model3.json

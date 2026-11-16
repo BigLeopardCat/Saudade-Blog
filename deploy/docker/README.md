@@ -15,7 +15,11 @@ cd Saudade-Blog
 bash deploy/install.sh --site-url http://localhost:8080
 ```
 
-默认绑定 `127.0.0.1:8080`，供本机反向代理使用。公开站点传入真实 `--site-url https://blog.example.com`，由宿主代理终止 TLS 并转发到该端口。该地址同时用于前端构建和公开链接，不能使用 Docker 服务名。
+默认绑定 `127.0.0.1:8080`，供本机反向代理使用。公开站点传入真实 `--site-url https://blog.example.com`，由宿主代理终止 TLS 并转发到该端口。该地址用于服务器生成的公开链接和 sitemap，不能使用 Docker 服务名。
+
+Docker 前端默认以可移植模式构建，页面链接和元数据使用浏览器当前 origin，不固定构建机域名。
+容器的 `robots.txt` 按配置的 `SITE_URL` 提供 sitemap 地址，`sitemap.xml` 由后端生成。
+常规 Vite 构建仍通过 `VITE_SITE_URL` 固定站点身份；自定义站名、描述或署名时按前端配置重新构建。
 
 私有目录默认 `~/.local/share/saudade/compose`，目录 0700、凭据 0600。可用 `--state-dir /absolute/private/path` 修改。密码不输出到命令行或日志。
 

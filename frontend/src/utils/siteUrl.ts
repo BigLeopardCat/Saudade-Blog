@@ -1,7 +1,8 @@
 /** 站点身份由 vite.config.ts 统一注入 TS 与 HTML；本模块不重复定义默认值。 */
 
 /** 形如 `https://example.com`，**无尾斜杠**（拼接 `SITE_URL + '/article/1'` 是常见写法）。 */
-export const SITE_URL = __SITE_URL__;
+// Portable distribution images resolve their public origin in the browser.
+export const SITE_URL = __SITE_URL__ || window.location.origin;
 
 /** 站点署名（`<meta name="author">`）；空串表示没配。 */
 export const SITE_AUTHOR = __SITE_AUTHOR__;

@@ -179,6 +179,8 @@ class ComposeInstall(unittest.TestCase):
         nginx = (self.state / "nginx.conf").read_text()
         self.assertIn("return 308 https://example.com:8443$request_uri", nginx)
         self.assertNotIn("https://$host", nginx)
+        self.assertIn("Sitemap: https://example.com:8443/sitemap.xml", nginx)
+        self.assertIn("location = /sitemap.xml { proxy_pass http://backend:3000/sitemap.xml; }", nginx)
         self.assertEqual((self.state / "tls/site.key").stat().st_mode & 0o777, 0o600)
         self.assertIn(f"CONFIG_UID={os.geteuid()}", (self.state / "compose.env").read_text())
 

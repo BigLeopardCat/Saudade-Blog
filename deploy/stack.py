@@ -185,6 +185,11 @@ def nginx_text(tls, site):
     location / { try_files $uri $uri/ /index.html; }
 }
 """
+    server = server.replace("    location /api/ {", (
+        "    location = /robots.txt { default_type text/plain; return 200 'User-agent: *\\nAllow: /\\nSitemap: "
+        + site + "/sitemap.xml\\n'; }\n"
+        "    location = /sitemap.xml { proxy_pass http://backend:3000/sitemap.xml; }\n"
+        "    location /api/ {"))
     if tls:
         server = server.replace("listen 8080;", "listen 8443 ssl;\n    ssl_certificate /etc/nginx/tls/site.crt;\n    ssl_certificate_key /etc/nginx/tls/site.key;")
         server += ("server { listen 8080; server_name _; location = /healthz { return 200 'ok\\n'; } "

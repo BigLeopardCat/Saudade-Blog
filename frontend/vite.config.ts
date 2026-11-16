@@ -1,35 +1,17 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
-/**
- * 站点身份：**默认值只写在这一次**，HTML 与 TS 两侧都从这里取。
- *
- * 为什么不用 Vite 内置的 `%VITE_XXX%`：那套只认 `.env*` 与真实进程环境，而本仓的
- * `.env*` **整类都在 .gitignore 里**（`.gitignore:40`）——别人 clone 后一个 .env 都没有，
- * 占位符会原样留在 HTML 里（canonical / og:url 变成字面量 `%VITE_SITE_URL%`），
- * 比硬编码更难查。这里在**受版本控制**的配置里给默认值。
- *
- * **默认值是中性占位（本机开发地址），不是任何真实域名**：缺 `VITE_SITE_URL` 时宁可
- * 产出一个明显没配好的地址（本地开发恰好就是它），也不要静默指向项目作者的站点——
- * 那样 fork 出去部署时，搜索引擎会把别人的文章挂到作者域名下，且没有任何东西会报错。
- * 线上部署通过 CI 的仓库 Variable `VITE_SITE_URL` 显式传入（见 `.github/workflows/deploy.yml`）。
- *
- * 两处消费：① 下面的 siteIdentity 插件替换 index.html 里的占位符；
- * ② 同名的 `define` 把值注入给 TS（读法见 `src/utils/siteUrl.ts`）。
- * 用 `define` 而不是 `import.meta.env` 就是为了**默认值只有这一份** ——
- * 否则 HTML 一个默认值、TS 一个默认值，改一处忘一处就会 canonical 与 og:url 打架。
- */
-const SITE_URL = (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(/\/+$/, '');
-// 署名同理：**缺省是空串**，不预设任何人的名字。fork 出去的人不设它，页面上就没有署名，
-// 而不是继承本项目作者的。线上由 CI 的仓库 Variable `VITE_SITE_AUTHOR` 显式传入。
+/** Native builds share fixed HTML/TS identity; portable images resolve their public origin in the browser. */
+const PORTABLE_SITE = process.env.VITE_PORTABLE_SITE === '1';
+const SITE_URL = PORTABLE_SITE ? '' : (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(/\/+$/, '');
+// 未配置署名时省略对应元数据。
 const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || '';
 const SITE_TITLE = process.env.VITE_SITE_TITLE || '个人博客';
-const SITE_DESCRIPTION = process.env.VITE_SITE_DESCRIPTION || '本站开发地址，尚未配置站点描述。';
-// keywords：**缺省空串 ⇒ 把那一整行删掉**（与署名同一处理）。主流搜索引擎早就不看它
-// （spam 时代的遗留），留一份泛泛的词表只会让人以为 SEO 靠它；要留的人设自己的变量。
+const SITE_DESCRIPTION = process.env.VITE_SITE_DESCRIPTION || (PORTABLE_SITE ? '个人博客与内容分享。' : '本站开发地址，尚未配置站点描述。');
+// 关键词留空时省略对应元数据。
 const SITE_KEYWORDS = process.env.VITE_SITE_KEYWORDS || '';
 
-if (!process.env.VITE_SITE_URL) {
+if (!PORTABLE_SITE && !process.env.VITE_SITE_URL) {
     console.warn(
         '[site-identity] 未设 VITE_SITE_URL，canonical / og:url / robots.txt 将回落到 '
         + `${SITE_URL} —— 线上构建必须设它（CI 见 deploy.yml 的 VITE_SITE_URL 环境变量）。`,
@@ -42,11 +24,7 @@ if (!process.env.VITE_SITE_TITLE || !process.env.VITE_SITE_DESCRIPTION) {
     );
 }
 
-/**
- * HTML 属性值与元素文本的转义。站名与描述是**配置注入**（仓库 Variable，部署者自己填）
- * —— 一个没转义的 `"` 就能把 meta 标签撕成两半，而产物照样构建成功、CI 照样绿。
- * URL 那几处不动，保持原行为。
- */
+/** Escape deployment-supplied metadata before inserting HTML attributes or text. */
 const esc = (s: string) => s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -65,24 +43,19 @@ const siteIdentity = (): Plugin => ({
                 .replace(/__SITE_TITLE__/g, esc(SITE_TITLE))
                 .replace(/__SITE_DESCRIPTION__/g, esc(SITE_DESCRIPTION))
                 .replace(/__SITE_KEYWORDS__/g, esc(SITE_KEYWORDS));
-            // 没配署名 / keywords 就把整行删掉：留一个空 content 的 meta 对爬虫与人
-            // 都没有意义，而**留占位符原样**更糟（这正是本文件头注反对的那种做法）。
+            // 未配置的可选元数据不输出空标签。
             if (!SITE_AUTHOR) out = out.replace(/^[^\S\n]*<meta name="author"[^>]*>\n/m, '');
             if (!SITE_KEYWORDS) out = out.replace(/^[^\S\n]*<meta name="keywords"[^>]*>\n/m, '');
+            if (PORTABLE_SITE) out = out.replace(/^[^\S\n]*<meta[^>]*property="og:(url|image)"[^>]*>\n/gm, '');
             return out;
         },
     },
-    // robots.txt 整份由这里生成（`public/` 下不放静态副本）。
-    //
-    // 为什么不能像 index.html 那样留占位符了事：`Sitemap:` 那一行**必须是绝对 URL**
-    // ——Google 的文档明确要求 fully qualified，写相对路径 `/sitemap.xml` 该行会被忽略，
-    // 等于白白丢掉 sitemap 的自动发现。而 `public/` 下的文件 Vite 原样拷贝、不做任何
-    // 构建期替换，所以只有"由插件生成"这一条路能让别人的部署指向自己的域名。
+    // Native builds emit an absolute sitemap URL; portable containers serve robots from runtime SITE_URL.
     generateBundle() {
         this.emitFile({
             type: 'asset',
             fileName: 'robots.txt',
-            source: `User-agent: *\nAllow: /\n\nSitemap: ${SITE_URL}/sitemap.xml\n`,
+            source: `User-agent: *\nAllow: /\n${SITE_URL ? `\nSitemap: ${SITE_URL}/sitemap.xml\n` : ''}`,
         });
     },
 });
@@ -126,12 +99,7 @@ export default defineConfig(() => ({
                 chunkFileNames: 'vendor/[name]-[hash].js',
                 entryFileNames: 'js/[name]-[hash].js',
                 assetFileNames: '[ext]/[name]-[hash].[ext]',
-                // `manualChunks` 的对象形态（`{'react-vendor': ['react','react-dom']}`）
-                // 在 Rolldown 下**必坏**：它把 manualChunks 当函数直接调用，传对象当场
-                // `TypeError: manualChunks is not a function`（构建整个失败，不是降级）。
-                // 官方替代是 `output.codeSplitting.groups`（`advancedChunks` 也已弃用）。
-                // 意图不变：react/react-dom 单独成块、哈希稳定 ⇒ 它们不动时这一块能长缓存。
-                // `scheduler` 一并归入——它是 react-dom 的唯一运行时依赖，拆出去等于白拆。
+                // Rolldown groups keep React and its scheduler in a shared cacheable chunk.
                 codeSplitting: {
                     groups: [
                         {
