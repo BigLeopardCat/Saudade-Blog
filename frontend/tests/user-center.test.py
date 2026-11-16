@@ -1650,9 +1650,8 @@ with sync_playwright() as p:
     serrs = []
     sp.on("pageerror", lambda e: serrs.append(str(e)))
     sp.goto(HEAD_URL)
-    sp.wait_for_selector(".homeRight > div", timeout=15000)
-    sp.wait_for_timeout(600)
-    sp.locator(".homeRight > div").first.click()
+    sp.get_by_role("button", name="搜索", exact=True).wait_for(state="visible", timeout=15000)
+    sp.get_by_role("button", name="搜索", exact=True).click()
     sp.wait_for_selector(".searchModalInput", timeout=10000)
     sp.wait_for_timeout(400)
     sborder = sp.evaluate("""() => { const c = getComputedStyle(document.querySelector('.searchModalInput'));

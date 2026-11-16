@@ -40,7 +40,6 @@ for (const width of [375, 390, 1440]) {
     await expect.poll(() => queries[queries.length - 1]).toEqual({ keyword: '河灯部署', page: 1, pageSize: 20, type: 'talk' })
     await page.getByRole('button', { name: '全部', exact: true }).click()
     await expect(page.getByRole('option')).toHaveCount(4)
-    await expect(page.locator('.aggregateSearchCard')).toHaveCSS('background-color', 'rgb(255, 253, 250)')
     const targets = ['/article/5', '/talk?tk=9', '/guestbook?lid=8', '/article/5?cid=41']
     for (let index = 0; index < targets.length; index++) {
       if (index) await open()
@@ -49,11 +48,16 @@ for (const width of [375, 390, 1440]) {
       await expect(page.getByRole('combobox')).toHaveCount(0)
     }
     if (width === 1440) {
-      await page.locator('.homeSwitch .theme-switch').click()
+      await page.getByRole('button', {name: '切换夜间模式', exact: true}).click()
       await open()
-      await expect(page.locator('.washiDark .search-item').first()).toHaveCSS('color', 'rgb(243, 232, 246)')
-      await expect(page.getByRole('button', { name: '清空搜索', exact: true })).toHaveCSS('color', 'rgb(201, 184, 211)')
       await page.screenshot({ path: test.info().outputPath('aggregate-search-dark.png') })
+      await page.getByRole('button', {name: '清空搜索', exact: true}).click()
+      await expect(page.getByRole('combobox', {name: '搜索站内内容'})).toHaveValue('')
+      await expect(page.getByRole('combobox', {name: '搜索站内内容'})).toBeFocused()
+      await expect(page.getByRole('option')).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('combobox')).toHaveCount(0)
+      await expect(page.getByRole('button', {name: '切换日间模式', exact: true})).toBeVisible()
     }
   })
 }

@@ -17,6 +17,7 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTar
     const [activeIndex, setActiveIndex] = useState(0);
     const [composing, setComposing] = useState(false);
     const [trigger] = useLazyAggregateSearchQuery();
+    const inputRef = useRef<HTMLInputElement>(null);
     const lastQuery = useRef('');
     const request = useRef<ReturnType<typeof trigger> | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,7 +67,7 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTar
     const errorMessage = error && 'message' in error ? error.message : '搜索失败，请稍后重试';
     return <section className="aggregateSearch" aria-label="站内聚合搜索">
         <div className="aggregateSearchInput">
-            <input autoFocus type="text" inputMode="search" role="combobox" aria-label="搜索站内内容"
+            <input ref={inputRef} autoFocus type="text" inputMode="search" role="combobox" aria-label="搜索站内内容"
                 aria-autocomplete="list" aria-expanded={mode === 'content' && rows.length > 0} aria-controls="aggregate-search-results"
                 aria-activedescendant={mode === 'content' && rows.length ? `aggregate-hit-${selected}` : undefined}
                 className="searchModalInput" placeholder={mode === 'graph' ? '描述问题，探索相关文章图谱' : '搜索文章、说说、留言和评论'} maxLength={mode === 'graph' ? 64 : 128} value={keyword}
@@ -80,7 +81,7 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTar
                     if (event.key === 'Enter') { event.preventDefault(); if (rows[selected]) onOpen(rows[selected]); else submit(); }
                 }} />
             {keyword && <button type="button" className="searchClear" aria-label="清空搜索"
-                onClick={() => { setKeyword(''); setPage(1); setType('all'); setActiveIndex(0); }}><CloseOutlined /></button>}
+                onClick={() => { setKeyword(''); setPage(1); setType('all'); setActiveIndex(0); inputRef.current?.focus(); }}><CloseOutlined /></button>}
             <button type="button" className="searchMode" aria-label="文章向量图谱检索" aria-pressed={mode === 'graph'}
                 onClick={() => { setMode(value => value === 'content' ? 'graph' : 'content'); setActiveIndex(0); }}>
                 {mode === 'graph' ? '内容搜索' : '文章图谱'}

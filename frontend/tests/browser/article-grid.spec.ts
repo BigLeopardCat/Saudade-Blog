@@ -63,16 +63,20 @@ test('summary expansion keeps card geometry and date rows stable and resets scro
     const card = page.locator('.ArticleCard').nth(2)
     const summary = card.locator('.ArticleDescription')
     await card.scrollIntoViewIfNeeded()
-    const before = (await card.boundingBox())!
-    const footer = (await card.locator('.ArticleFooter').boundingBox())!
+    const geometry = () => card.evaluate(element => {
+        const bounds = element.getBoundingClientRect()
+        const footer = element.querySelector('.ArticleFooter')!.getBoundingClientRect()
+        return {height: bounds.height, footerOffset: footer.y - bounds.y}
+    })
+    const before = await geometry()
     const collapsedHeight = await summary.evaluate(element => element.clientHeight)
     await summary.hover()
     await expect.poll(() => summary.evaluate(element => element.clientHeight)).toBeGreaterThan(collapsedHeight)
     const lines = await summary.evaluate(element => ({height: element.clientHeight, lineHeight: parseFloat(getComputedStyle(element).lineHeight)}))
     expect(lines.height % lines.lineHeight).toBe(0)
-    const expanded = (await card.boundingBox())!
+    const expanded = await geometry()
     expect(Math.abs(expanded.height - before.height)).toBeLessThanOrEqual(1)
-    expect(Math.abs((await card.locator('.ArticleFooter').boundingBox())!.y - footer.y)).toBeLessThanOrEqual(1)
+    expect(Math.abs(expanded.footerOffset - before.footerOffset)).toBeLessThanOrEqual(1)
     await summary.evaluate(element => { element.scrollTop = 80 })
     expect(await summary.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
     await card.locator('.ArticleCover').hover()
