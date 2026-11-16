@@ -12,13 +12,26 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
                 noteTags: [], description: '把生活里的光、旅途里的风，慢慢写进日常。', status: 'public', authorName: 'Sora', authorAvatar: '/cover.svg', createTime: '2026-01-01', updateTime: '2026-01-01'}
             const data = path.endsWith('/topnotes') ? [note] : path.endsWith('/notes/feed') ? {items: Array.from({length: 6}, (_, index) => ({...note, noteKey: index + 2})), nextCursor: null}
                 : path.endsWith('/user') ? {blogTitle: 'Saudade', blogAuthor: 'Sora', userTalk: '愿每一段日常，都有值得记录的光。'}
-                : path.endsWith('/social') ? {socialGithub: 'https://github.com/BigLeopardCat', socialBilibili: 'https://www.bilibili.com', socialEmail: 'hello@example.test'} : []
+                : path.endsWith('/social') ? {socialQQ: '123456789', socialGithub: 'https://github.com/BigLeopardCat', socialBilibili: 'https://www.bilibili.com', socialEmail: 'hello@example.test'} : []
             return route.fulfill({json: {code: 200, data}})
         })
         await page.route('**/cover.svg', route => route.fulfill({contentType: 'image/svg+xml', body: cover}))
         await page.route('**/default-avatar.png', route => route.fulfill({contentType: 'image/svg+xml', body: cover}))
-        await page.route('https://v1.jinrishici.com/**', route => route.fulfill({json: {content: '春风十里，落笔成诗。'}}))
         await page.goto(sandboxURL)
+        await expect(page.locator('html')).toHaveAttribute('data-scene', 'station')
+        if (width === 1440 && height === 900) {
+            await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+            await page.getByRole('button', {name: '复制 QQ'}).click()
+            expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('123456789')
+        }
+        await expect(page.locator('.heroTag')).toHaveCount(0)
+        await expect(page.locator('.heroBottom')).not.toContainText('愿每一段日常')
+        await expect(page.locator('footer')).toContainText('愿每一段日常，都有值得记录的光。')
+        for (const name of ['复制 QQ', 'GitHub', '哔哩哔哩', '复制 Email']) {
+            const button = name.startsWith('复制') ? page.getByRole('button', {name}) : page.getByRole('link', {name, exact: true})
+            await expect(button).toBeVisible()
+            expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        }
         await expect(page.locator('.featuredCard')).toBeVisible()
         expect((await page.locator('.featuredCard').boundingBox())!.y + (await page.locator('.featuredCard').boundingBox())!.height).toBeLessThanOrEqual(height)
         expect((await page.locator('#home-articles').boundingBox())!.y).toBeGreaterThanOrEqual(height)
@@ -31,6 +44,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
             await page.evaluate(async () => { const image = new Image(); image.src = getComputedStyle(document.documentElement).getPropertyValue('--scene-image').trim().replace(/^url\(['"]?|['"]?\)$/g, ''); await image.decode() })
             if (width === 1440) await page.screenshot({path: test.info().outputPath(`scene-${id}.png`)})
         }
+        await expect(page.getByText('昼夜独立切换')).toHaveCount(0)
         await page.getByRole('button', {name: '切换夜间模式'}).click()
         await expect(page.locator('html')).toHaveAttribute('data-scene-dark', 'true')
         await expect(page.locator('html')).toHaveAttribute('data-scene', 'rain')

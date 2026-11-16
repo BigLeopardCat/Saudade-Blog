@@ -7,9 +7,7 @@ import {Avatar, Flex, message} from "antd";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import dayjs from "dayjs";
-import MarkdownNavbarDefault from 'markdown-navbar'
-import 'markdown-navbar/dist/navbar.css'
-import { cjsDefault } from "../../../utils/cjsDefault";
+import ReadingOutline from './ReadingOutline';
 import AssetImage from "../../../components/AssetImage";
 import articleLoading from "../../../assets/bongo-cat.svg";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
@@ -81,9 +79,6 @@ const releaseTodayRead = (noteId: string) => {
     } catch { /* Local persistence is optional. */ }
 };
 
-// Normalize the CJS namespace before rendering it as a React component.
-const MarkdownNavbar = cjsDefault(MarkdownNavbarDefault)
-
 const plugins = [
     gfm({ singleTilde: false }),
     breaks(),
@@ -141,7 +136,6 @@ const ArticleResource = ({id}: {id: string}) => {
     const coverSource = resolveApiAssetUrl(article?.cover || '')
 
     // Lock ref to prevent TOC auto-scroll during manual click
-    const isClickingTocRef = useRef(false);
 
     // Background refreshes retain the article; a verified 404 still removes it.
     const loadArticle = (opts?: { silent?: boolean }) => {
@@ -315,123 +309,6 @@ const ArticleResource = ({id}: {id: string}) => {
         };
     }, []);
 
-    useEffect(() => {
-        if (isLoading) return;
-        let rafId = 0;
-        let lastHash = window.location.hash;
-        const onScroll = () => {
-            cancelAnimationFrame(rafId);
-            rafId = requestAnimationFrame(() => {
-                const headings = document.querySelectorAll<HTMLElement>(
-                    '#content h1, #content h2, #content h3, #content h4, #content h5, #content h6'
-                );
-                // 最后一个"已滚过 headingTopOffset(100)"的标题 = 当前段落
-                let cur: HTMLElement | null = null;
-                for (const h of headings) {
-                    if (h.getBoundingClientRect().top <= 100) cur = h;
-                    else break;
-                }
-                const text = (cur?.innerText || '').trim();
-                const id = text ? text.replace(/[#?&=%/\s]+/g, '-').replace(/-{2,}/g, '-') : '';
-                if (id && lastHash !== '#' + id) {
-                    lastHash = '#' + id;
-                    history.replaceState(null, '', location.pathname + location.search + '#' + id);
-                }
-            });
-        };
-        document.addEventListener('scroll', onScroll, { passive: true });
-        return () => {
-            cancelAnimationFrame(rafId);
-            document.removeEventListener('scroll', onScroll);
-        };
-    }, [isLoading]);
-
-    useEffect(() => {
-        if (isLoading) return;
-        
-        const handleTocClick = () => {
-            isClickingTocRef.current = true;
-            // Ignore observer-driven section changes until the scroll settles.
-            setTimeout(() => {
-                isClickingTocRef.current = false;
-            }, 1000);
-        };
-
-        let observer: MutationObserver | null = null;
-        let navContainerRef: Element | null = null;
-
-        const intervalId = setInterval(() => {
-            const navContainer = document.querySelector('.markdown-navigation');
-            
-            if (navContainer) {
-                clearInterval(intervalId);
-                navContainerRef = navContainer;
-                
-                navContainer.addEventListener('mousedown', handleTocClick);
-                navContainer.addEventListener('click', handleTocClick);
-
-                observer = new MutationObserver((mutations) => {
-                    if (isClickingTocRef.current) return;
-
-                    let targetElement: HTMLElement | null = null;
-
-                    for (const mutation of mutations) {
-                        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-                            const target = mutation.target as HTMLElement;
-                            if (target.classList.contains('active')) {
-                                targetElement = target;
-                                break;
-                            }
-                        } else if (mutation.type === 'childList') {
-                            const active = navContainer.querySelector('.active') as HTMLElement;
-                            if (active) {
-                                targetElement = active;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (targetElement && navContainer) {
-                        const containerRect = navContainer.getBoundingClientRect();
-                        const elementRect = targetElement.getBoundingClientRect();
-                        const relativeTop = elementRect.top - containerRect.top + navContainer.scrollTop;
-                        navContainer.scrollTo({
-                            top: relativeTop - 20,
-                            behavior: 'instant'
-                        });
-                    }
-                });
-
-                observer.observe(navContainer, { 
-                    attributes: true, 
-                    childList: true, 
-                    subtree: true, 
-                    attributeFilter: ['class'] 
-                });
-                
-                const initialActive = navContainer.querySelector('.active') as HTMLElement;
-                if (initialActive && navContainer) {
-                    const containerRect = navContainer.getBoundingClientRect();
-                    const elementRect = initialActive.getBoundingClientRect();
-                    const relativeTop = elementRect.top - containerRect.top + navContainer.scrollTop;
-                    navContainer.scrollTo({
-                        top: relativeTop - 20,
-                        behavior: 'smooth'
-                    });
-                }
-            }
-        }, 200);
-
-        return () => {
-            clearInterval(intervalId);
-            if (observer) observer.disconnect();
-            if (navContainerRef) {
-                navContainerRef.removeEventListener('mousedown', handleTocClick);
-                navContainerRef.removeEventListener('click', handleTocClick);
-            }
-        };
-    }, [isLoading, content]);
-
     return (
         <div className='readContainer'>
             <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" noindex={notFound} />
@@ -536,8 +413,8 @@ const ArticleResource = ({id}: {id: string}) => {
                     <div className='readContent markdown-body'>
                         <motion.div
                             className='readBody'
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
                             transition={{ duration: 1 }}
                         >
                             <div id="content" className="markdown-body">
@@ -548,12 +425,7 @@ const ArticleResource = ({id}: {id: string}) => {
                             </div>
                         </motion.div>
                         <div className="navigation" id='toc'>
-                             <MarkdownNavbar
-                                source={content}
-                                ordered={false}
-                                headingTopOffset={100}
-                                updateHashAuto={false}
-                             />
+                             <ReadingOutline sourceKey={content}/>
                         </div>
                     </div>
                     <CommentSection noteId={id} />

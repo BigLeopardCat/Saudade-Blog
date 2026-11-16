@@ -4,27 +4,18 @@ import cfLogo from '../../assets/Cloudflare_Logo.svg'
 import txLogo from '../../assets/Tencent_Cloud_logo.svg'
 import bailianLogo from '../../assets/Bailian_Logo.svg'
 import live2dLogo from '../../assets/Live2D_Cubism_Logo.png'
-import {useEffect, useState} from "react";
-import axios from "axios";
 import {useSelector} from "react-redux";
 
 const mpsCode = (s: string): string => (s.match(/\d{5,}/) || [''])[0]
 
 const Footer = () => {
-    const [onySay,setOnsay] = useState('')
+    const signature = useSelector((state:{user:{talk: string}}) => state.user.talk)
     const blogIcp = useSelector((state:{user:{blogIcp: string}}) => state.user.blogIcp)
     const blogPublicIcp = useSelector((state:{user:{blogPublicIcp: string}}) => state.user.blogPublicIcp)
     const blogCopyright = useSelector((state:{user:{blogCopyright: string}}) => state.user.blogCopyright)
     const blogAuthor = useSelector((state:{user:{name: string}}) => state.user.name)
     const copyright = blogCopyright.trim() || blogAuthor.trim()
     const code = mpsCode(blogPublicIcp)
-    useEffect(() => {
-        const controller = new AbortController()
-        axios.get('https://v1.jinrishici.com/all', {signal: controller.signal, timeout: 5000})
-            .then(res => setOnsay(typeof res.data.content === 'string' ? res.data.content : ''))
-            .catch(() => {})
-        return () => controller.abort()
-    }, []);
     return <>
         <footer className='footerContainer'>
             {copyright && (
@@ -38,7 +29,7 @@ const Footer = () => {
                 Based on <a className="link" href="https://github.com/LinMoQC/Memory-Blog" target="_blank" rel="noreferrer">Memory-Blog</a> by 林陌青川 (LinMo)
                 {' · '}Maintained by Sora Saudade
             </p>
-            {onySay && <em className="footPoem"><p>{onySay}</p></em>}
+            {signature && <em className="footPoem"><p>{signature}</p></em>}
             {(blogIcp || blogPublicIcp) && (
                 <p className="footBeian">
                     {blogIcp && (

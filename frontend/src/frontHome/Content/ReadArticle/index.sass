@@ -233,7 +233,6 @@ html
 
         > .markdown-body
           padding: 0
-          -webkit-text-stroke: 0.2px currentColor
           // Code blocks use their own contrast without text outlines.
           pre, code, kbd, samp
             -webkit-text-stroke: 0
@@ -360,7 +359,6 @@ html
         width: 100%
         top: 12%
         overflow-y: auto
-        transition: all .8s
         backdrop-filter: blur(5px)
         border-radius: 8px
         padding: 10px
@@ -437,43 +435,6 @@ html
 
     ul, ol
       margin-bottom: 15px
-
-/* CLEAN ROOT LEVEL OVERRIDES FOR TOC */
-/* REDUCE PADDING AND SPACING HERE */
-
-/* Default Light Mode */
-.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor
-  color: #333333 !important
-  transition-duration: 0.3s
-  padding: 2px 8px  
-
-.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
-  transform: scale(1.02)
-  background-color: rgba(0,0,0,0.05)
-  border-radius: 4px
-
-.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
-  color: #fc625d !important
-  background-color: transparent !important
-  border-left: 3px solid #fc625d !important
-  font-weight: 700
-
-/* Dark Mode */
-.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor
-  color: #ffffff !important
-  transition-duration: 0.3s
-  padding: 2px 8px
-
-.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
-  transform: scale(1.02)
-  background-color: rgba(255,255,255,0.1)
-  border-radius: 4px
-
-.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
-  color: #569cfa !important
-  background-color: transparent !important
-  border-left: 3px solid #569cfa !important
-  font-weight: 700
 
 @media only screen and (max-width: 768px)
   .readContent

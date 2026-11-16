@@ -2,7 +2,6 @@ import {test, expect} from './sandbox'
 
 test.use({entry:'seo'})
 test('SPA 元数据替换静态回退，私有与不存在页面不索引，返回公开页恢复', async ({page,sandboxURL})=>{
-  await page.route('https://v1.jinrishici.com/all',route=>route.fulfill({json:{content:'合成诗句'}}))
   await page.goto(sandboxURL)
   await expect(page).toHaveTitle('测试文章 | 示例博客')
   await expect(page.locator('head link[rel="canonical"]')).toHaveCount(1)

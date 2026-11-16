@@ -1,0 +1,31 @@
+import {test, expect} from './sandbox'
+test.use({entry: 'reader-outline'})
+for (const width of [1440, 1920]) {
+    test(`outline and reading URL share real heading anchors at ${width}px`, async ({page, sandboxURL}) => {
+        await page.setViewportSize({width, height: 900})
+        await page.goto(sandboxURL + '#沿途风景-2')
+        const outline = page.getByRole('navigation', {name: '文章目录'})
+        const current = outline.locator('[aria-current="location"]')
+        await expect(current).toHaveText('沿途风景')
+        await expect(current).toHaveAttribute('href', '#' + encodeURIComponent('沿途风景-2'))
+        expect(await page.locator('#content :is(h1,h2)').evaluateAll(nodes => new Set(nodes.map(node => node.id)).size)).toBe(4)
+        const card = (await page.locator('.readContent').boundingBox())!
+        expect(Math.abs(card.x + card.width / 2 - width / 2)).toBeLessThan(2)
+        await outline.getByRole('link', {name: '春日手记', exact: true}).click()
+        await expect(current).toHaveText('春日手记')
+        await page.getByRole('button', {name: '图片加载完成'}).click()
+        await outline.getByRole('link', {name: '沿途风景', exact: true}).first().click()
+        await expect(current).toHaveAttribute('href', '#' + encodeURIComponent('沿途风景'))
+        expect(await page.locator('#content h2').first().evaluate(el => el.getBoundingClientRect().top)).toBeGreaterThan(75)
+        await page.locator('#content h2').last().evaluate(el => el.scrollIntoView())
+        await expect(current).toHaveText('抵达')
+        expect(decodeURIComponent(new URL(page.url()).hash)).toBe('#抵达')
+        await page.screenshot({path: test.info().outputPath('reader-outline.png')})
+        await page.getByRole('button', {name: '切换空目录'}).click()
+        await expect(outline.getByRole('link')).toHaveCount(0)
+        await expect(outline).toContainText('本文暂无小节')
+        await expect(page.locator('html')).toHaveAttribute('data-reader-article', '/article/7')
+        await page.getByRole('button', {name: '返回首页'}).click()
+        await expect(page.locator('html')).not.toHaveAttribute('data-reader-article')
+    })
+}

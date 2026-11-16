@@ -1,39 +1,48 @@
 :root {
-  --scene-image: url('./assets/scenes/atelier.webp');
-  --scene-accent: #95634e;
-  --scene-ink: #443d3a;
-  --scene-muted: #71645f;
-  --scene-surface: rgba(255, 251, 245, .93);
-  --scene-glass: rgba(255, 251, 245, .82);
+  --scene-image: url('./assets/scenes/station.webp');
+  --scene-accent: #356879;
+  --scene-ink: #253e49;
+  --scene-muted: #4a606c;
+  --scene-surface: rgba(247, 253, 255, .94);
+  --scene-glass: rgba(244, 252, 255, .90);
   --scene-edge: rgba(255, 255, 255, .78);
-  --scene-wash: rgba(255, 249, 241, .42);
+  --scene-wash: rgba(241, 250, 255, .42);
   --scene-shadow: 0 8px 30px rgba(66, 44, 55, .09);
+}
+:root[data-scene='atelier'] {
+  --scene-image: url('./assets/scenes/atelier.webp');
+  --scene-accent: #88533f;
+  --scene-ink: #38302d;
+  --scene-muted: #62514b;
+  --scene-surface: rgba(255, 251, 245, .94);
+  --scene-glass: rgba(255, 251, 245, .90);
+  --scene-wash: rgba(255, 249, 241, .42);
 }
 :root[data-scene='riverside'] {
   --scene-image: url('./assets/scenes/riverside.webp');
   --scene-accent: #a64e70;
-  --scene-ink: #493749;
-  --scene-muted: #73616e;
+  --scene-ink: #3d2b3d;
+  --scene-muted: #604b5a;
   --scene-surface: rgba(255, 250, 253, .93);
-  --scene-glass: rgba(255, 251, 254, .82);
+  --scene-glass: rgba(255, 251, 254, .90);
   --scene-wash: rgba(255, 249, 252, .44);
 }
 :root[data-scene='station'] {
   --scene-image: url('./assets/scenes/station.webp');
-  --scene-accent: #3f7585;
-  --scene-ink: #324a56;
-  --scene-muted: #5d7281;
+  --scene-accent: #356879;
+  --scene-ink: #253e49;
+  --scene-muted: #4a606c;
   --scene-surface: rgba(247, 253, 255, .94);
-  --scene-glass: rgba(244, 252, 255, .83);
+  --scene-glass: rgba(244, 252, 255, .90);
   --scene-wash: rgba(241, 250, 255, .42);
 }
 :root[data-scene='rain'] {
   --scene-image: url('./assets/scenes/rain.webp');
   --scene-accent: #8e5475;
-  --scene-ink: #453b54;
-  --scene-muted: #70667b;
+  --scene-ink: #382e46;
+  --scene-muted: #5f526b;
   --scene-surface: rgba(252, 246, 255, .94);
-  --scene-glass: rgba(251, 246, 255, .85);
+  --scene-glass: rgba(251, 246, 255, .90);
   --scene-wash: rgba(249, 242, 255, .50);
 }
 :root[data-scene-dark='true'] {
@@ -118,7 +127,6 @@
   border-radius: 18px; box-shadow: var(--scene-shadow); color: var(--scene-ink);
 }
 .sceneOptionsHeading { padding: 8px 6px 12px; font-size: 13px; font-weight: 600; }
-.sceneOptionsHeading span { float: right; color: var(--scene-muted); font-size: 11px; font-weight: 400; }
 .sceneOptions button {
   display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px;
   background: transparent; border: 1px solid transparent; border-radius: 12px;
@@ -165,7 +173,7 @@
 :root .frontRoot .footerContainer a { color: var(--scene-accent); }
 :root .frontRoot .footerContainer .footPoem p { font-size: 15px; }
 :root .frontRoot .SelfDescription .SocialBtn {
-  width: 38px; height: 38px; border-radius: 11px; border: 1px solid var(--scene-edge);
+  width: auto; min-width: 44px; min-height: 44px; height: auto; padding: 0 12px; gap: 8px; border-radius: 11px; border: 1px solid var(--scene-edge);
   background: var(--scene-glass); box-shadow: none; color: var(--scene-ink);
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
 }
@@ -175,7 +183,7 @@
 :root .frontRoot .readContainer .readCover { width: min(1240px, 94%); border-radius: 20px; }
 :root .frontRoot .readContainer .readContent { background: var(--scene-surface); border: 1px solid var(--scene-edge); border-radius: 20px; box-shadow: var(--scene-shadow); }
 :root .frontRoot .readContainer .readContent .markdown-body { background: transparent; color: var(--scene-ink); }
-:root .frontRoot .readContainer .readContent .navigation .markdown-navigation { backdrop-filter: none; background: var(--scene-surface); border: 1px solid var(--scene-edge); }
+:root .frontRoot .readContainer .readContent .navigation .markdown-navigation { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); background: var(--scene-glass); border: 1px solid var(--scene-edge); }
 :root .frontRoot .readContainer .readContent .markdown-body :is(h1,h2,h3,h4,h5,h6) { color: var(--scene-ink); }
 :root .frontRoot .readContainer .readContent .markdown-body a { color: var(--scene-accent); }
 @media (max-width: 1200px) {
@@ -190,7 +198,7 @@
 @media (max-width: 420px) {
   :root .frontRoot .headContainer { width: calc(100% - 20px); padding: 0 6px; gap: 4px; }
   .sceneTool { width: 34px; height: 40px; flex-basis: 34px; }
-  :root .frontRoot .SelfDescription .SocialBtn { width: 30px; height: 30px; border-radius: 9px; }
+  :root .frontRoot .SelfDescription .SocialBtn { padding: 0 10px; border-radius: 9px; }
 }
 :root .frontRoot :is(.AboutContainer, .CategoriesContainer, .TimesContainer, .TalkContainer) { background: transparent; }
 :root .frontRoot .CategoriesContainer .ArticleList > .article,
@@ -211,7 +219,27 @@
 .BackContainer { position: fixed; inset: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .BackContainer { display: none !important; } }
 :root .frontRoot .readContainer .readContent { width: calc(100% - 40px); box-sizing: border-box; }
+:root { --reader-width: clamp(640px, 48vw, 760px); }
+:root .frontRoot .readContainer .readContent { margin-inline: auto; }
+:root .frontRoot .SelfDescription .Social { flex-wrap: wrap; gap: 12px; }
+:root .frontRoot .SelfDescription .SayWords .home-title-h3 { color: var(--scene-ink); }
+:root .frontRoot .readContainer .readContent .navigation .markdown-navigation {
+  box-sizing: border-box; padding: 16px 12px; top: 100px;
+  max-height: calc(100dvh - 124px); font-size: 14px; border-radius: 16px;
+}
+:root .frontRoot .readContainer .navigation :is(.outlineHeading, .outlineEmpty) { display: block; padding: 8px; color: var(--scene-muted); }
+:root .frontRoot .readContainer .navigation .title-anchor {
+  display: block; margin: 4px 0; padding: 8px; border-left: 3px solid transparent;
+  border-radius: 6px; color: var(--scene-ink); text-decoration: none; line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+:root .frontRoot .readContainer .navigation .title-anchor:hover { background: color-mix(in srgb, var(--scene-accent) 10%, transparent); }
+:root .frontRoot .readContainer .navigation .title-anchor.active {
+  color: var(--scene-accent); border-left-color: var(--scene-accent);
+  background: color-mix(in srgb, var(--scene-accent) 12%, transparent); font-weight: 700;
+}
+#content :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: var(--reading-offset, 100px); }
 @media (min-width: 1201px) {
-  :root .frontRoot .readContainer .readContent { margin-left: max(24px, calc((100% - 1188px) / 2)); margin-right: auto; }
-  :root .frontRoot .readContainer .readContent .navigation { width: 260px; right: -284px; }
+  :root .frontRoot .readContainer .readContent { width: var(--reader-width); max-width: 760px; }
+  :root .frontRoot .readContainer .readContent .navigation { top: 0; width: min(240px, calc((100vw - var(--reader-width)) / 2 - 48px)); right: calc(-1 * min(240px, (100vw - var(--reader-width)) / 2 - 48px) - 24px); }
 }

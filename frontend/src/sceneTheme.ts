@@ -17,7 +17,7 @@ export function readScene(): Scene {
         const saved = localStorage.getItem(KEY)
         if (SCENES.some(scene => scene.id === saved)) return saved as Scene
     } catch { /* Storage can be unavailable in private browsing. */ }
-    return 'atelier'
+    return 'station'
 }
 export function applyScene(scene: Scene): void {
     document.documentElement.dataset.scene = scene

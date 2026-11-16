@@ -1,10 +1,12 @@
 import {useEffect} from 'react';
+import {useReaderLayout} from './useReaderLayout';
 import '../../utils/chatMarkdown';
 import '../../frontHome/Content/ReadArticle/zoomOverlay';
 import {loadAgent} from './loader';
 import {installWeatherContext, warmWeather} from './weather';
 
 const Live2dAgent: React.FC = () => {
+  useReaderLayout();
   useEffect(() => {
     const cleanup = installWeatherContext();
     void loadAgent().then(() => warmWeather()).catch(error => console.error('[Live2dAgent]', error));

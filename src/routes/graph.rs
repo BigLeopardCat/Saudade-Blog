@@ -19,7 +19,13 @@ pub struct GraphQueryReq {
     pub version: Option<String>,
 }
 
+// Pause only the visual article graph, independently of Agent RAG retrieval.
+const GRAPH_PREVIEW_ENABLED: bool = false;
+
 async fn current_source() -> Result<(Value, article_graph::Source), &'static str> {
+    if !GRAPH_PREVIEW_ENABLED {
+        return Err("graph_disabled");
+    }
     let bytes = tokio::fs::read(article_graph::artifact_dir().join("manifest.json"))
         .await
         .map_err(|_| "artifact_missing")?;
@@ -109,7 +115,7 @@ pub async fn graph_artifact(
     State(state): State<Arc<AppState>>,
     Path(file): Path<String>,
 ) -> Response {
-    if !valid_artifact_name(&file) {
+    if !GRAPH_PREVIEW_ENABLED || !valid_artifact_name(&file) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let version = file.trim_start_matches("graph-").trim_end_matches(".js");
@@ -150,6 +156,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn paused_graph_does_not_read_artifacts_or_query_vectors() {
+        assert!(matches!(
+            super::current_source().await,
+            Err("graph_disabled")
+        ));
     }
 
     #[test]

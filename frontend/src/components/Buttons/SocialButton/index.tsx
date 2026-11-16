@@ -1,53 +1,35 @@
 import './index.sass'
-import React from "react";
-import SceneIcon from "../../SceneIcon";
-import {message} from "antd";
+import React from 'react';
+import SocialIcon from './SocialIcon';
+import {message} from 'antd';
 
-interface SocialButtonProps {
-    SocialName: string;
-    url?: string;
-    copyText?: string;  // 点击时复制到剪贴板的内容（QQ 号 / 邮箱地址）
-}
-const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,copyText}) => {
-    const icons = {QQ: 'message', Github: 'github', Bilibili: 'video', Email: 'mail'} as const;
-    const icon = icons[SocialName as keyof typeof icons];
-    if (!icon) return null;
-
-    // 点击复制到剪贴板（QQ 号 / 邮箱），navigator.clipboard 失败时降级 execCommand
-    const handleCopy = (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
+interface SocialButtonProps { SocialName: string; url?: string; copyText?: string }
+const labels = {QQ: 'QQ', Github: 'GitHub', Bilibili: '哔哩哔哩', Email: '邮箱'};
+const SocialButton: React.FC<SocialButtonProps> = ({SocialName, url, copyText}) => {
+    const label = labels[SocialName as keyof typeof labels];
+    if (!label) return null;
+    const handleCopy = async (event: React.MouseEvent) => {
+        event.preventDefault();
         if (!copyText) return;
-        // 提示语带平台名：这条通道 QQ 与邮箱共用，写死"邮箱"会在 QQ 上提示错东西
-        const done = () => message.success(`${SocialName} 已复制到剪贴板`);
-        if (navigator.clipboard?.writeText) {
-            navigator.clipboard.writeText(copyText).then(done).catch(() => {
-                const ta = document.createElement('textarea');
-                ta.value = copyText!;
-                ta.style.position = 'fixed';
-                document.body.appendChild(ta);
-                ta.select();
-                try { document.execCommand('copy'); } catch { /* 老浏览器兜底：失败也照样提示已复制 */ }
-                document.body.removeChild(ta);
-                done();
-            });
-        } else {
-            const ta = document.createElement('textarea');
-            ta.value = copyText;
-            ta.style.position = 'fixed';
-            document.body.appendChild(ta);
-            ta.select();
-            try { document.execCommand('copy'); } catch { /* 老浏览器兜底：失败也照样提示已复制 */ }
-            document.body.removeChild(ta);
-            done();
+        let copied = false;
+        try { await navigator.clipboard.writeText(copyText); copied = true; } catch {
+            const previous = document.activeElement as HTMLElement | null;
+            const textarea = document.createElement('textarea');
+            textarea.value = copyText;
+            textarea.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try { copied = document.execCommand('copy'); } catch { /* Report failure below. */ }
+            textarea.remove();
+            previous?.focus({preventScroll: true});
         }
+        if (copied) message.success(`${label} 已复制到剪贴板`);
+        else message.error('复制失败，请检查浏览器剪贴板权限');
     };
-
-    if (copyText) return <button type="button" className="SocialBtn" title={SocialName} aria-label={`复制 ${SocialName}`} onClick={handleCopy}>
-        <span className="svgContainer"><SceneIcon name={icon} size={19}/></span>
-    </button>;
-    return <a className="SocialBtn" href={url} target="_blank" rel="noopener noreferrer" title={SocialName} aria-label={SocialName}>
-        <span className="svgContainer"><SceneIcon name={icon} size={19}/></span>
-    </a>;
-}
-export default SocialButton
+    const content = <><span className="svgContainer"><SocialIcon name={SocialName}/></span><span>{label}</span></>;
+    const className = `SocialBtn social-${SocialName.toLowerCase()}`;
+    return copyText
+        ? <button type="button" className={className} aria-label={`复制 ${SocialName}`} title={`复制${label}`} onClick={handleCopy}>{content}</button>
+        : <a className={className} href={url} target="_blank" rel="noopener noreferrer" aria-label={label}>{content}</a>;
+};
+export default SocialButton;

@@ -74,7 +74,6 @@ const ContentHome = () => {
 
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
-    const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
     const [feed] = useState(() => {
         if (location.state?.fromDashboard) {
             cachedOtherArticles = [];
@@ -118,7 +117,6 @@ const ContentHome = () => {
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)
-    const author =  useSelector((state: { user: UserState }) => state.user.name);
 
     useEffect(() => {
         const hero = heroRef.current;
@@ -219,10 +217,6 @@ const ContentHome = () => {
         <section className="homeFirstScreen" aria-label="首页与置顶文章">
         <div className="SelfDescription" ref={heroRef}>
             <div className="SayWords">
-                <div className="heroTag">
-                    <span className="heroTagStar">✦</span>
-                    <span>{author} の 记录室</span>
-                </div>
                 <h1 className="home-title-h3">Sereno da Saudade</h1>
                 <div className="Social">
                     {social?.socialQQ && <SocialButton SocialName='QQ' copyText={social.socialQQ}/>}
@@ -254,7 +248,6 @@ const ContentHome = () => {
             {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
         </div>
         <div className="heroBottom">
-            <p className="home-one-say">{oneSay}</p>
             <button className="heroScroll sceneTool" type="button" aria-label="浏览全部文章" onClick={handleScrollDown}><SceneIcon name="down"/></button>
         </div>
         </section>

@@ -6,7 +6,9 @@ import { allHits, hitsOf, TYPE_LABEL, TYPE_ORDER } from '../../frontHome/Head/ag
 import type { AggregateTarget, SearchType } from '../../frontHome/Head/aggregate';
 import { highlightParts } from './highlight';
 import './index.scss';
-const ArticleGraph = lazy(() => import('../ArticleGraph'));
+// Keep visualization dormant until graph construction is reliable; content search stays available.
+const ARTICLE_GRAPH_ENABLED = false;
+const ArticleGraph = ARTICLE_GRAPH_ENABLED ? lazy(() => import('../ArticleGraph')) : null;
 
 export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTarget) => void }) {
     const openGraphArticle = useCallback((id: number) => onOpen({type: 'note', key: id, noteId: null}), [onOpen]);
@@ -82,12 +84,12 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTar
                 }} />
             {keyword && <button type="button" className="searchClear" aria-label="清空搜索"
                 onClick={() => { setKeyword(''); setPage(1); setType('all'); setActiveIndex(0); inputRef.current?.focus(); }}><CloseOutlined /></button>}
-            <button type="button" className="searchMode" aria-label="文章向量图谱检索" aria-pressed={mode === 'graph'}
+            {ARTICLE_GRAPH_ENABLED && <button type="button" className="searchMode" aria-label="文章向量图谱检索" aria-pressed={mode === 'graph'}
                 onClick={() => { setMode(value => value === 'content' ? 'graph' : 'content'); setActiveIndex(0); }}>
                 {mode === 'graph' ? '内容搜索' : '文章图谱'}
-            </button>
+            </button>}
         </div>
-        {mode === 'graph' && <Suspense fallback={<p role="status">正在加载文章图谱…</p>}>
+        {ArticleGraph && mode === 'graph' && <Suspense fallback={<p role="status">正在加载文章图谱…</p>}>
             <ArticleGraph query={query} composing={composing} onOpenArticle={openGraphArticle} />
         </Suspense>}
         {mode === 'content' && query && <Card variant="borderless" className="aggregateSearchCard" title={<div className="searchTitleRow">
