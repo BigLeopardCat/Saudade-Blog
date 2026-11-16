@@ -42,6 +42,7 @@ LOAD = [
     "0035_note_feed_order.sql",
     "0036_chat_task_results.sql",
     "0037_image_generation_revisions.sql",
+    "0038_announcement_operations.sql",
 ]
 
 EXCLUDED = {

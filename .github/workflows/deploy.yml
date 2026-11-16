@@ -205,7 +205,7 @@ jobs:
       - name: Operations regression tests
         run: |
           python3 -m pip install -r scripts/deploy/requirements.txt
-          DATABASE_INDEX_TEST_PG=1 PSQL_BIN="docker exec -i ${{ job.services.postgres.id }} psql -U postgres" \
+          ANNOUNCEMENT_OPERATION_TEST_PG=1 DATABASE_INDEX_TEST_PG=1 PSQL_BIN="docker exec -i ${{ job.services.postgres.id }} psql -U postgres" \
             python3 -m unittest discover -s tests/ops -v
 
       - name: Install frontend deps
