@@ -11,10 +11,15 @@ Dependabot 按运行、测试和构建依赖分组；不因提交来自机器人
 `Dependency audit` 用 cargo-deny 检查 Cargo.lock 锁定且实际启用的依赖图，包含测试依赖和
 各目标平台，不排除指定包、不忽略安全公告；保留 Cargo metadata、功能依赖树和 RustSec 原始
 JSON 结果。锁文件还可能登记未启用的可选后端，不能仅凭锁文件条目判断它们进入了程序。
-前端用 npm audit 检查锁定的生产依赖。RustSec 的安全漏洞和 npm 的中危及以上生产漏洞
-阻止对应作业通过；工具或数据库不可用不算通过。信息性提示及前端开发依赖仍需维护者复核。
+前端用 npm audit 检查锁定的生产和开发依赖。RustSec 的安全漏洞和 npm 的中危及以上漏洞
+阻止对应作业通过；工具或数据库不可用不算通过。信息性提示仍需维护者复核。
 这类检查不替代源码、权限与部署安全验证，不自动升级或忽略报告中的依赖。
 
-## 当前待办
+## 开发工具的安全兼容
 
-开发依赖 minimatch 10.2.6 存在 [glob 放大导致拒绝服务的安全告警](https://github.com/advisories/GHSA-g3hv-75wg-m249)。修复版为 11.0.1，而当前 ESLint/TypeScript ESLint 上游约束仍为 ^10；需验证兼容升级路径。该依赖不进入博客生产运行时，告警保持开启，不以关闭告警或未经验证的全局版本覆盖代替修复。
+ESLint 使用支持 minimatch 11 的版本，TypeScript ESLint 的剩余旧版约束仅在
+`@typescript-eslint/typescript-estree` 内覆盖为修复版本，避免影响其他依赖。
+该解析器调用的 `minimatch(path, pattern, {dot: true})` 由真实 project-service
+默认项目允许列表回归验证，完整类型检查、ESLint 和浏览器构建也须通过。
+上游支持 minimatch 11 后移除这项局部覆盖；不忽略
+[glob 放大拒绝服务告警](https://github.com/advisories/GHSA-g3hv-75wg-m249)。
