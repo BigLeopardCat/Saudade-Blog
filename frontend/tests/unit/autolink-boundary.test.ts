@@ -8,7 +8,7 @@ const render = (text: string) => {
 };
 
 describe('bare URLs in Chinese prose', () => {
-    it.each(['，', '。', '；', '：', '！', '？', '、'])('keeps %s and trailing prose outside the destination', punctuation => {
+    it.each(['，', '。', '；', '：', '！', '？', '、', '）', '］', '】', '》', '」', '』'])('keeps %s and trailing prose outside the destination', punctuation => {
         const url = 'https://example.test/article/62';
         const suffix = `${punctuation}这是助手的介绍`;
         const root = render(`文章：${url}${suffix}`);
@@ -18,11 +18,19 @@ describe('bare URLs in Chinese prose', () => {
     });
     it.each([
         '[中文路径](https://example.test/中文，路径)',
+        '[中文路径](https://example.test/中文）路径)',
         '<https://example.test/中文，路径>',
         '[中文路径][source]\n\n[source]: https://example.test/中文，路径',
     ])('preserves explicitly delimited destinations: %s', text => {
         const root = render(text);
-        expect(decodeURI(root.querySelector('a')!.getAttribute('href')!)).toBe('https://example.test/中文，路径');
+        const punctuation = text.includes('）') ? '）' : '，';
+        expect(decodeURI(root.querySelector('a')!.getAttribute('href')!)).toBe(`https://example.test/中文${punctuation}路径`);
+    });
+    it('keeps the article source link clickable inside Chinese parentheses', () => {
+        const text = '来源：文章22全文（https://example.test/article/22），读取完整。';
+        const root = render(text);
+        expect(root.querySelector('a')?.getAttribute('href')).toBe('https://example.test/article/22');
+        expect(root.textContent).toBe(text);
     });
     it('preserves query strings, fragments, encoded punctuation and code', () => {
         const url = 'https://example.test/article/62?q=%EF%BC%8C#section';

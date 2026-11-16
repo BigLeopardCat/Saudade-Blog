@@ -15,7 +15,7 @@ export function remarkAutolinkBoundary() {
                 const raw = source.slice(start, end);
                 // Source offsets distinguish GFM autolinks from [label](url), <url> and references.
                 if (!/^(?:https?:\/\/|www\.)/i.test(raw) || raw !== child.children[0].value) return [child];
-                const boundary = raw.search(/[，。；：！？、]/u);
+                const boundary = raw.search(/[，。；：！？、）］】》」』]/u);
                 if (boundary < 0) return [child];
                 const label = raw.slice(0, boundary);
                 const url = /^www\./i.test(label) ? `http://${label}` : label;
