@@ -274,7 +274,7 @@ console.log('\n── 接线与机制锁（源码层）──');
     ok(dash.indexOf('<AnnouncementModal') > dash.lastIndexOf('<ConfigProvider'),
         '后台那份挂在 ConfigProvider 里面（后台是 darkAlgorithm，配色取 token 才读得出来）');
     const home = read('src/frontHome/Content/ContentHome/index.tsx');
-    ok(!/AnnouncementModal/.test(home), '首页 ContentHome 那个旧挂载点已摘（挂着它就只能刷新才查一次）');
+    ok(!/<AnnouncementModal\b/.test(home), '首页不重复挂载自动公告弹窗，公告事件订阅可独立使用');
 
     const modal = read('src/components/AnnouncementModal/index.tsx');
     const body = (startMarker, endMarker) => modal.slice(modal.indexOf(startMarker), modal.indexOf(endMarker));

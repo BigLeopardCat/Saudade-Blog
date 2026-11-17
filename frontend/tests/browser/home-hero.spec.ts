@@ -84,6 +84,11 @@ for (const width of [375, 1440]) {
     await page.screenshot({clip, path: test.info().outputPath('pinned-light.png')})
     await page.locator('.frontRoot').evaluate(el => el.classList.add('frontDark'))
     await page.screenshot({clip, path: test.info().outputPath('pinned-dark.png')})
+    await page.locator('.frontRoot').evaluate(el => el.classList.remove('frontDark'))
+    await page.locator('#home-articles').scrollIntoViewIfNeeded()
+    await expect(page.locator('#home-articles .ArticleTitle').first()).toHaveCSS('font-size', '19px')
+    await expect(page.locator('#home-articles .ArticleCard').first()).toHaveCSS('height', '256px')
+    await page.screenshot({fullPage: true, path: test.info().outputPath('pinned-feed-comparison.png')})
   })
 }
 

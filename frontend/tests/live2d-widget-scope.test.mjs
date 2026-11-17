@@ -101,10 +101,10 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   const css = W('widget.css').replace(/\/\*[\s\S]*?\*\//g, '');
   ok(/#waifu \{[^}]*\bleft: 15px/.test(css),
      'widget.css：#waifu 初始 left = 15px');
-  ok(/#waifu \{[^}]*transform: translateY\(-15px\)/.test(css),
-     'widget.css：#waifu 基态 transform = translateY(-15px)');
-  ok(/#waifu:hover \{\s*[^}]*transform: translateY\(-15px\)/.test(css),
-     'widget.css：#waifu:hover 与基态同值（不抬升）');
+  const baseTransform = /#waifu \{[^}]*?transform:\s*([^;]+);/.exec(css)?.[1];
+  const hoverTransform = /#waifu:hover \{[^}]*?transform:\s*([^;]+);/.exec(css)?.[1];
+  eq(baseTransform, 'none', 'widget.css：默认位置不向上偏移');
+  eq(hoverTransform, baseTransform, 'widget.css：悬停不改变默认落点');
   const fromMedia = css.slice(css.indexOf('@media (max-width: 479px)'));
   ok(fromMedia.length > 0 && !/#waifu \{[^}]*left:/.test(fromMedia),
      'widget.css：<480px 起不再有 #waifu 的横向回落（基态即 15px）');
