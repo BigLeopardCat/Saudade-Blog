@@ -191,6 +191,7 @@ function attrMatches(el, name, v) {
 const document = {
   _byId: {},
   _listeners: {},
+  documentElement: new Element('html'),
   head: new Element('head'),
   body: new Element('body'),
   createElement(tag) { return new Element(tag); },
@@ -212,6 +213,8 @@ const document = {
 /** 装上 DOM 全局。返回 `{ document, Element }`，调用方一般用不到返回值。 */
 export function installDom() {
   // Layout and resize delivery are checked in Playwright; this harness wires events only.
+  globalThis.matchMedia = media => ({media, matches: false, onchange: null,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}});
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   globalThis.getComputedStyle = el => Object.assign({ maxHeight: 'none' }, el.style);
   globalThis.document = document;

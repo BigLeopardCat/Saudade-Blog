@@ -88,27 +88,40 @@ function walk(dir, out = []) {
   ok(!isEsModuleCjs('antd'), '反控：antd 包根不判危（type/module 指到 ESM 那份）');
 }
 
-// ② 每一个危险的默认 import 都要被 cjsDefault 包住
+function checkImports(text, file) {
+  const guarded = [], offenders = [];
+  for (const m of text.matchAll(DEFAULT_IMPORT)) {
+    const [, local, spec] = m;
+    if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@types/')) continue;
+    if (!isEsModuleCjs(spec)) continue;
+    const escaped = local.replace(/[$]/g, '\\$');
+    const used = new RegExp('cjsDefault\\(\\s*' + escaped + '\\s*\\)');
+    const record = `${file}  ${local} <- '${spec}'`;
+    (used.test(text) ? guarded : offenders).push(record);
+  }
+  return {guarded, offenders};
+}
+
+// Exercise the same scanner with guarded and unguarded imports before scanning application code.
+{
+  const source = "import Add from '@mui/icons-material/Add';\nconst Icon = cjsDefault(Add);";
+  const guarded = checkImports(source, 'guarded-control.tsx');
+  ok(guarded.guarded.length === 1 && guarded.offenders.length === 0, '正控：扫描器识别已包装的 CJS 默认导入');
+  const unguarded = checkImports(source.replace('cjsDefault(Add)', 'Add'), 'unguarded-control.tsx');
+  ok(unguarded.offenders.length === 1 && unguarded.guarded.length === 0, '负控：移除包装后扫描器必须报错');
+}
+
+// Every hazardous default import must use the shared interop boundary.
 {
   const guarded = [], offenders = [];
   for (const file of walk(SRC)) {
-    const text = readFileSync(file, 'utf8');
-    for (const m of text.matchAll(DEFAULT_IMPORT)) {
-      const [, local, spec] = m;
-      if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@types/')) continue;
-      if (!isEsModuleCjs(spec)) continue;
-      const used = new RegExp('cjsDefault\\(\\s*' + local.replace(/[$]/g, '\\$') + '\\s*\\)');
-      const rec = `${path.relative(ROOT, file)}  ${local} <- '${spec}'`;
-      (used.test(text) ? guarded : offenders).push(rec);
-    }
+    const result = checkImports(readFileSync(file, 'utf8'), path.relative(ROOT, file));
+    guarded.push(...result.guarded);
+    offenders.push(...result.offenders);
   }
   ok(offenders.length === 0,
      `所有「带 __esModule 的 CJS」默认 import 都过了 cjsDefault（${guarded.length} 处）`,
-     offenders.length ? '未加守卫：\n      ' + offenders.join('\n      ')
-                      : '');
-  // 反向：这条测试不能因为"一处都没扫到"而全绿
-  ok(guarded.length >= 10,
-     `扫到的守卫处数不为空（实测 14 处，>=10 才不算空转）`, `实际 ${guarded.length}`);
+     offenders.length ? '未加守卫：\n      ' + offenders.join('\n      ') : '');
 }
 
 // ③ cjsDefault 三种形态都要兜住（行为级，不是读源码文本）
