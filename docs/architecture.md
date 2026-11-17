@@ -39,6 +39,42 @@ Rust 后端拥有账号、文章、图库、通知、信箱和业务事务；Age
 
 公开首页使用 `GET /api/public/notes/feed?limit=6&cursor=…`：`limit` 为 1–50，响应 `data` 包含 `items` 和可空 `nextCursor`。游标按 `(created_at DESC, id DESC)` 排序，查询只投影卡片摘要并读取一条额外记录判断后续页，不执行全表计数或 OFFSET。缺省游标从头读取；非法游标返回 400，数据库查询失败返回 503。原页码接口继续供其他消费方使用。新增索引迁移为 `0035_note_feed_order.sql`，须在部署新版后端前执行；版本化发布会核对索引契约。
 
+## 保存、审阅与发布时序
+
+```mermaid
+sequenceDiagram
+    actor User as 作者
+    participant Editor as 浏览器编辑器
+    participant Agent as 可选 Agent
+    participant Host as Rust 业务后端
+    participant DB as PostgreSQL
+    participant Corpus as 公开语料消费者
+    User->>Editor: 编辑文章
+    Editor->>Host: 携带版本的自动保存
+    Host->>DB: 新建草稿或保存公开文章的独立修改稿
+    opt 请求 Agent 润色
+        Editor->>Agent: 经宿主鉴权的协作请求
+        Agent-->>Editor: 正文或标题修改建议
+        Editor-->>User: 展示差异并等待采纳
+        User->>Editor: 采纳或拒绝建议
+    end
+    User->>Editor: 保存并选择发布
+    Editor->>Host: 当前内容、发布状态与预期版本
+    Host->>Host: 当前账号权限和字段校验
+    Host->>DB: 事务锁定根文章并核对版本后提交
+    alt 版本冲突
+        Host-->>Editor: 拒绝覆盖，要求重新读取
+    else 提交成功
+        Host-->>Editor: 已保存的文章结果
+        Corpus->>Host: 后续获取公开语料快照
+        Host-->>Corpus: 仅公开且已发布的根文章
+    end
+```
+
+采纳编辑器建议、自动保存草稿、发布文章、更新 RAG 索引是四个不同事实。
+Agent 的客户端回报不能代替发布回执。语料消费者仍须完整抓取、核验版本并成功发布索引，
+不能在文章发布后立即声称检索已经更新；详见[语料接口](rag-corpus-api.md)。
+
 ## 可选能力
 
 Agent、AI 审核、向量服务、图片生成及 IoT 均是外部可选服务。核心博客部署不依赖它们启动；相关入口应显示未配置或不可用。外部失败不应拖垮普通页面或持有无界后台任务。
