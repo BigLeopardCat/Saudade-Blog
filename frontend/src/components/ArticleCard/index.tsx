@@ -47,17 +47,16 @@ export interface ArticleCardProps {
     crop?: CoverCrop | null
     className?: string
     tabIndex?: number
-    expanded?: boolean
     onOpen?: (url: string) => void
 }
 
 export default function ArticleCard({item, categories = [], avatar = '', name = '', tags = [], number,
-    featured = false, preview = false, newTab = false, imageVisible = true, crop, className = '', tabIndex, expanded = false, onOpen}: ArticleCardProps) {
+    featured = false, preview = false, newTab = false, imageVisible = true, crop, className = '', tabIndex, onOpen}: ArticleCardProps) {
     const category = categories.find(value => value.categoryKey === Number(item.noteCategory))?.categoryTitle || item.categoryTitle
     const Heading = 'h3'
     const hasTags = (item.noteTagRefs ?? item.noteTags)?.length > 0
     const imageCrop = crop === undefined ? (featured ? carouselCropOf(item) : cropFromRow(item)) : crop
-    return <article className={`ArticleCard ${className}`} data-card-kind={featured ? 'featured' : 'article'} data-expanded={expanded}
+    return <article className={`ArticleCard ${className}`} data-card-kind={featured ? 'featured' : 'article'}
         onClick={event => {
             if (preview || (event.target as Element).closest('a,button,.tags')) return
             if (window.getSelection()?.toString()) return
@@ -65,13 +64,14 @@ export default function ArticleCard({item, categories = [], avatar = '', name = 
             else if (onOpen) onOpen(`/article/${item.key}`)
             else window.location.assign(`/article/${item.key}`)
         }}>
+        {number !== undefined && <span className="ArticleNumber">{String(number).padStart(2, '0')}</span>}
         <div className="ArticleMedia">
-            {number !== undefined && <span className="ArticleNumber">{String(number).padStart(2, '0')}</span>}
             <div className="ArticleCover" style={{aspectRatio: CARD_ASPECT}}>
                 {imageVisible && (preview
                     ? <img src={resolveApiAssetUrl(item.cover)} alt="" style={coverCropStyle(imageCrop)}/>
                     : <AssetImage pending={<SweepLoading/>} alt={item.noteTitle} src={item.cover} style={coverCropStyle(imageCrop)}/>)}
             </div>
+            <NoteStats item={item}/>
         </div>
         <div className="ArticleContent">
             <div className="ArticleHead">{category && <span className="ArticleCategory">{category}</span>}</div>
@@ -82,9 +82,8 @@ export default function ArticleCard({item, categories = [], avatar = '', name = 
                     }
                 }} target={newTab ? '_blank' : undefined} rel={newTab ? 'noopener noreferrer' : undefined}>{item.noteTitle}</a>}</Heading>
             <div className="descSlot"><p className="ArticleDescription">{item.description}</p></div>
-            <div className="tags">{hasTags && renderNoteTagsCollapsed(item.noteTags, tags, expanded ? 3 : 2, item.noteTagRefs)}</div>
-            <NoteStats item={item}/>
-            <div className="ArticleFooter"><NoteByline item={item} siteAvatar={avatar} siteName={name} card/></div>
+            <div className="tags">{hasTags && renderNoteTagsCollapsed(item.noteTags, tags, 2, item.noteTagRefs)}</div>
         </div>
+        <div className="ArticleFooter"><NoteByline item={item} siteAvatar={avatar} siteName={name} card/></div>
     </article>
 }

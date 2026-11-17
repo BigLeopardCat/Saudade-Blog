@@ -38,7 +38,7 @@ for (const width of [375, 1440]) {
     await expect(page.locator('.heroPanel')).toBeVisible()
   })
 
-  test(`homepage shows full-cover pinned cards before the scrolling article feed at ${width}px`, async ({page, sandboxURL}) => {
+  test(`homepage shows compact horizontal pinned cards before the scrolling article feed at ${width}px`, async ({page, sandboxURL}) => {
     await page.setViewportSize({width, height: 900})
     await page.emulateMedia({reducedMotion: 'reduce'})
     await images(page)
@@ -63,10 +63,10 @@ for (const width of [375, 1440]) {
     const feed = (await page.locator('#home-articles').boundingBox())!
     expect(title.x).toBeGreaterThanOrEqual(content.x)
     expect(title.x + title.width).toBeLessThanOrEqual(content.x + content.width + 1)
-    expect(content.y).toBeGreaterThanOrEqual(cover.y + cover.height - 1)
+    expect(content.x).toBeGreaterThanOrEqual(cover.x + cover.width)
     expect(card.y + card.height).toBeLessThanOrEqual(firstScreen.y + firstScreen.height)
     expect(feed.y).toBeGreaterThanOrEqual(firstScreen.y + firstScreen.height)
-    expect(card.height).toBeGreaterThan(450)
+    expect(card.height).toBe(216)
     expect(await page.locator('.featuredArticles .ArticleCover img').first().evaluate(el => getComputedStyle(el).objectFit)).toBe('cover')
     await expect(featured.locator('.homeSectionTitle')).toHaveText('置顶文章')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)

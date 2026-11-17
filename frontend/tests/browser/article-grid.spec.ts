@@ -52,41 +52,38 @@ test('long metadata stays inside the compact card without hiding its author or d
     }
 })
 
-test('whole-card intent enlarges the card, reflows neighbors and keeps full labels and dates', async ({page, sandboxURL}) => {
-    await page.setViewportSize({width: 1440, height: 1000})
-    await page.clock.install()
+test('compact hover responds without resizing cards, moving neighbors or expanding summaries', async ({page, sandboxURL}) => {
+    await page.setViewportSize({width:1440,height:1000})
     await page.goto(sandboxURL)
-    const card = page.locator('.ArticleCard').nth(2)
+    const card=page.locator('.ArticleCard').nth(2)
     await card.scrollIntoViewIfNeeded()
-    await page.mouse.move(0, 0)
-    await page.clock.runFor(1000)
-    const before = (await card.boundingBox())!
-    const later = page.locator('.ArticleCard').nth(5)
-    const laterBefore = (await later.boundingBox())!
-    const summary = card.locator('.ArticleDescription')
-    const beforeSummary = await summary.evaluate(element => element.clientHeight)
-    await card.locator('.ArticleCover').hover()
-    await page.clock.runFor(200)
-    await expect(card).toHaveAttribute('data-expanded', 'false')
-    await page.clock.runFor(650)
-    await expect(card).toHaveAttribute('data-expanded', 'true')
-    const expanded = (await card.boundingBox())!
-    expect(expanded.width).toBeGreaterThan(before.width + 20)
-    expect(expanded.height).toBeGreaterThan(before.height + 30)
-    expect((await later.boundingBox())!.y).toBeGreaterThan(laterBefore.y + 30)
-    expect(await summary.evaluate(element => element.clientHeight)).toBeGreaterThan(beforeSummary)
-    await expect(summary).toHaveCSS('position', 'static')
+    await page.mouse.move(0,0)
+    const before=(await card.boundingBox())!
+    const later=page.locator('.ArticleCard').nth(5)
+    const neighbor=(await later.boundingBox())!
+    const summary=card.locator('.ArticleDescription')
+    const summaryHeight=await summary.evaluate(el=>el.clientHeight)
+    await card.hover()
+    expect(await card.evaluate(el=>getComputedStyle(el).transitionDelay)).toMatch(/^0s(?:, 0s)*$/)
+    await expect.poll(()=>card.evaluate(el=>new DOMMatrixReadOnly(getComputedStyle(el).transform).f)).toBe(-2)
+    const hovered=(await card.boundingBox())!
+    expect(hovered.width).toBeCloseTo(before.width,1)
+    expect(hovered.height).toBe(216)
+    expect((await later.boundingBox())!.y).toBeCloseTo(neighbor.y,1)
+    expect(await summary.evaluate(el=>el.clientHeight)).toBe(summaryHeight)
+    await expect(summary).toHaveCSS('position','static')
     await expect(card.locator('.noteCardDate')).toHaveCount(2)
-    expect(await card.locator('.noteCardDate').evaluateAll(cells => cells.every(cell => {
-        const label = cell.children[0].getBoundingClientRect(), date = cell.children[1].getBoundingClientRect()
-        return Math.abs(label.x + label.width / 2 - date.x - date.width / 2) < 1
+    expect(await card.locator('.noteCardDate').evaluateAll(cells=>cells.every(cell=>{
+        const label=cell.children[0].getBoundingClientRect(),date=cell.children[1].getBoundingClientRect()
+        return Math.abs(label.x+label.width/2-date.x-date.width/2)<1
     }))).toBe(true)
-    const cover = (await card.locator('.ArticleCover').boundingBox())!
-    expect(Math.abs(cover.x - expanded.x)).toBeLessThanOrEqual(2)
-    expect(Math.abs(cover.width - expanded.width)).toBeLessThanOrEqual(3)
-    expect(await card.locator('.tags').evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
-    await page.mouse.move(0, 0)
-    await page.clock.runFor(1100)
-    await expect(card).toHaveAttribute('data-expanded', 'false')
-    expect(Math.abs((await card.boundingBox())!.width - before.width)).toBeLessThan(2)
+    const cover=(await card.locator('.ArticleCover').boundingBox())!
+    const content=(await card.locator('.ArticleContent').boundingBox())!
+    expect(content.x).toBeGreaterThan(cover.x+cover.width)
+    expect(await card.locator('.tags').evaluate(el=>el.scrollHeight<=el.clientHeight+1)).toBe(true)
+    await page.mouse.move(0,0)
+    await expect.poll(()=>card.evaluate(el=>getComputedStyle(el).transform)).toBe('none')
+    await page.emulateMedia({reducedMotion:'reduce'})
+    await card.hover()
+    await expect(card).toHaveCSS('transform','none')
 })

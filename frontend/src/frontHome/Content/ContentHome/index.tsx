@@ -16,7 +16,6 @@ import UserState from "../../../interface/UserState";
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
-import ArticleGrid from './ArticleGrid';
 import SectionHeading from '../../../components/SectionHeading';
 import {useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
@@ -256,12 +255,12 @@ const ContentHome = () => {
                 <div style={{ gridColumn: '1 / -1' }} />
             </div>
 
-            <ArticleGrid>
+            <div className="allArticles">
 
                 {otherArticles.map((item,index) => (
                     <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} enter={enterAnimation} key={item.key}/>
                 ))}
-            </ArticleGrid>
+            </div>
             {feedState.error && <div role="status" className="homeLoadError">
                 {feedState.error} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>重试</button>
             </div>}

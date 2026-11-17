@@ -1,43 +1,50 @@
 .ArticleCard
   box-sizing: border-box
-  display: flex
-  flex-direction: column
+  display: grid
+  grid-template-columns: minmax(0, min(32%, 128px)) minmax(0, 1fr)
+  grid-template-rows: minmax(0, 1fr) auto
+  gap: 8px 12px
   width: 100%
+  height: 216px
   min-width: 0
   position: relative
+  padding: 12px
   overflow: hidden
   border: 1px solid var(--scene-edge, #eadce4)
-  border-radius: 18px
+  border-radius: 16px
   background: var(--scene-glass, #fff9fc)
   box-shadow: var(--scene-shadow, 0 5px 20px #4937490c)
   color: var(--scene-ink, #493749)
   cursor: pointer
-  transition: border-color 120ms, box-shadow 200ms
+  transition: transform 140ms ease-out, border-color 120ms ease-out
   .ArticleMedia
     min-width: 0
-    position: relative
+    display: flex
+    flex-direction: column
+    justify-content: center
+    gap: 8px
   .ArticleNumber
     position: absolute
     z-index: 2
-    top: 23px
-    left: -36px
-    width: 136px
-    height: 30px
+    top: 18px
+    left: -35px
+    width: 112px
+    height: 24px
     display: flex
     align-items: center
     justify-content: center
     transform: rotate(-45deg)
     background: #9e2f45
     color: #fff2c6
-    box-shadow: 0 2px 7px #56152a33
     border-block: 1px solid #fff2c638
-    font: italic 600 18px/1 Georgia, serif
+    font: italic 600 15px/1 Georgia, serif
     letter-spacing: .06em
   .ArticleCover
     position: relative
     width: 100%
     flex-shrink: 0
     overflow: hidden
+    border-radius: 9px
     background: color-mix(in srgb, var(--scene-accent, #a64e70) 10%, transparent)
     .asset-image, img
       position: absolute
@@ -51,21 +58,22 @@
     display: flex
     flex-direction: column
     min-width: 0
-    gap: 10px
-    padding: 18px
+    gap: 4px
   .ArticleHead
-    min-height: 20px
-    font-size: 13px
-    line-height: 20px
+    height: 16px
+    flex-shrink: 0
+    font-size: 11px
+    line-height: 16px
     color: var(--scene-accent, #a64e70)
     overflow: hidden
     text-overflow: ellipsis
     white-space: nowrap
   .ArticleTitle
     color: inherit
-    font: 600 20px/28px Georgia, 'Noto Serif CJK SC', serif
+    font: 600 17px/22px Georgia, 'Noto Serif CJK SC', serif
     margin: 0
-    height: 56px
+    height: 44px
+    flex-shrink: 0
     display: -webkit-box
     -webkit-line-clamp: 2
     -webkit-box-orient: vertical
@@ -78,12 +86,13 @@
         outline: 2px solid var(--scene-accent, #a64e70)
         outline-offset: -2px
   .descSlot
-    min-height: 48px
+    height: 36px
+    flex-shrink: 0
   .ArticleDescription
     margin: 0
-    font-size: 15px
-    line-height: 24px
-    max-height: 48px
+    font-size: 13px
+    line-height: 18px
+    max-height: 36px
     color: var(--scene-muted, #604b5a)
     display: -webkit-box
     -webkit-line-clamp: 2
@@ -94,42 +103,42 @@
     display: flex
     flex-wrap: wrap
     align-items: center
-    gap: 12px
-    min-height: 20px
-    font-size: 13px
-    line-height: 20px
+    gap: 4px 8px
+    min-height: 16px
+    font-size: 11px
+    line-height: 16px
     color: var(--scene-muted, #604b5a)
   .ArticleStat
     display: inline-flex
     align-items: center
-    gap: 4px
+    gap: 3px
     min-width: 0
     svg
-      width: 14px
-      height: 14px
+      width: 12px
+      height: 12px
   .tags
-    position: relative
-    z-index: 2
-    min-height: 28px
+    min-height: 22px
+    min-width: 0
     display: flex
     align-items: flex-start
     > span
       display: flex !important
-      flex-wrap: wrap !important
-      gap: 6px
-      overflow: visible !important
+      min-width: 0
+      max-width: 100%
+      gap: 4px
     .ant-tag
-      font-size: 13px
-      line-height: 22px
-      padding: 2px 8px
+      min-width: 0
+      font-size: 11px
+      line-height: 20px
+      padding: 0 6px
       border: 0
       margin-inline-end: 0 !important
-      white-space: normal
-      overflow-wrap: anywhere
-      max-width: 100%
+      white-space: nowrap
+      overflow: hidden
+      text-overflow: ellipsis
   .ArticleFooter
-    margin-top: 4px
-    padding-top: 14px
+    grid-column: 1 / -1
+    padding-top: 8px
     border-top: 1px solid var(--scene-edge, #eadce4)
     display: grid
     grid-template-columns: minmax(0, 1fr) auto auto
@@ -137,8 +146,8 @@
     align-items: center
     min-width: 0
     color: var(--scene-muted, #604b5a)
-    font-size: 12px
-    line-height: 19px
+    font-size: 11px
+    line-height: 16px
     .noteCardAuthor
       display: flex
       align-items: center
@@ -164,29 +173,20 @@
     grid-template-columns: minmax(0, 1fr)
   .asset-image-failure
     z-index: 3
-    font-size: 13px
+    font-size: 11px
     button
       position: relative
       z-index: 3
-  &[data-expanded='true']
-    .ArticleTitle
-      height: auto
-      min-height: 56px
-      max-height: 90px
-      font-size: 21px
-      line-height: 30px
-      -webkit-line-clamp: 3
-    .ArticleDescription
-      max-height: 120px
-      -webkit-line-clamp: 5
   @media (hover: hover) and (pointer: fine)
     &:hover
-      border-color: color-mix(in srgb, var(--scene-accent, #a64e70) 45%, var(--scene-edge, #eadce4))
-      box-shadow: 0 12px 32px color-mix(in srgb, var(--scene-accent, #a64e70) 16%, transparent)
+      transform: translateY(-2px)
+      border-color: var(--scene-accent, #a64e70)
   @media (max-width: 420px)
-    .ArticleContent
-      padding: 16px
+    gap: 8px 10px
+    padding: 10px
     .ArticleFooter
       gap: 8px
   @media (prefers-reduced-motion: reduce)
     transition: none
+    &:hover
+      transform: none

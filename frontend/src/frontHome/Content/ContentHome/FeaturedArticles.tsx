@@ -1,6 +1,5 @@
 import {useNavigate} from 'react-router-dom'
 import SectionHeading from '../../../components/SectionHeading'
-import {LayoutGroup, motion, useReducedMotion} from 'framer-motion'
 import ArticleCard from '../../../components/ArticleCard'
 import {useCallback, useEffect, useRef, useState} from 'react'
 import type {NoteType} from '../../../interface/NoteType'
@@ -30,12 +29,8 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
     const [leading, setLeading] = useState(0)
     const [preview, setPreview] = useState<number | null>(null)
     const [hovered, setHovered] = useState(false)
-    const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
-    const enterTimer = useRef<ReturnType<typeof setTimeout>>()
-    const leaveTimer = useRef<ReturnType<typeof setTimeout>>()
     const previewCards = useRef<HTMLDivElement>(null)
     const [previewHeight, setPreviewHeight] = useState(280)
-    const reduceLayout = useReducedMotion()
     const [focused, setFocused] = useState(false)
     const [dragging, setDragging] = useState(false)
     const [visible, setVisible] = useState(false)
@@ -47,7 +42,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
     const moving = items.length > count
     const groups = moving ? Math.ceil(items.length / count) : 0
     const group = Math.min(groups - 1, Math.floor(leading / Math.max(1, count)))
-    const paused = expandedIndex !== null || hovered || focused || dragging || !visible || !pageVisible || reducedMotion
+    const paused = hovered || focused || dragging || !visible || !pageVisible || reducedMotion
     const paint = useCallback((offset: number) => {
         const total = items.length * stride
         const next = moving && total > 0 ? (offset % total + total) % total : 0
@@ -68,7 +63,6 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         previousStride.current = stride
         paint(offset)
         setPreview(null)
-        setExpandedIndex(null)
     }, [stride, paint])
     useEffect(() => {
         const resize = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
@@ -94,7 +88,6 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         frame = requestAnimationFrame(step)
         return () => cancelAnimationFrame(frame)
     }, [moving, paused, width, paint])
-    useEffect(() => () => { clearTimeout(enterTimer.current); clearTimeout(leaveTimer.current) }, [])
     useEffect(() => {
         if (!previewCards.current) return
         const resize = new ResizeObserver(([entry]) => setPreviewHeight(entry.contentRect.height * .5))
@@ -104,9 +97,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
     if (!items.length) return null
     const previewItems = preview === null ? [] : Array.from({length: count}, (_, index) => (preview * count + index) % items.length)
     const rendered = moving ? [...items, ...items.slice(0, count + 1)] : items
-    const jump = (index: number) => {setExpandedIndex(null); paint(index * count * stride)}
-    const growth = expandedIndex === null ? 0 : Math.min(80, stride * .18)
-    const shift = expandedIndex === null ? 0 : Math.max(0, expandedIndex * stride - position.current + stride - GAP + growth - width)
+    const jump = (index: number) => paint(index * count * stride)
     return <section className="featuredArticles" ref={root} aria-label="置顶文章" data-paused={paused}
         onPointerEnter={event => {if (event.pointerType === 'mouse') setHovered(true)}}
         onPointerLeave={event => {if (event.pointerType === 'mouse') {setHovered(false); setPreview(null)}}}
@@ -138,33 +129,22 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
             onPointerUp={() => {touch.current = null; setDragging(false)}}
             onPointerCancel={() => {touch.current = null; setDragging(false)}}
             onClickCapture={event => {if (swiped.current && event.detail > 0) {event.preventDefault(); event.stopPropagation()}}}>
-            <LayoutGroup><motion.div className="featuredTrackShift" animate={{x: -shift}} transition={{duration: reduceLayout ? 0 : .36, ease: [.22, 1, .36, 1]}}><div className="featuredTrack" ref={track} style={{gap: GAP}}>
+            <div className="featuredTrack" ref={track} style={{gap: GAP}}>
                 {rendered.map((item, index) => {
                     const copy = index >= items.length
                     const shown = index >= leading && index < leading + count + 1
-                    return <motion.div key={`${item.key}-${index}`} layout={reduceLayout ? false : true} transition={{layout: {duration: .36, ease: [.22, 1, .36, 1]}}} className="featuredSlide"
-                        onPointerEnter={event => {
-                            if (event.pointerType !== 'mouse') return
-                            clearTimeout(leaveTimer.current); clearTimeout(enterTimer.current)
-                            enterTimer.current = setTimeout(() => setExpandedIndex(index), 320)
-                        }}
-                        onPointerLeave={() => {
-                            clearTimeout(enterTimer.current)
-                            leaveTimer.current = setTimeout(() => setExpandedIndex(previous => previous === index ? null : previous), 550)
-                        }}
-                        onFocusCapture={event => {if ((event.target as HTMLElement).matches(':focus-visible')) setExpandedIndex(index)}}
-                        onBlurCapture={event => {if (!event.currentTarget.contains(event.relatedTarget)) setExpandedIndex(previous => previous === index ? null : previous)}} data-rail-index={index}
+                    return <div key={`${item.key}-${index}`} className="featuredSlide" data-rail-index={index}
                         aria-hidden={copy || !shown || undefined} ref={element => {
                             element?.toggleAttribute('inert', !shown)
                             // Loop copies stay clickable without duplicating keyboard navigation.
                             if (copy) element?.querySelectorAll<HTMLElement>('a,button,[tabindex]').forEach(control => {control.tabIndex = -1})
                         }}
-                        style={{width: stride - GAP + (expandedIndex === index ? growth : 0)}}>
+                        style={{width: stride - GAP}}>
                         <ArticleCard item={item} categories={categories} avatar={avatar} name={name} tags={tags}
-                            expanded={expandedIndex === index} featured onOpen={navigate} number={index % items.length + 1} className="featuredCard" tabIndex={copy ? -1 : undefined}/>
-                    </motion.div>
+                            featured onOpen={navigate} number={index % items.length + 1} className="featuredCard" tabIndex={copy ? -1 : undefined}/>
+                    </div>
                 })}
-            </div></motion.div></LayoutGroup>
+            </div>
         </div>
         {groups > 0 && <div className="featuredNavigation" onPointerLeave={event => {if (event.pointerType === 'mouse') setPreview(null)}}>
             {preview !== null && <div className="featuredPreview" aria-hidden="true"

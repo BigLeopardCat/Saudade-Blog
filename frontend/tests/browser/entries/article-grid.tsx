@@ -1,6 +1,5 @@
 import {createRoot} from 'react-dom/client'
 import Article from '../../../src/frontHome/Content/ContentHome/Article'
-import ArticleGrid from '../../../src/frontHome/Content/ContentHome/ArticleGrid'
 import type {NoteType} from '../../../src/interface/NoteType'
 import type {CategoriesType} from '../../../src/interface/CategoriesType'
 import '../../../src/frontHome/main.css'
@@ -22,7 +21,7 @@ const stamp = new Date('2026-01-01T00:00:00Z')
 const pendingCover = location.hash === '#loading-cover'
 const authorAvatar = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="20" fill="pink"/></svg>')
 createRoot(document.getElementById('root')!).render(<div className="frontRoot"><div className="ContentContainer">
-    <ArticleGrid>{Array.from({length: pendingCover ? 1 : 12}, (_, index) => {
+    <div className="allArticles">{Array.from({length: pendingCover ? 1 : 12}, (_, index) => {
         const [noteTitle, description, n] = shapes[index % shapes.length]
         const item: NoteType = {key: String(index), noteKey: String(index), noteCategory: '1',
             noteTitle, description, noteTags: tags.slice(0, n).map(tag => tag.tagKey),
@@ -31,5 +30,5 @@ createRoot(document.getElementById('root')!).render(<div className="frontRoot"><
             views: 128, likes: 36, favorites: 12, comments: 4}
         return <Article key={item.key} item={item} index={index} Categories={categories}
             tagList={tags} avatar="" name="示例作者" enter={false}/>
-    })}</ArticleGrid>
+    })}</div>
 </div></div>)
