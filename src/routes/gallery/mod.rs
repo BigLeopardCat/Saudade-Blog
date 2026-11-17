@@ -212,7 +212,7 @@ pub(crate) async fn is_retired_url<C: ConnectionTrait>(db: &C, url: &str) -> Res
         .is_some())
 }
 
-fn valid_url(url: &str) -> bool {
+pub(super) fn valid_url(url: &str) -> bool {
     if url.is_empty() || url.len() > 2048 || url.chars().any(char::is_control) {
         return false;
     }

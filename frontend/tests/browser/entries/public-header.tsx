@@ -14,7 +14,7 @@ function PublicShell() {
   return <div className={dark ? 'frontRoot frontDark' : 'frontRoot'}>
     <output hidden data-testid="location">{location.pathname + location.search}</output>
     <Head isDark={dark} setDark={setDark} scrollHeight={0} />
-    <main aria-label="首页内容" style={{ minHeight: '150vh', background: 'var(--washi-theme-bg)' }}>首页内容</main>
+    <main aria-label="首页内容" style={{ minHeight: '300vh', background: 'var(--washi-theme-bg)' }}>首页内容</main>
   </div>
 }
 createRoot(document.getElementById('root')!).render(<Provider store={store}><MemoryRouter><PublicShell /></MemoryRouter></Provider>)

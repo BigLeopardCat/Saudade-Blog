@@ -40,6 +40,8 @@ pub struct SocialInfo {
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct WebSettingPayload {
+    #[serde(rename = "featuredPhotos")]
+    pub featured_photos: Option<Vec<super::featured_photos::Selection>>,
     #[serde(rename = "blogTitle")]
     pub blog_title: Option<String>,
     #[serde(rename = "blogAuthor")]
@@ -133,6 +135,7 @@ pub async fn get_web_settings(
     let r2_quota = r2_quota.and_then(|v| v.trim().parse::<f64>().ok());
 
     let payload = WebSettingPayload {
+        featured_photos: Some(get_direct(super::featured_photos::KEY).map(|v| super::featured_photos::parse(&v)).unwrap_or_default()),
         blog_title: get_val("blog_title"),
         blog_author: get_val("author"),
         blog_icp: get_val("icp"),
@@ -247,6 +250,18 @@ pub async fn update_web_info(
     Json(payload): Json<WebSettingPayload>,
 ) -> Json<ApiResponse<String>> {
     let mut map = std::collections::HashMap::new();
+    if let Some(items) = payload.featured_photos.as_ref() {
+        if let Err(message) = super::featured_photos::validate(items) {
+            return Json(ApiResponse::error(message));
+        }
+        match super::featured_photos::check_available(&state.db, items).await {
+            Ok(true) => {}
+            Ok(false) => return Json(ApiResponse::error("部分精选图片已删除或不可用，请重新选择；本次设置未保存")),
+            Err(e) => return super::db_error("校验精选照片", &e),
+        }
+        map.insert(super::featured_photos::KEY, serde_json::to_string(items).expect("serializable photo selection"));
+    }
+
 
     let [r2_bucket_key, r2_prefix_key, r2_base_key, r2_quota_key, r2_enabled_key] =
         crate::r2::R2_KEYS;

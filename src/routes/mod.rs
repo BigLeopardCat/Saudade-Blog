@@ -7,6 +7,7 @@ pub mod document_reads;
 pub mod categories;
 pub mod tags;
 pub mod web_info;
+pub mod featured_photos;
 pub mod announcements;
 pub mod talks;
 pub mod upload;
@@ -215,6 +216,7 @@ pub fn create_router(state: AppState) -> Router {
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
+        .route("/api/public/featured-photos", get(featured_photos::list))
         .route("/api/public/social", get(web_info::get_social_info))
         
         // Agent Chat

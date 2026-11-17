@@ -7,6 +7,7 @@ import '../../../scene.css'
 import SceneIcon from '../../../components/SceneIcon'
 import './featured.sass'
 import FeaturedArticles from './FeaturedArticles'
+import FeaturedPhotos from './FeaturedPhotos'
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
 import {hasArticleInvalidation} from "../../../components/UserCenter/agentTurn.ts";
@@ -240,7 +241,7 @@ const ContentHome = () => {
                         aria-hidden="true"
                     />
                 </figure>
-
+                <FeaturedPhotos/>
             </div>
         </div>
         <div className="homePinned">

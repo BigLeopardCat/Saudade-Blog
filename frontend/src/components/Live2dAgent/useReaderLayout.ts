@@ -8,9 +8,9 @@ export function useReaderLayout() {
         if (article) document.documentElement.dataset.readerArticle = pathname;
         else delete document.documentElement.dataset.readerArticle;
         window.dispatchEvent(new Event('reader-layout-change'));
-        return () => {
-            delete document.documentElement.dataset.readerArticle;
-            window.dispatchEvent(new Event('reader-layout-change'));
-        };
     }, [pathname]);
+    useEffect(() => () => {
+        delete document.documentElement.dataset.readerArticle;
+        window.dispatchEvent(new Event('reader-layout-change'));
+    }, []);
 }

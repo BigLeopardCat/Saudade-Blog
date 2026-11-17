@@ -3,6 +3,7 @@ import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
+import {useAutoHideHeader} from './useAutoHideHeader';
 import ScenePicker from "../../components/ScenePicker";
 import SceneIcon from "../../components/SceneIcon";
 
@@ -39,7 +40,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [showMobileCategory, setShowMobileCategory] = useState(false);
     const dispatch = useDispatch()
     const navigate = useNavigate();
-    const overDarkBanner = useLocation().pathname.startsWith('/article/');
+    const location = useLocation();
+    const overDarkBanner = location.pathname.startsWith('/article/');
+    const [sceneOpen, setSceneOpen] = useState(false);
     const [animation,setAnimation] = useState('');
     useEffect(() => {
         if (!animation) return;
@@ -138,6 +141,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     };
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const navigation = useAutoHideHeader(location.key, phoneBarShow || centerOpen || isModalOpen || sceneOpen || (showStatus && isHovered));
 
     const showModal = () => {
         setIsModalOpen(true);
@@ -193,6 +197,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
     return (
         <>
+            <button type="button" className="navigationReveal" aria-label="显示导航栏" tabIndex={navigation.hidden ? 0 : -1} data-active={navigation.hidden} onPointerEnter={navigation.reveal} onFocus={navigation.reveal}/>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
             <div id="public-navigation-drawer" aria-hidden={!phoneBarShow} className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
@@ -236,7 +241,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
+            <div ref={navigation.bar} data-hidden={navigation.hidden} onPointerEnter={navigation.onPointerEnter} onPointerLeave={navigation.onPointerLeave} onFocusCapture={navigation.onFocusCapture} className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
                     <button type="button" aria-label="打开导航菜单" aria-expanded={phoneBarShow} aria-controls="public-navigation-drawer" className="sceneTool" onClick={() => setPhoneBarShow(value => !value)}><SceneIcon name={phoneBarShow ? 'close' : 'menu'}/></button>
                 </div>
@@ -273,7 +278,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
                 <div className="homeRight">
                     <button type="button" className="sceneTool" aria-label="搜索" title="搜索" onClick={showModal}><SceneIcon name="search"/></button>
-                    <ScenePicker dark={isDark}/>
+                    <ScenePicker dark={isDark} onOpenChange={setSceneOpen}/>
                     <button type="button" className="sceneTool homeSwitch" aria-label={isDark ? "切换日间模式" : "切换夜间模式"} title={isDark ? "切换日间模式" : "切换夜间模式"} aria-pressed={isDark} onClick={handleModeSwitch}><SceneIcon name={isDark ? "sun" : "moon"}/></button>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}
                         onDoubleClick={admin ? openDashboard : undefined}>

@@ -19,6 +19,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
         await page.route('**/default-avatar.png', route => route.fulfill({contentType: 'image/svg+xml', body: cover}))
         await page.goto(sandboxURL)
         await expect(page.locator('html')).toHaveAttribute('data-scene', 'station')
+        await expect(page.locator('.heroPanel')).toHaveCSS('background-color', 'rgb(255, 253, 248)')
         if (width === 1440 && height === 900) {
             await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
             await page.getByRole('button', {name: '复制 QQ'}).click()
@@ -47,6 +48,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
         await expect(page.getByText('昼夜独立切换')).toHaveCount(0)
         await page.getByRole('button', {name: '切换夜间模式'}).click()
         await expect(page.locator('html')).toHaveAttribute('data-scene-dark', 'true')
+        await expect(page.locator('.heroPanel')).toHaveCSS('background-color', 'rgb(255, 253, 248)')
         await expect(page.locator('html')).toHaveAttribute('data-scene', 'rain')
         await page.reload()
         await expect(page.locator('html')).toHaveAttribute('data-scene', 'rain')

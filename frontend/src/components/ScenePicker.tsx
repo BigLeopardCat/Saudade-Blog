@@ -3,9 +3,10 @@ import {SCENES, useSceneTheme} from '../sceneTheme'
 import SceneIcon from './SceneIcon'
 import '../scene.css'
 
-export default function ScenePicker({dark}: {dark: boolean}) {
+export default function ScenePicker({dark, onOpenChange}: {dark: boolean; onOpenChange?: (open: boolean) => void}) {
     const {scene, choose} = useSceneTheme(dark)
     const [open, setOpen] = useState(false)
+    useEffect(() => { onOpenChange?.(open); return () => onOpenChange?.(false) }, [open, onOpenChange])
     const root = useRef<HTMLDivElement>(null)
     const trigger = useRef<HTMLButtonElement>(null)
     useEffect(() => {

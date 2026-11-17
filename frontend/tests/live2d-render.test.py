@@ -257,6 +257,7 @@ DOM_STATE = """() => {
     childOrder: w ? [...w.children].map(c => c.id) : [],
     canvasCount: w ? w.querySelectorAll('#waifu-canvas canvas').length : -1,
     canvasId: cv ? cv.id : null,
+    canvasInset: Number(w?.dataset.canvasInset) || 0,
     canvasW: cv ? Math.round(cv.getBoundingClientRect().width) : -1,
     canvasH: cv ? Math.round(cv.getBoundingClientRect().height) : -1,
     canvasStyleW: ccs ? ccs.width : null,
@@ -376,8 +377,8 @@ def main():
               st["childOrder"][:3] == ["waifu-tips", "waifu-canvas", "waifu-tool"], st["childOrder"])
         check("① #waifu-canvas 里有且只有一个 canvas", st["canvasCount"] == 1, st["canvasCount"])
         check("① canvas 的 id 是 live2d（chat-engine 按 id 取画布）", st["canvasId"] == "live2d")
-        check("① #live2d 外接框 300×300（css 决定；被内联样式改掉就是被撑变形了）",
-              st["canvasW"] == 300 and st["canvasH"] == 300,
+        check("① 裁去左侧透明边距，画布与边距仍保持原 300×300 坐标框",
+              st["canvasW"] + st["canvasInset"] == 300 and st["canvasH"] == 300,
               f"{st['canvasW']}×{st['canvasH']} style={st['canvasStyleW']}")
         check("① #waifu 高度恒 300px（中间态塌陷的回归锁）", st["waifuH"] == 300, st["waifuH"])
 
@@ -606,11 +607,11 @@ def main():
                                " Math.round(b.width), Math.round(b.height)]; }")
             check("⑨ #waifu 布局盒仍是 300×300 贴 left:15（对话面板的包含块没变）",
                   mbox[0] == 15 and mbox[2] == 300 and mbox[3] == 300, str(mbox))
-            check("⑨ 画布**渲染**尺寸缩到 150×150（缩放真的落在 #waifu-canvas 上）",
-                  mst["canvasW"] == 150 and mst["canvasH"] == 150,
+            check("⑨ 裁边后移动画布保持 .5 倍缩放与 150px 高度",
+                  abs(mst["canvasW"] + mst["canvasInset"] / 2 - 150) <= .5 and mst["canvasH"] == 150,
                   f"{mst['canvasW']}×{mst['canvasH']}")
-            check("⑨ #live2d 的 CSS 尺寸仍是 300×300（缩放是 transform，不是改盒模型）",
-                  mst["canvasStyleW"] == "300px", str(mst["canvasStyleW"]))
+            check("⑨ CSS 宽度只减去透明边距，移动缩放仍由 transform 控制",
+                  float(mst["canvasStyleW"].removesuffix("px")) + mst["canvasInset"] == 300, str(mst["canvasStyleW"]))
             # 工具条要跟着缩小的角色走：锚在 300px 盒的右缘（A 臂视口 x294），
             # 缩小后必须挪到角色那一带，否则六个钮会飘在没有角色的空处。
             # 判据只写"挪到左边来了"（x≤140），**不写"在角色右缘之外"** ——
