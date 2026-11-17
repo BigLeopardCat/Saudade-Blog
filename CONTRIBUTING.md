@@ -147,6 +147,9 @@ Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从
 `docs/wiki/*.md`。将本仓 `blob/cn_sora_blog/`、`tree/cn_sora_blog/` 链接固定到该完整提交，
 保证新教程引用的规范页在合并前也可读取。核对 Wiki 分支、差异及远程更新后单独提交，
 不强推、不覆盖他人修改、不删除源稿之外的页面。Wiki 提交附来源 SHA 与源码 PR；后续先改源稿再同步。
+截图的生成、清晰度检查和稳定文件名见[教程截图](docs/screenshots.md)。同步时递归复制 assets，
+将相对图片地址转为 raw.githubusercontent.com/wiki 的对应地址。文档与图片链接由
+`node --test frontend/tests/documentation-links.test.mjs` 检查，使用已安装锁定依赖的开发环境。
 
 ## 7. 跨仓协作与交接
 

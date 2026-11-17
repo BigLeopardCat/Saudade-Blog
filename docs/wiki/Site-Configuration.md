@@ -44,6 +44,13 @@
 
 ## R2 图库示例
 
+先在 Cloudflare 创建独立图库桶，再生成仅允许该桶对象读写的凭据，保存 Access Key ID、
+Secret Access Key 和该桶对应的 S3 endpoint。不要把公开图片域名当作 API endpoint。
+官方入口见[R2 凭据](https://developers.cloudflare.com/r2/api/tokens/)。
+
+为桶连接自己的公开域名，开发用 r2.dev 不当作生产访问方案；设置完成后再填写博客的公开域名。
+步骤见[公开桶与域名](https://developers.cloudflare.com/r2/buckets/public-buckets/)。
+
 | 后台字段 | 示例值的含义 |
 | --- | --- |
 | 桶名 | 你自己建立的图库桶，例如 gallery-images；不要用发布产物桶 |
@@ -60,6 +67,8 @@
 截图只有示例桶名和示例域名，必须替换成自己的。显示来源、实际桶和已用容量与表单草稿不同，
 保存后重新读取核对。图库能列出图片后还要验证原图和封面裁剪，不能只看列表成功。
 发布工具另用一套 R2 字段，不能与图库凭据混用。
+浏览器跨域报错时，按真实请求检查允许的本站 origin、方法和请求头，见
+[R2 CORS](https://developers.cloudflare.com/r2/buckets/cors/)；origin 不包含文章路径。
 
 ## 改完怎样生效
 

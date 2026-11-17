@@ -15,6 +15,9 @@ docker compose version
 ```
 
 缺少工具时先完成系统对应的安装；Docker 访问权限相当于主机管理权限。
+Ubuntu 的 Docker 安装按[官方 Engine 指南](https://docs.docker.com/engine/install/ubuntu/)，
+Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)；不要混装发行版旧包和另一套 Docker 仓库包。
+完成后重复上面的版本检查，确认使用的是 `docker compose` 插件入口。
 构建需要联网和足够资源。低内存生产机使用构建机/CI 导出的镜像，不在生产反复完整编译。
 
 先决定站点地址：本机体验用 `http://localhost:8080`；公开访问用自己的域名和 HTTPS。
