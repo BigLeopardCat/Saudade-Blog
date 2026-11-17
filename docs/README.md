@@ -26,6 +26,7 @@
 | [前端测试](frontend-testing.md) | 类型、组件、浏览器与合成数据边界 |
 | [依赖维护](dependency-maintenance.md) | 锁文件、审计和兼容升级 |
 | [表情资源](sticker-assets.md) | 资源制作与分发规范 |
+| [教程截图](screenshots.md) | 可复现的截图来源、文件名、插入位置与更新方式 |
 
 ## 业务接口契约
 
