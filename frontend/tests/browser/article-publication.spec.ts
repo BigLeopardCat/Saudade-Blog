@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import {test, expect} from './sandbox'
 
 test.use({entry:'article-publication', viewport:{width:1280,height:1000}})
@@ -57,6 +58,7 @@ for (const pendingSave of [false,true]) {
     await expect(dialog.getByLabel('文章标题')).toHaveValue('新标题')
     await expect(dialog.getByLabel('文章描述')).toHaveValue('原摘要')
     await expect(dialog.getByRole('radio',{name:'公开'})).toBeChecked()
+    if (!pendingSave) await wikiShot(page, 'publication', dialog)
     expect(publications).toEqual([])
     await dialog.getByRole('button',{name:/^发\s*布$/}).click()
     if (pendingSave) {
@@ -136,6 +138,7 @@ test('the cover picker reads gallery metadata and autosaves the immutable stored
   await picker.getByRole('img',{name:'清晨原图.png',exact:true}).click()
   const crop=page.getByRole('dialog',{name:'封面显示方式',exact:true})
   await expect(crop).toBeVisible()
+  await wikiShot(page, 'gallery-cover', crop)
   await crop.getByRole('button',{name:/^确\s*定$/}).click()
   await expect.poll(()=>saves.some(save=>save.cover===url)).toBe(true)
   expect(saves.at(-1)?.cover).toBe(url)

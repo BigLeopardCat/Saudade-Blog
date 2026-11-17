@@ -1,0 +1,15 @@
+**博客教程**
+
+- [首页](https://github.com/BigLeopardCat/Saudade-Blog/wiki)
+- [从零安装、首次账号、升级与回滚](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Installing-and-Upgrading)
+- [配置文件、站点信息与 R2](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Site-Configuration)
+- [草稿、封面、发布和文章管理](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Writing-and-Publishing)
+- [分类及主/子标签](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Categories-and-Tags)
+- [用户、角色、冻结禁言和额度](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Users-and-Permissions)
+- [公告、通知与站内信](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Announcements-and-Messages)
+- [图库、跨存储与两阶段生图](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Gallery-and-Image-Generation)
+- [前台阅读、搜索与日常互动](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Reading-and-Community)
+- [Agent、组件和宿主的接入](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Agent-Integration)
+- [故障定位、备份与恢复](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Operations-and-Recovery)
+- [仓库规范](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/README.md)
+- [配套 Wiki](https://github.com/BigLeopardCat/saudade-blog-agent/wiki)

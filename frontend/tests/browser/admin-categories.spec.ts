@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import { mkdir } from 'node:fs/promises'
 import { test, expect } from './sandbox'
 
@@ -28,6 +29,7 @@ for (const width of [1280, 390]) {
     await dialog.getByLabel('分类名称', { exact: true }).fill('旅行见闻')
     await expect(dialog.getByLabel('访问路径', { exact: true })).toHaveValue('旅行见闻')
     await dialog.getByRole('textbox', { name: /分类介绍/ }).fill('把沿途见闻留在这里')
+    if (width === 1280) await wikiShot(page, 'category', dialog)
     await dialog.getByRole('button', { name: '创建分类' }).click()
     await expect(page.getByText('分类写入失败', { exact: true })).toBeVisible()
     await expect(dialog.getByLabel('分类名称', { exact: true })).toHaveValue('旅行见闻')

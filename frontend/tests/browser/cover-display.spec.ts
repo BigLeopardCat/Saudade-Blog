@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import {test, expect} from './sandbox'
 import http from 'node:http'
 
@@ -16,6 +17,7 @@ test('portrait covers retain the full image after selection and reopening', asyn
     await expect(dialog.locator('.reactEasyCrop_Container img')).toBeVisible()
     await dialog.getByText('完整显示（允许留边）', {exact: true}).click()
     await expect(dialog.getByText('完整图片，不裁切', {exact: true})).toBeVisible()
+    await wikiShot(page, 'cover-display', dialog)
     await dialog.getByRole('button', {name: /确\s*定/}).click()
     const image = page.getByAltText('保存的文章封面')
     await expect(image).toHaveCSS('object-fit', 'contain')

@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import { mkdir } from 'node:fs/promises'
 import { test, expect } from './sandbox'
 
@@ -26,6 +27,7 @@ for (const width of [1280, 390]) {
     }
     await page.getByText('重号子标签', { exact: true }).click()
     await expect(page.getByRole('heading', { name: '编辑子标签「重号子标签」' })).toBeVisible()
+    if (width === 1280) await wikiShot(page, 'tags')
     await page.getByLabel('标签名称').fill('修改子标签')
     await page.getByRole('button', { name: '保存修改' }).click()
     await expect.poll(() => writes.length).toBe(1)
