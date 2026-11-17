@@ -91,119 +91,13 @@
   .allArticles
     width: min(1120px, 88%)
     display: grid
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr))
-    gap: 22px
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr))
+    gap: 18px
     > .article
       display: flex
       min-width: 0
-    .ArticleCard
+    > .article > .ArticleCard
       flex: 1 1 auto
-      min-width: 0
-      display: flex
-      align-items: stretch
-      border: 1px solid var(--scene-edge)
-      border-radius: 18px
-      background: var(--scene-surface)
-      box-shadow: var(--scene-shadow)
-      overflow: hidden
-      cursor: pointer
-      transition: transform .2s, box-shadow .2s
-      &:hover
-        transform: translateY(-3px)
-      .ArticleCover
-        position: relative
-        flex: 0 0 34%
-        min-width: 0
-        overflow: hidden
-        aspect-ratio: auto !important
-        .asset-image, img
-          position: absolute
-          inset: 0
-          width: 100%
-          height: 100%
-        img
-          object-fit: cover
-      .ArticleContent
-        display: flex
-        flex-direction: column
-        flex: 1 1 auto
-        min-width: 0
-        padding: 22px
-        gap: 12px
-      .ArticleHead
-        display: flex
-        align-items: center
-        flex-wrap: wrap
-        gap: 8px
-        justify-content: space-between
-        h4
-          font-size: 12px
-          font-weight: 500
-          color: var(--scene-accent) !important
-          margin: 0
-      .ArticleStats
-        display: flex
-        gap: 7px
-        font-size: 11px
-        color: var(--scene-muted)
-      .ArticleStat
-        display: inline-flex
-        align-items: center
-        gap: 3px
-      .ArticleTitle
-        font-size: 20px
-        line-height: 1.45
-        font-weight: 600
-        margin: 0
-        display: -webkit-box
-        -webkit-line-clamp: 2
-        -webkit-box-orient: vertical
-        overflow: hidden
-        overflow-wrap: anywhere
-        a
-          color: var(--scene-ink)
-          text-decoration: none
-      .descSlot
-        height: 42px
-        position: relative
-        flex-shrink: 0
-      .ArticleDescription
-        position: absolute
-        top: 0
-        left: 0
-        width: 100%
-        max-height: 42px
-        margin: 0
-        color: var(--scene-muted)
-        font-size: 13px
-        line-height: 21px
-        display: -webkit-box
-        -webkit-line-clamp: 2
-        -webkit-box-orient: vertical
-        overflow: hidden
-        overflow-wrap: anywhere
-        &:hover
-          -webkit-line-clamp: unset
-          max-height: 126px
-          overflow-y: auto
-          z-index: 3
-          background: var(--scene-surface)
-      .tags
-        display: flex
-        flex-wrap: wrap
-        gap: 4px
-        font-size: 11px
-      .ArticleFooter
-        color: var(--scene-muted)
-        font-size: 11px
-        padding-bottom: 0 !important
-        .ant-avatar
-          min-width: 24px !important
-          min-height: 24px !important
-          width: 24px !important
-          height: 24px !important
-        .post-date
-          font-size: 11px !important
   .allArticlesMeasure
     height: 0
     overflow: hidden
@@ -263,18 +157,6 @@
     .allArticles
       grid-template-columns: minmax(0, 1fr)
       gap: 16px
-      .ArticleCard
-        .ArticleContent
-          padding: 15px
-          gap: 8px
-        .ArticleTitle
-          font-size: 18px
-        .ArticleHead h4
-          font-size: 11px
-        .ArticleStats
-          font-size: 10px
-        .ArticleFooter .post-date
-          display: none
 @media (prefers-reduced-motion: reduce)
   .ContentContainer .allArticles .ArticleCard
     transition: none

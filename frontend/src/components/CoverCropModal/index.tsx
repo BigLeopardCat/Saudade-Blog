@@ -1,3 +1,6 @@
+import '../../scene.css'
+import ArticleCard, {type ArticleCardProps} from '../ArticleCard'
+import type {NoteType} from '../../interface/NoteType'
 import React, {useEffect, useRef, useState} from 'react'
 import {Button, Modal, Segmented, Slider, Tabs} from 'antd'
 import Cropper, {type Area} from 'react-easy-crop'
@@ -14,6 +17,8 @@ export interface CoverCropResult {
 interface Props {
     open: boolean
     src: string
+    article?: Partial<NoteType>
+    cardContext?: Pick<ArticleCardProps, 'categories' | 'tags' | 'name' | 'avatar'>
     initialCarousel?: CoverCrop | null
     initialCard?: CoverCrop | null
     onCancel: () => void
@@ -62,7 +67,7 @@ const Preview = ({src, value, aspect, label}: {
     </div>
 </div>
 
-const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCard,
+const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCard, article, cardContext,
     onCancel, onConfirm}) => {
     const [tab, setTab] = useState<'carousel' | 'card'>('card')
     const [card, setCard] = useState<CoverCrop>(DEFAULT_CROP)
@@ -95,6 +100,10 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
         return () => {active = false}
     }, [open, src])
     const source = resolveApiAssetUrl(src)
+    const previewItem: NoteType = {key: 'preview', noteKey: 'preview', noteTitle: '文章标题', description: '',
+        noteTags: [], categories: '', isTop: false, status: 'draft', content: '',
+        createTime: new Date(), updateTime: new Date(), ...article, cover: source}
+
     const update = (key: 'carousel' | 'card', value: CoverCrop) => {
         if (key === 'card') setCard(value)
         else setCarousel(value)
@@ -114,13 +123,16 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
                         value={value} natural={natural} onChange={next => update(key, next)}/>}
             </div>
             <div className="ccPreviews">
-                <Preview src={source} value={value} aspect={aspect}
-                    label={key === 'card' ? '文章卡片' : '首页轮播'}/>
+                <div className="ccPreviewItem ccActualCard">
+                    <div className="ccPreviewLabel">{key === 'card' ? '文章卡片' : '首页轮播'}</div>
+                    <ArticleCard {...cardContext} item={previewItem} preview crop={value}
+                        featured={key === 'carousel'} number={key === 'carousel' ? 1 : undefined}/>
+                </div>
                 {key === 'card' && <Preview src={source} value={value} aspect={DETAIL_ASPECT} label="详情横幅"/>}
             </div>
         </div>
     </>
-    return <Modal open={open} onCancel={onCancel} title="封面显示方式" width={760}
+    return <Modal open={open} onCancel={onCancel} title="封面显示方式" width={920}
         centered destroyOnHidden transitionName="" className="CoverCropModal" footer={[
             <Button key="reset" onClick={() => {update(tab, {...COMPLETE_COVER})
                 setRevision(n => n + 1)}}>完整显示</Button>,

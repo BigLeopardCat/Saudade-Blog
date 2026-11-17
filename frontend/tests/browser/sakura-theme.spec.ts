@@ -32,8 +32,8 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
             await expect(button).toBeVisible()
             expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
         }
-        await expect(page.locator('.featuredCard')).toBeVisible()
-        expect((await page.locator('.featuredCard').boundingBox())!.y + (await page.locator('.featuredCard').boundingBox())!.height).toBeLessThanOrEqual(height)
+        await expect(page.locator('.featuredCard').first()).toBeVisible()
+        expect((await page.locator('.featuredCard').first().boundingBox())!.y + (await page.locator('.featuredCard').first().boundingBox())!.height).toBeLessThanOrEqual(height)
         expect((await page.locator('#home-articles').boundingBox())!.y).toBeGreaterThanOrEqual(height)
         for (const [id, name] of [['riverside', '樱花河岸'], ['station', '春日车站'], ['atelier', '画室窗边'], ['rain', '雨后暮色']]) {
             await page.getByRole('button', {name: '切换场景主题'}).click()
@@ -64,7 +64,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
         await page.screenshot({path: test.info().outputPath('sakura-day.png')})
 
         await page.getByRole('button', {name: '切换场景主题'}).click()
-        await page.mouse.click(width / 2, 600)
+        await page.mouse.click(4, 100)
         await expect(page.getByRole('group', {name: '场景主题'})).toHaveCount(0)
         await page.evaluate(() => document.getElementById('home-articles')!.scrollIntoView({block: 'start', behavior: 'instant'}))
         await expect.poll(() => page.locator('.article').first().evaluate(element => getComputedStyle(element).opacity)).toBe('1')

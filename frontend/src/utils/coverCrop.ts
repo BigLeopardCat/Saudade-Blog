@@ -22,8 +22,8 @@ export interface CoverCropRow {
 export const DEFAULT_CROP: CoverCrop = { x: 0.5, y: 0.5, z: 1 }
 export const COMPLETE_COVER: CoverCrop = { ...DEFAULT_CROP, fit: 'contain' }
 
-export const CAROUSEL_ASPECT = 1
-export const CARD_ASPECT = 16 / 9
+export const CARD_ASPECT = 4 / 3
+export const CAROUSEL_ASPECT = CARD_ASPECT
 export const DETAIL_ASPECT = 3.5
 
 export const MIN_ZOOM = 1

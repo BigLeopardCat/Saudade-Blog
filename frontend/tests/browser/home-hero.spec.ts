@@ -53,10 +53,10 @@ for (const width of [375, 1440]) {
     await featured.scrollIntoViewIfNeeded()
     await expect(featured).toBeVisible()
     await expect(page.getByRole('button', {name: 'More', exact: true})).toHaveCount(0)
-    const title = (await page.locator('.featuredContent h2').boundingBox())!
-    const content = (await page.locator('.featuredContent').boundingBox())!
-    const card = (await page.locator('.featuredCard').boundingBox())!
-    const cover = (await page.locator('.featuredCover').boundingBox())!
+    const title = (await featured.locator('.ArticleTitle').first().boundingBox())!
+    const content = (await featured.locator('.ArticleContent').first().boundingBox())!
+    const card = (await page.locator('.featuredCard').first().boundingBox())!
+    const cover = (await featured.locator('.ArticleCover').first().boundingBox())!
     const firstScreen = (await page.locator('.homeFirstScreen').boundingBox())!
     const feed = (await page.locator('#home-articles').boundingBox())!
     expect(title.x).toBeGreaterThanOrEqual(content.x)
@@ -66,15 +66,15 @@ for (const width of [375, 1440]) {
     expect(card.y + card.height).toBeLessThanOrEqual(900)
     expect(feed.y).toBeGreaterThanOrEqual(900)
     expect(card.height).toBeLessThan(360)
-    expect(await page.locator('.featuredCover img').evaluate(el => getComputedStyle(el).objectFit)).toBe('cover')
-    await expect(featured.locator('.featuredTape')).toHaveText('置顶')
+    expect(await page.locator('.featuredArticles .ArticleCover img').first().evaluate(el => getComputedStyle(el).objectFit)).toBe('cover')
+    await expect(featured.locator('.featuredTape')).toHaveText('置顶文章')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
-    await expect(featured.locator('h2 a')).toHaveAttribute('href', '/article/1')
-    await page.getByRole('button', {name: '查看置顶文章 2'}).click()
-    await expect(featured.locator('h2 a')).toHaveAttribute('href', '/article/3')
-    await expect(page.getByRole('button', {name: '查看置顶文章 2'})).toHaveAttribute('aria-pressed', 'true')
-    await page.getByRole('button', {name: '暂停置顶轮播'}).click()
-    await expect(page.getByRole('button', {name: '播放置顶轮播'})).toHaveAttribute('aria-pressed', 'true')
+    await expect(featured.locator('h2 a').first()).toHaveAttribute('href', '/article/1')
+    if (width === 375) {
+      const segment = featured.getByRole('button', {name: /^第 2 组/})
+      await segment.click()
+      await expect(segment).toHaveAttribute('aria-pressed', 'true')
+    } else await expect(featured.getByRole('button')).toHaveCount(0)
     await page.mouse.move(0, 0)
     await page.waitForTimeout(350)
     const box = (await featured.boundingBox())!
@@ -107,18 +107,19 @@ test('scrolling loads cursors; Agent refresh preserves the loaded window and use
   await page.goto(sandboxURL)
   await expect.poll(() => requested.length).toBe(1)
   const size = requested[0].size
-  await page.locator('.homeFeedBoundary').scrollIntoViewIfNeeded()
-  await expect(page.locator('.ArticleCard')).toHaveCount(size * 2)
-  await page.locator('.ArticleCard').first().scrollIntoViewIfNeeded()
+  // Enter the prefetch band, then leave it before refreshing the loaded window.
+  await page.locator('.homeFeedBoundary').evaluate(element => window.scrollTo({top: window.scrollY + element.getBoundingClientRect().top - innerHeight - 160, behavior:'instant'}))
+  await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(size * 2)
+  await page.evaluate(() => window.scrollTo({top:0,behavior:'instant'}))
   revision = 'new'
   const start = requested.length
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('agent-turn-done', {detail: {confirmationAttempted: true, articleIdsToRefresh: [100]}})))
-  await expect(page.locator('.featuredCover img')).toHaveAttribute('src', '/new-cover.svg')
+  await expect(page.locator('.featuredArticles .ArticleCover img').first()).toHaveAttribute('src', '/new-cover.svg')
   await expect(page.locator('.ArticleCover img').first()).toHaveAttribute('src', '/new-cover.svg')
-  await expect(page.locator('.ArticleCard')).toHaveCount(size * 2)
+  await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(size * 2)
   await expect.poll(() => requested.slice(start)).toEqual([{cursor: null, size}, {cursor: 'new:1', size}])
   await page.locator('.homeFeedBoundary').scrollIntoViewIfNeeded()
-  await expect(page.locator('.ArticleCard')).toHaveCount(size * 3)
+  await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(size * 3)
   await expect(page.locator('.homeFeedBoundary')).toContainText('已经看到全部文章了')
   expect(requested.at(-1)).toEqual({cursor: 'new:2', size})
 })
@@ -140,15 +141,15 @@ test('a failed automatic page preserves articles and retries the same cursor onl
   })
   await page.goto(sandboxURL)
   await expect.poll(() => cursors.length).toBe(1)
-  await expect(page.locator('.ArticleCard').first()).toBeVisible()
-  const count = await page.locator('.ArticleCard').count()
+  await expect(page.locator('.allArticles .ArticleCard').first()).toBeVisible()
+  const count = await page.locator('.allArticles .ArticleCard').count()
   await page.locator('.homeFeedBoundary').scrollIntoViewIfNeeded()
   await expect(page.getByRole('button', {name: '重试', exact: true})).toBeVisible()
-  await expect(page.locator('.ArticleCard')).toHaveCount(count)
+  await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(count)
   await page.waitForTimeout(300)
   expect(cursors).toEqual([null, 'next'])
   await page.getByRole('button', {name: '重试', exact: true}).click()
-  await expect(page.locator('.ArticleCard')).toHaveCount(count * 2)
+  await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(count * 2)
   expect(cursors).toEqual([null, 'next', 'next'])
 })
 
@@ -169,10 +170,10 @@ test('Agent completion during the initial pinned fetch queues one fresh read', a
   })
   try {
     await page.goto(sandboxURL)
-    await expect(page.locator('.ArticleCard')).toHaveCount(1)
+    await expect(page.locator('.allArticles .ArticleCard')).toHaveCount(1)
     await expect.poll(() => topRequests).toBe(1)
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('agent-turn-done', {detail: {confirmationAttempted: true, articleIdsToRefresh: [1]}})))
   } finally {release()}
-  await expect(page.locator('.featuredCover img')).toHaveAttribute('src', '/new-cover.svg')
+  await expect(page.locator('.featuredArticles .ArticleCover img').first()).toHaveAttribute('src', '/new-cover.svg')
   expect(topRequests).toBe(2)
 })

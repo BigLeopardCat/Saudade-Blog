@@ -23,6 +23,7 @@ import {uploadImages} from "../../../../apis/ImageMethods.tsx";
 import {assetDisplayName} from '../../../../utils/assetName';
 import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi';
 import {useGalleryPager} from "../../../../utils/galleryPager.ts";
+import type {NoteType} from '../../../../interface/NoteType';
 import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
 import {adminNotesApi} from "../../../../apis/adminNotesApi";
@@ -37,6 +38,7 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
+    const [previewMetadata, setPreviewMetadata] = useState<Partial<NoteType>>({})
     const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
     const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
@@ -213,6 +215,7 @@ const NewNotes = () => {
         };
     }, []);
 
+    const previewTags = useSelector((state: {tags: {tag: any[]}}) => state.tags.tag);
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
     const [galleryOpen, setGalleryOpen] = useState(false);
@@ -266,6 +269,9 @@ const NewNotes = () => {
                     description: row.description,
                 })
                 setAiContent(row.description || '')
+                setPreviewMetadata({authorName: row.authorName, authorAvatar: row.authorAvatar,
+                    createTime: row.createTime, updateTime: row.updateTime, views: row.views,
+                    likes: row.likes, favorites: row.favorites, comments: row.comments})
                 setTitle(row.noteTitle)
                 setNoteContent(row.noteContent)
 
@@ -709,6 +715,9 @@ const NewNotes = () => {
             <CoverCropModal
                 open={cropOpen}
                 src={coverImg}
+                article={{...previewMetadata, noteTitle: noteTitle || '文章标题', description: aiContent,
+                    noteCategory: String(form.getFieldValue('noteCategory') ?? ''), categoryTitle: undefined, noteTags: noteTag, noteTagRefs: undefined}}
+                cardContext={{categories, tags: previewTags}}
                 initialCarousel={coverCropCarousel}
                 initialCard={coverCrop}
                 onCancel={() => {

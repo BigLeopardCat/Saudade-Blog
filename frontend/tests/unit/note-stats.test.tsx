@@ -39,10 +39,10 @@ describe('shared statistics icons and integration contract', () => {
         // behavior above imports actual modules without esbuild or a DOM emulator.
         const read = (file: string) => readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../src', file), 'utf8')
             .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-        const card = read('frontHome/Content/ContentHome/Article.tsx');
+        const card = read('components/ArticleCard/index.tsx');
         expect(card).toMatch(/statCells\(item\)/);
         expect(card).not.toMatch(/typeof item\.(views|likes|favorites|comments)/);
-        expect(card).toMatch(/from\s*["'][^"']*components\/NoteStatIcons/);
+        expect(card).toMatch(/from\s*["'][^"']*\/NoteStatIcons/);
         expect(card).toContain('ArticleStatNum');
         expect(card).not.toMatch(/ArticleStat[^>]*style=\{\{/);
         for (const { key } of STAT_CELL_ORDER) expect(card).toMatch(new RegExp(`\\b${key}:\\s*<\\w+Icon`));

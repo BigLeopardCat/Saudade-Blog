@@ -2,6 +2,14 @@ import {test, expect} from './sandbox'
 import http from 'node:http'
 
 test.use({entry: 'cover-display'})
+test.beforeEach(async ({page,sandboxURL}) => {
+    await page.route(new URL('/api/monitor/log',sandboxURL).href, route => {
+        const report = route.request().postDataJSON()
+        expect(report.type).toBe('resource_error')
+        expect(report.url).toBe('data:[redacted]')
+        return route.fulfill({json:{code:200}})
+    })
+})
 test('portrait covers retain the full image after selection and reopening', async ({page, sandboxURL}) => {
     await page.goto(sandboxURL)
     const dialog = page.getByRole('dialog')
@@ -96,19 +104,24 @@ test('R2 covers load when the widget wraps window.Image with anonymous CORS', as
 })
 
 
-test('new cover selection starts in fill mode and uses the three declared preview ratios', async ({page, sandboxURL}) => {
+test('card previews render actual cards and share their cover ratio with the crop editor', async ({page, sandboxURL}) => {
     await page.goto(sandboxURL)
     const dialog = page.getByRole('dialog')
     await expect(dialog.locator('.reactEasyCrop_Container img')).toBeVisible()
-    const card = dialog.locator('.ccPreviewItem').filter({hasText: '文章卡片'}).locator('.ccPreviewFrame')
-    const detail = dialog.locator('.ccPreviewItem').filter({hasText: '详情横幅'}).locator('.ccPreviewFrame')
-    for (const [frame, ratio] of [[card, 16 / 9], [detail, 3.5]] as const) {
-        const box = await frame.boundingBox()
-        expect(box!.width / box!.height).toBeCloseTo(ratio, 2)
+    const preview = dialog.locator('.ant-tabs-tabpane-active .ccActualCard .ArticleCard')
+    await expect(preview.locator('.ArticleTitle')).toHaveText('文章标题')
+    await expect(preview.locator('a')).toHaveCount(0)
+    for (const cover of [preview.locator('.ArticleCover'), dialog.locator('.ccStage')]) {
+        const box = (await cover.boundingBox())!
+        expect(box.width / box.height).toBeCloseTo(4 / 3, 2)
     }
+    const detail = await dialog.locator('.ccPreviewItem').filter({hasText: '详情横幅'}).locator('.ccPreviewFrame').boundingBox()
+    expect(detail!.width / detail!.height).toBeCloseTo(3.5, 2)
     await dialog.getByRole('tab', {name: '首页置顶轮播'}).click()
-    const carousel = await dialog.locator('.ccPreviewItem').filter({hasText: '首页轮播'}).locator('.ccPreviewFrame').boundingBox()
-    expect(carousel!.width / carousel!.height).toBeCloseTo(1, 2)
+    const pinned = dialog.locator('.ant-tabs-tabpane-active .ccActualCard .ArticleCard')
+    await expect(pinned.locator('.ArticleNumber')).toHaveText('01')
+    const cover = (await pinned.locator('.ArticleCover').boundingBox())!
+    expect(cover.width / cover.height).toBeCloseTo(4 / 3, 2)
     await dialog.getByRole('button', {name: /确\s*定/}).click()
     await expect(page.getByAltText('保存的文章封面')).toHaveCSS('object-fit', 'cover')
 })

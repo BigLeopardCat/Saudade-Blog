@@ -40,21 +40,16 @@ test('real article cards fill their grid tracks and align across twelve viewport
     }
 })
 
-test('removing card flex growth reproduces the old narrow-card defect', async ({page, sandboxURL}) => {
+test('long metadata stays inside the compact card without hiding its author or date', async ({page, sandboxURL}) => {
     await page.goto(sandboxURL)
-    const undo = await page.addStyleTag({content: '.allArticles > .article > .ArticleCard {flex: 0 1 auto !important}'})
-    for (const width of widths.filter(width => width >= 640)) {
+    for (const width of [375, 768, 1440, 1920]) {
         await page.setViewportSize({width, height: 900})
-        await expect.poll(async () => {
-            const {tracks, cards} = await geometry(page)
-            return cards.some(card => tracks.every(track => Math.abs(card.width - track) > 1))
-        }, `negative control reproduces narrow cards at ${width}px`).toBe(true)
+        expect(await page.locator('.ArticleCard').evaluateAll(cards => cards.every(card => {
+            const bounds = card.getBoundingClientRect()
+            const footer = card.querySelector('.ArticleFooter')!.getBoundingClientRect()
+            return card.scrollWidth <= card.clientWidth + 1 && footer.bottom <= bounds.bottom && footer.top >= bounds.top
+        }))).toBe(true)
     }
-    await undo.evaluate(el => (el as HTMLStyleElement).remove())
-    await expect.poll(async () => {
-        const {tracks, cards} = await geometry(page)
-        return cards.every(card => tracks.some(track => Math.abs(card.width - track) <= 1))
-    }).toBe(true)
 })
 
 test('summary expansion keeps card geometry and date rows stable and resets scrolling', async ({page, sandboxURL}) => {

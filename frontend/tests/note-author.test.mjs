@@ -67,12 +67,14 @@ console.log('\n③ 键在场 = 后端定过稿：空头像不许借站长的脸'
 console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 `|| 站点级`');
 {
     const article = readSrc('src/frontHome/Content/ContentHome/Article.tsx');
-    ok(/<NoteByline\b/.test(article), '首页文章卡片用了共享的 NoteByline');
+    ok(/<ArticleCard\b/.test(article), '首页文章卡片使用共享展示组件');
     ok(!/<Avatar\s+src=\{avatar\}/.test(article),
         '卡片里没有残留的"直接拿 redux 头像渲染"');
 
     const home = readSrc('src/frontHome/Content/ContentHome/FeaturedArticles.tsx');
-    ok(/<NoteByline\b/.test(home), '置顶轮播那一份也走 NoteByline（不是第二份副本）');
+    ok(/<ArticleCard\b/.test(home), '置顶轮播使用同一展示组件');
+    const sharedCard = readSrc('src/components/ArticleCard/index.tsx');
+    ok(/<NoteByline\b/.test(sharedCard), '共享卡片复用作者判据');
     ok(!/<Avatar\s+src=\{avatar\}/.test(home), '轮播里没有残留的那一句');
 
     const readArt = readSrc('src/frontHome/Content/ReadArticle/index.tsx');
@@ -96,8 +98,10 @@ console.log('\n④ 接线：四处消费方走同一条判据，没有第二份 
         }
     };
     walk(path.join(root, 'src'));
-    ok(JSON.stringify(hits.sort()) === JSON.stringify(['src/interface/NoteType.d.ts', 'src/utils/noteAuthor.ts']),
-        '全 src 里只有类型声明与判据文件提到 authorName（没有第二份回退写法）', hits);
+    const editor = readSrc('src/pages/Dashboard/Notes/NewNotes/index.tsx');
+    ok(!/row\.author(?:Name|Avatar)\s*(?:\|\||\?\?)/.test(editor), '编辑器原样转交作者字段，不创建另一条站点回退链');
+    ok(JSON.stringify(hits.sort()) === JSON.stringify(['src/interface/NoteType.d.ts', 'src/pages/Dashboard/Notes/NewNotes/index.tsx', 'src/utils/noteAuthor.ts']),
+        '作者字段仅由类型、共享判据及编辑器预览转交', hits);
 }
 
 console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条路径都挂了作者');

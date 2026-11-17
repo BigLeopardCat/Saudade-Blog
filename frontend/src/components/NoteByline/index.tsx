@@ -10,14 +10,20 @@ interface NoteBylineProps {
     /** 站点级头像（redux `state.user.avatar`）——同上 */
     siteAvatar?: string | null
     compact?: boolean
+    card?: boolean
 }
 
-const NoteByline = ({ item, siteName, siteAvatar, compact = false }: NoteBylineProps) => {
+const NoteByline = ({ item, siteName, siteAvatar, compact = false, card = false }: NoteBylineProps) => {
     const who = noteAuthor(item, { name: siteName, avatar: siteAvatar });
 
+    if (card) return <>
+        <span className="noteCardAuthor" title={who.name}><Avatar src={who.avatar || undefined} size={16}/><span>{who.name}</span></span>
+        <time className="post-date" dateTime={dayjs(item.createTime).isValid() ? dayjs(item.createTime).toISOString() : undefined}
+            title={`更新于 ${dayjs(item.updateTime).format('YYYY-MM-DD')}`}>{dayjs(item.createTime).format('YYYY-MM-DD')}</time>
+    </>;
     return (
         <>
-            <Avatar src={who.avatar} size={compact ? 28 : 40} style={{ marginRight: 10 }} />
+            <Avatar src={who.avatar || undefined} size={compact ? 28 : 40} style={{ marginRight: 10 }} />
             <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{who.name}</span>
             <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
