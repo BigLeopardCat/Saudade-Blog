@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import {test,expect} from './sandbox'
 import type {GenerationJob} from '../../src/apis/imageGenerationApi'
 
@@ -58,8 +59,11 @@ test('image generation requires request approval and a separate visible-result a
   await page.mouse.move(0,0)
   expect(paidCalls).toBe(0)
   expect(accepts).toBe(0)
+  await wikiShot(page, 'generation-request', dialog)
   await dialog.getByRole('button',{name:'确认提示词与参考图，开始生成'}).click()
+
   await expect(dialog.getByRole('img',{name:'本次生成结果'})).toBeVisible()
+  await wikiShot(page, 'generation-result', dialog)
   expect(paidCalls).toBe(1)
   expect(accepts).toBe(0)
   await dialog.getByRole('button',{name:'确认结果并存入图库'}).click()

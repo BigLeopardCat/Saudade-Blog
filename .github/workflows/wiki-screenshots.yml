@@ -1,0 +1,74 @@
+name: Wiki screenshots
+
+on:
+  pull_request:
+    branches: [cn_sora_blog]
+    paths:
+      - 'frontend/tests/browser/**'
+      - '.github/workflows/wiki-screenshots.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wiki-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: frontend/.node-version
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck:browser
+      - name: Prepare browser system dependencies
+        timeout-minutes: 5
+        run: |
+          sudo tee /etc/apt/saudade-ci.sources.list >/dev/null <<'EOF'
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe restricted multiverse
+          EOF
+          sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
+          Dir::Etc::sourcelist "/etc/apt/saudade-ci.sources.list";
+          Dir::Etc::sourceparts "-";
+          Acquire::Retries "3";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          npx --no-install playwright install-deps chromium
+      - name: Install Chinese font
+        run: bash ../scripts/ci/install-cjk-font.sh
+      - name: Install locked Chromium
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 45000
+        run: npx --no-install playwright install chromium
+      - name: Capture isolated component states
+        env:
+          WIKI_SCREENSHOT_DIR: ${{ runner.temp }}/wiki-screenshots
+        run: >-
+          npx --no-install playwright test
+          r2-settings.spec.ts article-collaboration.spec.ts article-publication.spec.ts
+          cover-display.spec.ts gallery.spec.ts image-generation.spec.ts
+          admin-tags.spec.ts admin-categories.spec.ts announcement.spec.ts reading-controls.spec.ts
+          --grep 'gallery navigation state opens|real editor reviews body|accept title/body and publish in place|cover picker reads gallery|portrait covers retain|gallery opens details|image generation requires request|tag editing targets|category create failure|failed business save keeps|labels remain clickable'
+      - name: Preserve tutorial screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wiki-screenshots
+          path: ${{ runner.temp }}/wiki-screenshots
+          retention-days: 7
+          if-no-files-found: error

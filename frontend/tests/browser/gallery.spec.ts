@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import {test,expect} from './sandbox'
 import type {GalleryImage} from '../../src/apis/galleryApi'
 
@@ -45,6 +46,7 @@ test('gallery opens details, selects explicitly, uses two list columns and updat
   await page.goto(sandboxURL)
   await expect(page.getByRole('button',{name:'查看图片 图片1'})).toBeVisible()
   await expect(page.getByRole('button',{name:'删除选中',exact:true})).toBeDisabled()
+  await wikiShot(page, 'gallery')
   const selector=page.getByRole('checkbox',{name:'选择图片 图片1'})
   const overlay=page.locator('.albumGrid .albumTile').first().locator('.ant-checkbox-wrapper')
   await expect(overlay).toHaveCSS('background-color','rgba(0, 0, 0, 0)')
@@ -67,6 +69,7 @@ test('gallery opens details, selects explicitly, uses two list columns and updat
   const detail=page.getByRole('dialog',{name:'图片1',exact:true})
   await expect(detail).toBeVisible()
   await expect(detail.locator('.albumDetailImage')).toBeVisible()
+  await wikiShot(page, 'gallery-detail', detail)
   expect(deletes).toBe(0)
   expect(changes).toBe(0)
   await detail.getByRole('button',{name:'重命名',exact:true}).click()
