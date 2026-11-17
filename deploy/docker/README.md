@@ -156,7 +156,9 @@ Agent 独立升级：取回干净的完整 Agent 提交，评估兼容性后修�
 
 ## 镜像交付与许可
 
-提供 Dockerfile 和容器 CI，默认固定源码构建，不假定已有公共镜像。主线具备新工作流后，可手动运行 `PostgreSQL container` 并勾选 `package_images`；只有端到端检查成功后，才导出三个应用镜像及 PostgreSQL 基础镜像，附 SHA-256 校验文件，作为保留三天的 Actions artifact。归档不包含运行配置和数据卷，下载后按完整源码提交长期保存。
+发行版可提供经验证的预构建镜像与原生产物，见[快速安装](../prebuilt.md)。从同一 Release 获取镜像归档及 SHA256SUMS，校验后 `docker load --input` 导入，再用完整 SHA 对应的干净源码执行 `deploy/install.sh --reuse --no-build`。首次准备配置、备份与升级要求不变。
+
+维护者手动运行 `PostgreSQL container` 并选择 `package_images`，只有端到端安装和恢复检查全部成功才导出安装包。指定 `release_tag` 时只允许附加到同版本、同完整源码的草稿 Release；构建工作流不自动正式发布。Actions artifact 保留七天，正式版本由维护者审核后长期附在 GitHub Release。归档不包含运行配置和数据卷。
 
 也可在构建机先 `--prepare-only`，再用上述 Compose 命令执行 `build` 和 `docker image save` 导出指定版本。目标机验证校验值、`docker image load` 后执行安装器 `--reuse --no-build`；需有相同版本的干净源码和独立生成的配置，不复用构建机的管理员密码及模型密钥。
 

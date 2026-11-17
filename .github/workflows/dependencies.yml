@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
-          tool: cargo-deny@0.20.2
+          tool: cargo-deny@0.21.0
       - name: Resolve the locked enabled dependency graph
         run: |
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
