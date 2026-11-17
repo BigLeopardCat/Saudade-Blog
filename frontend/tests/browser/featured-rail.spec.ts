@@ -151,6 +151,8 @@ test('pinned announcements share the rail, emphasize publication time and open a
     await expect(announcement.locator('time')).toHaveText('2026-11-17 09:45')
     expect(await announcement.locator('time').evaluate(el=>parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(15)
     await expect(root.locator('.featuredSlide').nth(2).locator('.ArticleTitle')).toHaveText('春日手记 1')
+    await root.hover()
+    await expect(root).toHaveAttribute('data-paused','true')
     await announcement.getByRole('button',{name:'站点维护公告'}).click()
     const dialog=page.getByRole('dialog')
     await expect(dialog).toContainText('维护期间页面仍可阅读。')

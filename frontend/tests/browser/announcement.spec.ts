@@ -143,7 +143,7 @@ test('failed announcement update preserves the existing draft and notifies only 
   expect(await page.locator('body').getAttribute('data-published')).toBe('1')
 })
 
-test('failed announcement delete keeps its selected row and never emits a publish notification', async ({ page, sandboxURL }) => {
+test('announcement delete preserves selection on failure and refreshes pinned content after success', async ({ page, sandboxURL }) => {
   let reads = 0
   let deletes = 0
   let removed = false
@@ -179,7 +179,7 @@ test('failed announcement delete keeps its selected row and never emits a publis
   await expect(row).toHaveCount(0)
   await expect(page.locator('.ant-message-success')).toContainText('已删除')
   expect(deletes).toBe(2)
-  expect(await page.locator('body').getAttribute('data-published')).toBe('0')
+  expect(await page.locator('body').getAttribute('data-published')).toBe('1')
 })
 
 
