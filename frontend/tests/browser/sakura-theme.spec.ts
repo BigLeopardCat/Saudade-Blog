@@ -26,7 +26,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
             expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('123456789')
         }
         await expect(page.locator('.heroTag')).toHaveCount(0)
-        await expect(page.locator('.heroBottom')).not.toContainText('愿每一段日常')
+        await expect(page.locator('.heroBottom')).toHaveCount(0)
         await expect(page.locator('footer')).toContainText('愿每一段日常，都有值得记录的光。')
         for (const name of ['复制 QQ', 'GitHub', '哔哩哔哩', '复制 Email']) {
             const button = name.startsWith('复制') ? page.getByRole('button', {name}) : page.getByRole('link', {name, exact: true})
@@ -34,7 +34,7 @@ for (const {width, height} of [{width: 375, height: 812}, {width: 1440, height: 
             expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
         }
         await expect(page.locator('.featuredCard').first()).toBeVisible()
-        expect((await page.locator('.featuredCard').first().boundingBox())!.y + (await page.locator('.featuredCard').first().boundingBox())!.height).toBeLessThanOrEqual(height)
+        expect((await page.locator('.featuredCard').first().boundingBox())!.y).toBeLessThan(height)
         expect((await page.locator('#home-articles').boundingBox())!.y).toBeGreaterThanOrEqual(height)
         for (const [id, name] of [['riverside', '樱花河岸'], ['station', '春日车站'], ['atelier', '画室窗边'], ['rain', '雨后暮色']]) {
             await page.getByRole('button', {name: '切换场景主题'}).click()

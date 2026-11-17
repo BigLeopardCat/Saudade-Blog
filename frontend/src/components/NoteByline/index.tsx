@@ -17,9 +17,13 @@ const NoteByline = ({ item, siteName, siteAvatar, compact = false, card = false 
     const who = noteAuthor(item, { name: siteName, avatar: siteAvatar });
 
     if (card) return <>
-        <span className="noteCardAuthor" title={who.name}><Avatar src={who.avatar || undefined} size={16}/><span>{who.name}</span></span>
-        <time className="post-date" dateTime={dayjs(item.createTime).isValid() ? dayjs(item.createTime).toISOString() : undefined}
-            title={`更新于 ${dayjs(item.updateTime).format('YYYY-MM-DD')}`}>{dayjs(item.createTime).format('YYYY-MM-DD')}</time>
+        <span className="noteCardAuthor" title={who.name}><Avatar src={who.avatar || undefined} size={24}/><span>{who.name}</span></span>
+        {([['发布', item.createTime], ['更新', item.updateTime]] as const).map(([label, value]) => {
+            const date = dayjs(value);
+            return <span className="noteCardDate" key={label}><span>{label}</span>
+                <time className="post-date" dateTime={date.isValid() ? date.toISOString() : undefined}>{date.isValid() ? date.format('YYYY-MM-DD') : '—'}</time>
+            </span>;
+        })}
     </>;
     return (
         <>

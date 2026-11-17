@@ -16,6 +16,7 @@ function Reader() {
             <button onClick={() => navigate('/')}>返回首页</button><button onClick={() => setEmpty(value => !value)}>切换空目录</button>
             <button onClick={() => {document.getElementById('delayed-image')!.style.height = '480px'}}>图片加载完成</button>
         </div>
+        <aside data-testid="reader-chat" style={{position: 'fixed', left: 'var(--reader-edge)', top: 'var(--reader-top)', width: 'var(--reader-chat-width)', height: 0}}/>
         <div className="readContainer"><div className="readContent"><div className="readBody"><div id="content">
             {empty ? <p>没有标题的文章</p> : <><h1>春日手记</h1><div id="delayed-image" style={{height: 40}}/>
                 <p style={{height: 600}}>第一节正文</p><h2>沿途风景</h2><p style={{height: 750}}>第二节正文</p>

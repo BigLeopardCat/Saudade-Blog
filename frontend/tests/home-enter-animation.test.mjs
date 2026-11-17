@@ -46,8 +46,8 @@ console.log('\n③ Article：不放入场那一档必须"起手即终态"，不�
         '默认值仍是 `enter = true`（别的调用点不传参时行为不变）');
     // `initial={false}` 是 framer-motion 的"不做入场动画、直接以 animate 的值渲染"。
     // 写 `{}` 或 `{opacity:1,y:0}` 都拦不住它先渲染 initial 那一帧。
-    ok(/initial=\{enter\s*\?\s*\{[^}]*\}\s*:\s*false\}/.test(article),
-        '`initial={enter ? {…} : false}`（那一档恒为 `false` 字面量）',
+    ok(/initial=\{enter\s*&&\s*!reduced\s*\?\s*\{[^}]*\}\s*:\s*false\}/.test(article),
+        '`initial={enter && !reduced ? {…} : false}`（缓存和减少动态效果均直接显示）',
         article.match(/initial=\{[^\n]*\}/)?.[0]);
     ok(!/initial=\{\{\s*opacity:\s*0/.test(article.replace(/enter\s*\?\s*/, '')),
         '  没有"无条件 opacity:0"的 initial（那正是每次回来都白屏的写法）');

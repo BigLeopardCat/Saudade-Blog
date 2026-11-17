@@ -13,7 +13,8 @@ export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
         const content = document.getElementById('content');
         if (!content) return;
         let headings: HTMLElement[] = [], frame = 0, initialHash = hashId();
-        const offset = () => Math.max(24, (document.querySelector('.headContainer')?.getBoundingClientRect().bottom || 76) + 24);
+        const header = document.querySelector<HTMLElement>('.headContainer');
+        const offset = () => header?.dataset.hidden === 'true' ? 24 : Math.max(24, (header?.getBoundingClientRect().bottom || 76) + 24);
         const scrollToHeading = (id: string) => {
             const heading = headings.find(item => item.id === id);
             if (heading) window.scrollTo({top: window.scrollY + heading.getBoundingClientRect().top - offset(), behavior: 'instant'});
@@ -61,9 +62,11 @@ export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
         mutation.observe(content, {childList: true, subtree: true, characterData: true});
         const resize = new ResizeObserver(schedule);
         resize.observe(content);
-        const header = document.querySelector('.headContainer');
         if (header) resize.observe(header);
         collect();
+        header?.addEventListener('transitionend', schedule);
+        const headerState = new MutationObserver(schedule);
+        if (header) headerState.observe(header, {attributes: true, attributeFilter: ['data-hidden']});
         window.addEventListener('scroll', schedule, {passive: true});
         window.addEventListener('resize', schedule);
         window.addEventListener('hashchange', onHash);
@@ -73,6 +76,7 @@ export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
         return () => {
             cancelAnimationFrame(frame);
             mutation.disconnect(); resize.disconnect();
+            header?.removeEventListener('transitionend', schedule); headerState.disconnect();
             window.removeEventListener('scroll', schedule);
             window.removeEventListener('resize', schedule);
             window.removeEventListener('hashchange', onHash);

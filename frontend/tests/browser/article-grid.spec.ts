@@ -52,32 +52,41 @@ test('long metadata stays inside the compact card without hiding its author or d
     }
 })
 
-test('summary expansion keeps card geometry and date rows stable and resets scrolling', async ({page, sandboxURL}) => {
-    await page.setViewportSize({width: 1440, height: 900})
+test('whole-card intent enlarges the card, reflows neighbors and keeps full labels and dates', async ({page, sandboxURL}) => {
+    await page.setViewportSize({width: 1440, height: 1000})
+    await page.clock.install()
     await page.goto(sandboxURL)
     const card = page.locator('.ArticleCard').nth(2)
-    const summary = card.locator('.ArticleDescription')
     await card.scrollIntoViewIfNeeded()
-    const geometry = () => card.evaluate(element => {
-        const bounds = element.getBoundingClientRect()
-        const footer = element.querySelector('.ArticleFooter')!.getBoundingClientRect()
-        return {height: bounds.height, footerOffset: footer.y - bounds.y}
-    })
-    const before = await geometry()
-    const collapsedHeight = await summary.evaluate(element => element.clientHeight)
-    await summary.hover()
-    await expect.poll(() => summary.evaluate(element => element.clientHeight)).toBeGreaterThan(collapsedHeight)
-    const lines = await summary.evaluate(element => ({height: element.clientHeight, lineHeight: parseFloat(getComputedStyle(element).lineHeight)}))
-    expect(lines.height % lines.lineHeight).toBe(0)
-    const expanded = await geometry()
-    expect(Math.abs(expanded.height - before.height)).toBeLessThanOrEqual(1)
-    expect(Math.abs(expanded.footerOffset - before.footerOffset)).toBeLessThanOrEqual(1)
-    await summary.evaluate(element => { element.scrollTop = 80 })
-    expect(await summary.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    await page.mouse.move(0, 0)
+    await page.clock.runFor(1000)
+    const before = (await card.boundingBox())!
+    const later = page.locator('.ArticleCard').nth(5)
+    const laterBefore = (await later.boundingBox())!
+    const summary = card.locator('.ArticleDescription')
+    const beforeSummary = await summary.evaluate(element => element.clientHeight)
     await card.locator('.ArticleCover').hover()
-    await expect.poll(() => summary.evaluate(element => element.scrollTop)).toBe(0)
-    await expect.poll(() => summary.evaluate(element => element.clientHeight)).toBe(collapsedHeight)
-    const updated = (await card.locator('.post-date').last().boundingBox())!
-    const after = (await card.boundingBox())!
-    expect(updated.y + updated.height).toBeLessThanOrEqual(after.y + after.height)
+    await page.clock.runFor(200)
+    await expect(card).toHaveAttribute('data-expanded', 'false')
+    await page.clock.runFor(650)
+    await expect(card).toHaveAttribute('data-expanded', 'true')
+    const expanded = (await card.boundingBox())!
+    expect(expanded.width).toBeGreaterThan(before.width + 20)
+    expect(expanded.height).toBeGreaterThan(before.height + 30)
+    expect((await later.boundingBox())!.y).toBeGreaterThan(laterBefore.y + 30)
+    expect(await summary.evaluate(element => element.clientHeight)).toBeGreaterThan(beforeSummary)
+    await expect(summary).toHaveCSS('position', 'static')
+    await expect(card.locator('.noteCardDate')).toHaveCount(2)
+    expect(await card.locator('.noteCardDate').evaluateAll(cells => cells.every(cell => {
+        const label = cell.children[0].getBoundingClientRect(), date = cell.children[1].getBoundingClientRect()
+        return Math.abs(label.x + label.width / 2 - date.x - date.width / 2) < 1
+    }))).toBe(true)
+    const cover = (await card.locator('.ArticleCover').boundingBox())!
+    expect(Math.abs(cover.x - expanded.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(cover.width - expanded.width)).toBeLessThanOrEqual(3)
+    expect(await card.locator('.tags').evaluate(element => element.scrollHeight <= element.clientHeight + 1)).toBe(true)
+    await page.mouse.move(0, 0)
+    await page.clock.runFor(1100)
+    await expect(card).toHaveAttribute('data-expanded', 'false')
+    expect(Math.abs((await card.boundingBox())!.width - before.width)).toBeLessThan(2)
 })

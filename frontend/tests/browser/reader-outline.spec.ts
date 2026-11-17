@@ -10,10 +10,14 @@ for (const width of [1440, 1920]) {
         await expect(current).toHaveAttribute('href', '#' + encodeURIComponent('沿途风景-2'))
         expect(await page.locator('#content :is(h1,h2)').evaluateAll(nodes => new Set(nodes.map(node => node.id)).size)).toBe(4)
         const card = (await page.locator('.readContent').boundingBox())!
-        expect(Math.abs(card.x + card.width / 2 - width / 2 - width * .02)).toBeLessThan(2)
+        const chat = (await page.getByTestId('reader-chat').boundingBox())!
+        const leftGap = card.x - chat.x - chat.width
+        expect(Math.abs(leftGap - 20)).toBeLessThan(2)
         expect(card.width).toBeGreaterThanOrEqual(width * .49)
         const toc = (await page.locator('.navigation').boundingBox())!
-        expect(toc.width).toBeGreaterThan(280)
+        expect(toc.width).toBeGreaterThanOrEqual(280)
+        const rightGap = toc.x - card.x - card.width
+        expect(Math.abs(leftGap - rightGap)).toBeLessThan(2)
         expect(toc.x + toc.width).toBeLessThanOrEqual(width)
         await expect(outline).toHaveCSS('backdrop-filter', /blur/)
         await outline.getByRole('link', {name: '春日手记', exact: true}).click()

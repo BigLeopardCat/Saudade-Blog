@@ -1,17 +1,17 @@
 .homeFirstScreen
   min-height: 100svh
   box-sizing: border-box
-  padding: 108px 0 24px
+  padding: 100px 0 24px
   display: flex
   flex-direction: column
-  justify-content: center
-  gap: clamp(20px, 4vh, 48px)
+  justify-content: flex-start
+  gap: clamp(22px, 3vh, 32px)
   position: relative
   .SelfDescription
-    width: min(1120px, 88%)
+    width: min(1280px, 92%)
     margin: 0 auto
     display: grid
-    grid-template-columns: 1.1fr 1fr
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 360px)
     align-items: center
     gap: clamp(24px, 5vw, 80px)
     min-height: 0
@@ -20,7 +20,7 @@
     padding: 24px 0
     color: var(--scene-ink)
   .home-title-h3
-    font: 500 clamp(36px, 4.3vw, 64px)/1.17 Georgia, 'Noto Serif CJK SC', serif
+    font: 500 clamp(36px, 4vw, 56px)/1.17 Georgia, 'Noto Serif CJK SC', serif
     letter-spacing: -.035em
     color: var(--scene-ink)
     margin: 0 0 28px
@@ -47,52 +47,27 @@
     object-fit: cover
     border-radius: 12px
   .homePinned
-    width: min(1120px, 88%)
+    width: min(1280px, 92%)
     margin: 0 auto
-  .heroBottom
-    display: flex
-    align-items: center
-    justify-content: center
-    flex-direction: column
-    gap: 10px
-    padding: 0 20px
-    .home-one-say
-      color: var(--scene-ink)
-      font: 400 16px/1.6 'LXGW WenKai TC', 'KaiTi', serif
-      letter-spacing: .15em
-      text-align: center
-      margin: 0
-      text-wrap: balance
-    .heroScroll
-      border: 1px solid var(--scene-edge)
-      background: var(--scene-glass)
-      border-radius: 50%
 
 .ContentContainer
   display: flex
   flex-direction: column
   align-items: center
   position: relative
-  padding: 64px 0 48px
+  padding: 36px 0 48px
   scroll-margin-top: 85px
   background: transparent
   .homeSectionHeading
-    width: min(1120px, 88%)
+    width: min(1280px, 92%)
     margin-bottom: 24px
     color: var(--scene-ink)
-  .allContent
-    display: flex
-    align-items: center
-    gap: 10px
-    font: 500 25px/1.5 Georgia, serif
-    .iconfont
-      font-size: 22px
-      color: var(--scene-accent)
   .allArticles
-    width: min(1120px, 88%)
+    width: min(1280px, 92%)
     display: grid
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr))
-    gap: 18px
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr))
+    gap: 20px
+    align-items: start
     > .article
       display: flex
       min-width: 0
@@ -148,8 +123,6 @@
       border-radius: 9px
     .homePinned
       width: 92%
-    .heroBottom .home-one-say
-      font-size: 13px
   .ContentContainer
     padding-top: 36px
     .homeSectionHeading, .allArticles
@@ -157,12 +130,6 @@
     .allArticles
       grid-template-columns: minmax(0, 1fr)
       gap: 16px
-@media (prefers-reduced-motion: reduce)
-  .ContentContainer .allArticles .ArticleCard
-    transition: none
-    &:hover
-      transform: none
-
 @font-face
   font-family: 'LXGW WenKai TC'
   src: url('../../../assets/fonts/lxgw-wenkai-tc-sig.woff2') format('woff2')

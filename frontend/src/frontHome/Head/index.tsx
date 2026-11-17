@@ -197,7 +197,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
     return (
         <>
-            <button type="button" className="navigationReveal" aria-label="显示导航栏" tabIndex={navigation.hidden ? 0 : -1} data-active={navigation.hidden} onPointerEnter={navigation.reveal} onFocus={navigation.reveal}/>
+            <button type="button" className="navigationReveal" aria-label="显示导航栏" tabIndex={navigation.hidden ? 0 : -1} data-active={navigation.hidden} onPointerEnter={navigation.onEdgeEnter} onPointerLeave={navigation.onEdgeLeave} onFocus={navigation.reveal}/>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
             <div id="public-navigation-drawer" aria-hidden={!phoneBarShow} className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
@@ -241,7 +241,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            <div ref={navigation.bar} data-hidden={navigation.hidden} onPointerEnter={navigation.onPointerEnter} onPointerLeave={navigation.onPointerLeave} onFocusCapture={navigation.onFocusCapture} className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
+            <div ref={navigation.bar} data-hidden={navigation.hidden} onPointerEnter={navigation.onPointerEnter} onPointerLeave={navigation.onPointerLeave} onFocusCapture={navigation.onFocusCapture} onBlurCapture={navigation.onBlurCapture} className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
                     <button type="button" aria-label="打开导航菜单" aria-expanded={phoneBarShow} aria-controls="public-navigation-drawer" className="sceneTool" onClick={() => setPhoneBarShow(value => !value)}><SceneIcon name={phoneBarShow ? 'close' : 'menu'}/></button>
                 </div>

@@ -4,7 +4,6 @@ import {SITE_TITLE, SITE_DESCRIPTION} from "../../../utils/siteUrl";
 import './index.sass'
 // Section styles override the home defaults.
 import '../../../scene.css'
-import SceneIcon from '../../../components/SceneIcon'
 import './featured.sass'
 import FeaturedArticles from './FeaturedArticles'
 import FeaturedPhotos from './FeaturedPhotos'
@@ -17,6 +16,8 @@ import UserState from "../../../interface/UserState";
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
+import ArticleGrid from './ArticleGrid';
+import SectionHeading from '../../../components/SectionHeading';
 import {useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
 import {getNoteFeed, getTopNotes} from "../../../apis/NoteMethods.tsx";
@@ -199,9 +200,6 @@ const ContentHome = () => {
             : fetchTop();
         return Promise.all([refreshTop, invalidate ? feed.refresh() : feed.first(pageSizeRef.current, true)]).then(() => {});
     }, { poll: false, agentEvent: hasArticleInvalidation });
-    const handleScrollDown = () => {
-        document.getElementById('home-articles')?.scrollIntoView({behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
-    }
     useEffect(() => {
         if (!feedState.loaded || feedState.pending || feedState.error || !hasMoreArticles) return;
         const target = feedBoundaryRef.current;
@@ -248,25 +246,22 @@ const ContentHome = () => {
             {topError && <div role="status" className="homeLoadError">置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button></div>}
             {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
         </div>
-        <div className="heroBottom">
-            <button className="heroScroll sceneTool" type="button" aria-label="浏览全部文章" onClick={handleScrollDown}><SceneIcon name="down"/></button>
-        </div>
         </section>
         <div className="ContentContainer dark-pic" id="home-articles">
             <div className="homeSectionHeading">
-                <div className="allContent"><i className="iconfont icon-wenzhang2" aria-hidden="true"/>文章</div>
+                <SectionHeading icon="document">文章</SectionHeading>
             </div>
 
             <div className="allArticles allArticlesMeasure" aria-hidden="true" ref={measureRef}>
                 <div style={{ gridColumn: '1 / -1' }} />
             </div>
 
-            <div className="allArticles">
+            <ArticleGrid>
 
                 {otherArticles.map((item,index) => (
                     <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} enter={enterAnimation} key={item.key}/>
                 ))}
-            </div>
+            </ArticleGrid>
             {feedState.error && <div role="status" className="homeLoadError">
                 {feedState.error} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>重试</button>
             </div>}
