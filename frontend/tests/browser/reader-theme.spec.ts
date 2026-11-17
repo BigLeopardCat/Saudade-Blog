@@ -18,6 +18,8 @@ for (const width of [375, 1440, 1920]) {
                 : path.endsWith('/user') ? {blogTitle: 'Saudade', userTalk: ''} : path.endsWith('/social') ? {} : []
             return route.fulfill({json: {code: 200, data}})
         })
+        await page.route('**/default-avatar.png', route => route.fulfill({contentType: 'image/png',
+            body: readFileSync(new URL('../../public/default-avatar.png', import.meta.url))}))
         await page.route('**/loading.svg', route => route.fulfill({contentType: 'image/svg+xml',
             body: readFileSync(new URL('../../public/loading.svg', import.meta.url), 'utf8')}))
         await page.goto(sandboxURL)
