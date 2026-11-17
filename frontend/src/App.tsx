@@ -23,7 +23,11 @@ function App() {
             const on = !!(e as CustomEvent).detail;
             setDark(on);
         };
+        const handleStorage = (e: StorageEvent) => {
+            if (e.key === 'isDarkMode' || e.key === null) setDark(readDarkMode());
+        };
         window.addEventListener('darkmode-change', handleDarkModeChange);
+        window.addEventListener('storage', handleStorage);
         const handleScroll = () => {
             const currentScrollHeight = window.scrollY || document.documentElement.scrollTop;
             setScrollHeight(currentScrollHeight);
@@ -32,6 +36,7 @@ function App() {
         window.addEventListener('scroll', handleScroll);
         return () => {
             window.removeEventListener('darkmode-change', handleDarkModeChange);
+            window.removeEventListener('storage', handleStorage);
             window.removeEventListener('scroll', handleScroll);
         };
     }, []);
