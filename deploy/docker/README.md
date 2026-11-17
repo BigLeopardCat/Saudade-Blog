@@ -148,7 +148,7 @@ sha256sum blog.dump agent.dump uploads.tar > backup.sha256
 1. 记录两个版本，备份数据库、上传内容和私有配置。
 2. 审查新旧提交间的 PostgreSQL 编号迁移，只执行新增且适用的 SQL，使用 `psql -v ON_ERROR_STOP=1`。DDL 以 `SET ROLE saudade_owner` 执行，应用角色只有 CRUD 权限。向量扩展、所有权转换、破坏性迁移单独评估，不重跑 `0000_schema.sql`。
 3. 在同一源码目录切到已审查的博客完整 SHA，执行 `bash deploy/install.sh --reuse --upgrade`。它更新镜像选择、保留凭据，并将原版本选择保存到私有 `before-*` 目录；不执行数据库迁移。
-4. 核对博客 `/api/health/ready`、`/build-info.json`，启用 Agent 时在容器内查询 `/ready` 和 `/version`。就绪不等于模型质量或所有业务写入已验收。
+4. 核对博客 `/api/health/ready`、`/build-info.json`，启用 Agent 时在容器内查询 `/ready` 和 `/version`。就绪不等于模型质量或所有业务写入已验收。scheduler 探针等待 DBOS 初始化和队列注册后检查进程标记；不调用模型或业务接口，也不证明数据库持续可用或任务处理时延。
 
 Agent 独立升级：取回干净的完整 Agent 提交，评估兼容性后修改 `compose.env` 的 `AGENT_SOURCE`、`AGENT_REVISION`，同步 `installation.json` 的 `agent_revision`，再执行 `--reuse`。不随远端 HEAD 自动升级。
 
