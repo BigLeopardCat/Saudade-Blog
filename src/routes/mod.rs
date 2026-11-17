@@ -7,8 +7,8 @@ pub mod document_reads;
 pub mod categories;
 pub mod tags;
 pub mod web_info;
-pub mod featured_photos;
 pub mod announcements;
+pub mod announcement_pins;
 pub mod talks;
 pub mod upload;
 pub mod gallery;
@@ -198,6 +198,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/tagone", get(tags::list_tags_one)) 
         .route("/api/public/tagtwo", get(tags::list_tags_two)) 
         .route("/api/public/announcements", get(announcements::list_announcements))
+        .route("/api/public/pinned-announcements", get(announcement_pins::list))
         .route("/sitemap.xml", get(sitemap::sitemap_xml))
         
         
@@ -216,7 +217,6 @@ pub fn create_router(state: AppState) -> Router {
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
-        .route("/api/public/featured-photos", get(featured_photos::list))
         .route("/api/public/social", get(web_info::get_social_info))
         
         // Agent Chat
@@ -376,6 +376,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tag/move", post(tags::move_tag))
         .route("/api/protected/announcements", post(announcements::create_announcement).delete(announcements::delete_announcement))
         .route("/api/protected/announcements/{id}", put(announcements::update_announcement))
+        .route("/api/protected/announcements/{id}/pin", put(announcement_pins::update))
         .route("/api/protected/tagone/{id}", put(tags::update_tag_one))
         .route("/api/protected/tagtwo/{id}", put(tags::update_tag_two))
 

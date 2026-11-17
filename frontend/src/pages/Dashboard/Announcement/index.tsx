@@ -1,12 +1,9 @@
-import { Button, Form, Input, Modal, Table, message } from 'antd'
-/* 显式标注列类型：不标注的话 `responsive: ['lg']` 会被推成 `string[]`，
-   而 `ColumnType.responsive` 要的是 `Breakpoint[]` —— tsc 直接在 `Table` 那行报不兼容。
-   行类型照本页真实用到的四个字段写（不写 `<any>`：`no-explicit-any` 是会进 CI 的告警）。 */
+import { Button, Form, Input, Modal, Switch, Table, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
-type AnnouncementRow = { id: number; title: string; content: string; createdAt: string }
+type AnnouncementRow = { id: number; title: string; content: string; createdAt: string; pinned?: boolean }
 import { useEffect, useRef, useState } from 'react'
-import { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../../../apis/AnnouncementMethods.tsx'
+import { getAnnouncements, getPinnedAnnouncements, pinAnnouncement, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../../../apis/AnnouncementMethods.tsx'
 import { notifyAnnouncementPublished } from '../../../components/AnnouncementModal/pending.ts'
 
 import { runAdminMutation } from '../../../utils/adminMutation'
@@ -27,9 +24,11 @@ const AnnouncementPage = () => {
     const load = async () => {
         lastLoadRef.current = Date.now()
         try {
-            const res = await getAnnouncements()
+            const [res, pins] = await Promise.all([getAnnouncements(), getPinnedAnnouncements()])
+            if (pins.data?.code !== 200 || !Array.isArray(pins.data.data)) throw new Error("pin read failed")
+            const selected = new Set<number>(pins.data.data.map((row: AnnouncementRow) => row.id))
             if (res.status === 200 && res.data?.code === 200 && Array.isArray(res.data.data)) {
-                setData(res.data.data.map((item: AnnouncementRow) => ({ ...item, key: item.id })))
+                setData(res.data.data.map((item: AnnouncementRow) => ({ ...item, key: item.id, pinned: selected.has(item.id) })))
             } else {
                 message.error(res.data?.message || '公告加载失败，请重试')
             }
@@ -74,13 +73,23 @@ const AnnouncementPage = () => {
             () => deleteAnnouncement(selectedRowKeys as number[]), () => {
                 setSelectedRowKeys([])
                 message.success('已删除')
+                notifyAnnouncementPublished()
                 void load()
             }, (reason) => { message.error(reason) })
     }
 
+    const setPinned = (row: AnnouncementRow, pinned: boolean) => runAdminMutation(mutationLock, setBusy,
+        () => pinAnnouncement(row.id, pinned), () => {
+            message.success(pinned ? '公告已置顶' : '已取消公告置顶')
+            notifyAnnouncementPublished()
+            void load()
+        }, reason => {message.error(reason)})
+
     const columns: ColumnsType<AnnouncementRow> = [
         { title: 'ID', dataIndex: 'id', width: 60, responsive: ['lg'] },
         { title: '标题', dataIndex: 'title' },
+        {title: '置顶', width: 72, render: (_: unknown, record: AnnouncementRow) => <Switch checked={!!record.pinned} disabled={busy}
+            aria-label={`${record.pinned ? '取消置顶' : '置顶'}公告：${record.title}`} onChange={value => {void setPinned(record, value)}}/>},
         { title: '内容', dataIndex: 'content', ellipsis: true },
         { title: '时间', dataIndex: 'createdAt', width: 180, responsive: ['lg'] },
         {

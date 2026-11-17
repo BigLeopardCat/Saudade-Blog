@@ -1,0 +1,6 @@
+.responsiveNoteTags { position: relative; width: 100%; min-width: 0; }
+.responsiveNoteTags .tagFitVisible { display: block; }
+.responsiveNoteTags .tagFitVisible > span { display: flex !important; gap: 4px; overflow: visible !important; }
+.responsiveNoteTags .tagFitVisible .ant-tag { flex: 0 0 auto; }
+.responsiveNoteTags .tagFitMeasure { position: absolute; top: 0; left: 0; display: flex; gap: 4px; width: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.responsiveNoteTags .tagFitMeasure .ant-tag { flex: 0 0 auto; max-width: none; }

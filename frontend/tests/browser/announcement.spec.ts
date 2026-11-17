@@ -181,3 +181,27 @@ test('failed announcement delete keeps its selected row and never emits a publis
   expect(deletes).toBe(2)
   expect(await page.locator('body').getAttribute('data-published')).toBe('0')
 })
+
+
+test('announcement pinning keeps the saved state on failure and publishes a successful retry', async ({page,sandboxURL}) => {
+    let pinned=true,writes=0
+    await page.route(listAPI,route=>route.fulfill({json:{code:200,data:[{id:7,title:'站点维护',content:'公告正文',createdAt:'2026-11-17 09:45:00'}]}}))
+    await page.route('**/api/public/pinned-announcements',route=>route.fulfill({json:{code:200,data:pinned?[{id:7}]:[]}}))
+    await page.route('**/api/protected/announcements/7/pin',route=>{
+        expect(route.request().method()).toBe('PUT')
+        expect(route.request().postDataJSON()).toEqual({pinned:false})
+        writes++
+        if(writes===1)return route.fulfill({json:{code:500,message:'保存置顶失败'}})
+        pinned=false
+        return route.fulfill({json:{code:200,data:'saved'}})
+    })
+    await page.goto(sandboxURL)
+    const control=page.getByRole('switch',{name:'取消置顶公告：站点维护'})
+    await expect(control).toBeChecked()
+    await control.click()
+    await expect(page.locator('.ant-message-error')).toContainText('保存置顶失败')
+    await expect(control).toBeChecked()
+    await control.click()
+    await expect(page.getByRole('switch',{name:'置顶公告：站点维护'})).not.toBeChecked()
+    expect(writes).toBe(2)
+})

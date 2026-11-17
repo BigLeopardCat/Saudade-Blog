@@ -25,6 +25,7 @@ for (const width of [375, 1440]) {
     })
     await page.goto(sandboxURL)
     await expect(page.locator('.SelfDescription')).toBeVisible()
+    await expect(page.locator('.featuredPhotoStack')).toHaveCount(0)
     await expect(page.locator('.heroPanel')).toBeVisible()
     await expect(page.locator('.heroRight .vitrine')).toHaveCount(0)
     await expect(page.locator('canvas')).toHaveCount(0)
@@ -68,7 +69,7 @@ for (const width of [375, 1440]) {
     expect(feed.y).toBeGreaterThanOrEqual(firstScreen.y + firstScreen.height)
     expect(card.height).toBe(216)
     expect(await page.locator('.featuredArticles .ArticleCover img').first().evaluate(el => getComputedStyle(el).objectFit)).toBe('cover')
-    await expect(featured.locator('.homeSectionTitle')).toHaveText('置顶文章')
+    await expect(featured.locator('.homeSectionTitle')).toHaveText('置顶')
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     await expect(featured.locator('.ArticleTitle a').first()).toHaveAttribute('href', '/article/1')
     if (width === 375) {

@@ -1,13 +1,19 @@
 import {useNavigate} from 'react-router-dom'
 import SectionHeading from '../../../components/SectionHeading'
 import ArticleCard from '../../../components/ArticleCard'
-import {useCallback, useEffect, useRef, useState} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
+import {Modal} from 'antd'
+import AnnouncementCard, {announcementTime} from '../../../components/AnnouncementCard'
+import StickerText from '../../../components/StickerText'
+import type {AnnouncementItem} from '../../../apis/AnnouncementMethods'
+import {useIsDarkMode} from '../../../theme'
 import type {NoteType} from '../../../interface/NoteType'
 import type {CategoriesType} from '../../../interface/CategoriesType'
 import type {renderNoteTags} from '../../../apis/TagMethods'
 
 interface Props {
     items: NoteType[]
+    announcements?: AnnouncementItem[]
     categories: CategoriesType[]
     avatar: string
     name: string
@@ -16,7 +22,15 @@ interface Props {
 const GAP = 18
 const SPEED = 18
 
-export default function FeaturedArticles({items, categories, avatar, name, tags}: Props) {
+const EMPTY: AnnouncementItem[] = []
+type PinnedEntry = {kind: 'article'; key: string; title: string; article: NoteType} | {kind: 'announcement'; key: string; title: string; announcement: AnnouncementItem}
+export default function FeaturedArticles({items, announcements = EMPTY, categories, avatar, name, tags}: Props) {
+    const entries = useMemo<PinnedEntry[]>(() => [
+        ...announcements.map(item => ({kind: 'announcement' as const, key: `announcement-${item.id}`, title: item.title, announcement: item})),
+        ...items.map(item => ({kind: 'article' as const, key: `article-${item.key}`, title: item.noteTitle, article: item})),
+    ], [items, announcements])
+    const [opened, setOpened] = useState<AnnouncementItem | null>(null)
+    const dark = useIsDarkMode()
     const navigate = useNavigate()
     const root = useRef<HTMLElement>(null)
     const viewport = useRef<HTMLDivElement>(null)
@@ -37,14 +51,14 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
     const [pageVisible, setPageVisible] = useState(!document.hidden)
     const [reducedMotion, setReducedMotion] = useState(false)
     const capacity = width >= 960 ? 3 : width >= 620 ? 2 : 1
-    const count = Math.min(capacity, items.length)
+    const count = Math.min(capacity, entries.length)
     const stride = (width + GAP) / capacity
-    const moving = items.length > count
-    const groups = moving ? Math.ceil(items.length / count) : 0
+    const moving = entries.length > count
+    const groups = moving ? Math.ceil(entries.length / count) : 0
     const group = Math.min(groups - 1, Math.floor(leading / Math.max(1, count)))
-    const paused = hovered || focused || dragging || !visible || !pageVisible || reducedMotion
+    const paused = opened !== null || hovered || focused || dragging || !visible || !pageVisible || reducedMotion
     const paint = useCallback((offset: number) => {
-        const total = items.length * stride
+        const total = entries.length * stride
         const next = moving && total > 0 ? (offset % total + total) % total : 0
         position.current = next
         if (track.current) track.current.style.transform = `translate3d(${-next}px, 0, 0)`
@@ -52,11 +66,11 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         setLeading(Math.floor(cardPosition))
         bars.current.forEach((bar, index) => {
             if (!bar) return
-            const length = Math.min(count, items.length - index * count)
+            const length = Math.min(count, entries.length - index * count)
             const fraction = Math.max(0, Math.min(1, (cardPosition - index * count) / length))
             bar.style.transform = `scaleX(${fraction})`
         })
-    }, [items.length, stride, moving, count])
+    }, [entries.length, stride, moving, count])
     const previousStride = useRef(stride)
     useEffect(() => {
         const offset = position.current / previousStride.current * stride
@@ -76,7 +90,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         media.addEventListener('change', motion)
         document.addEventListener('visibilitychange', visibility)
         return () => { resize.disconnect(); intersection.disconnect(); media.removeEventListener('change', motion); document.removeEventListener('visibilitychange', visibility) }
-    }, [items.length])
+    }, [entries.length])
     useEffect(() => {
         if (!moving || paused || !width) return
         let frame = 0, last = 0
@@ -94,11 +108,17 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
         resize.observe(previewCards.current)
         return () => resize.disconnect()
     }, [preview])
-    if (!items.length) return null
-    const previewItems = preview === null ? [] : Array.from({length: count}, (_, index) => (preview * count + index) % items.length)
-    const rendered = moving ? [...items, ...items.slice(0, count + 1)] : items
+    if (!entries.length) return null
+    const previewItems = preview === null ? [] : Array.from({length: count}, (_, index) => (preview * count + index) % entries.length)
+    const rendered = moving ? [...entries, ...entries.slice(0, count + 1)] : entries
     const jump = (index: number) => paint(index * count * stride)
-    return <section className="featuredArticles" ref={root} aria-label="置顶文章" data-paused={paused}
+    const card = (entry: PinnedEntry, index: number, preview = false, copy = false) => entry.kind === 'article'
+        ? <ArticleCard item={entry.article} categories={categories} avatar={avatar} name={name} tags={tags}
+            featured onOpen={navigate} number={index % entries.length + 1} className="featuredCard" tabIndex={copy ? -1 : undefined} preview={preview}/>
+        : <AnnouncementCard item={entry.announcement} number={index % entries.length + 1} preview={preview}
+            tabIndex={copy ? -1 : undefined} onOpen={() => setOpened(entry.announcement)}/>
+
+    return <section className="featuredArticles" ref={root} aria-label="置顶" data-paused={paused}
         onPointerEnter={event => {if (event.pointerType === 'mouse') setHovered(true)}}
         onPointerLeave={event => {if (event.pointerType === 'mouse') {setHovered(false); setPreview(null)}}}
         onFocusCapture={event => {
@@ -110,7 +130,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
             }
         }}
         onBlurCapture={event => {if (!event.currentTarget.contains(event.relatedTarget)) {setFocused(false); setPreview(null)}}}>
-        <div className="featuredLabel"><SectionHeading icon="top">置顶文章</SectionHeading></div>
+        <div className="featuredLabel"><SectionHeading icon="top">置顶</SectionHeading></div>
         <div className="featuredViewport" ref={viewport}
             onPointerDown={event => {
                 swiped.current = false
@@ -131,7 +151,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
             onClickCapture={event => {if (swiped.current && event.detail > 0) {event.preventDefault(); event.stopPropagation()}}}>
             <div className="featuredTrack" ref={track} style={{gap: GAP}}>
                 {rendered.map((item, index) => {
-                    const copy = index >= items.length
+                    const copy = index >= entries.length
                     const shown = index >= leading && index < leading + count + 1
                     return <div key={`${item.key}-${index}`} className="featuredSlide" data-rail-index={index}
                         aria-hidden={copy || !shown || undefined} ref={element => {
@@ -140,8 +160,7 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
                             if (copy) element?.querySelectorAll<HTMLElement>('a,button,[tabindex]').forEach(control => {control.tabIndex = -1})
                         }}
                         style={{width: stride - GAP}}>
-                        <ArticleCard item={item} categories={categories} avatar={avatar} name={name} tags={tags}
-                            featured onOpen={navigate} number={index % items.length + 1} className="featuredCard" tabIndex={copy ? -1 : undefined}/>
+                        {card(item, index, false, copy)}
                     </div>
                 })}
             </div>
@@ -150,13 +169,12 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
             {preview !== null && <div className="featuredPreview" aria-hidden="true"
                 style={{left: `clamp(0px, calc(${(preview + .5) / groups * 100}% - ${count * 90 + 10}px), calc(100% - ${count * 180 + 20}px))`, width: count * 180 + 20}}>
                 <div className="featuredPreviewWindow" style={{height: previewHeight}}><div className="featuredPreviewCards" ref={previewCards} style={{gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))`}}>
-                    {previewItems.map(index => <ArticleCard key={items[index].key} item={items[index]} categories={categories}
-                        avatar={avatar} name={name} tags={tags} featured number={index + 1} preview/>)}
+                    {previewItems.map(index => <div key={entries[index].key}>{card(entries[index], index, true)}</div>)}
                 </div></div>
             </div>}
-            <div className="featuredSegments" role="group" aria-label="置顶文章分组">
+            <div className="featuredSegments" role="group" aria-label="置顶内容分组">
                 {Array.from({length: groups}, (_, index) => {
-                    const labels = Array.from({length: count}, (_, slot) => items[(index * count + slot) % items.length].noteTitle)
+                    const labels = Array.from({length: count}, (_, slot) => entries[(index * count + slot) % entries.length].title)
                     return <button type="button" key={index} aria-label={`第 ${index + 1} 组：${labels.join('、')}`}
                         aria-pressed={group === index} onPointerEnter={event => {if (event.pointerType === 'mouse') setPreview(index)}}
                         onFocus={event => {if (event.currentTarget.matches(':focus-visible')) setPreview(index)}} onClick={() => jump(index)}
@@ -172,5 +190,10 @@ export default function FeaturedArticles({items, categories, avatar, name, tags}
                 })}
             </div>
         </div>}
+        <Modal open={opened !== null} onCancel={() => setOpened(null)} title={opened?.title} footer={null} width={640}
+            rootClassName={dark ? 'washiModal washiDark' : 'washiModal'}>
+            {opened && <><time className="pinnedAnnouncementTime">{announcementTime(opened.createdAt)}</time>
+                <div className="pinnedAnnouncementText"><StickerText text={opened.content}/></div></>}
+        </Modal>
     </section>
 }

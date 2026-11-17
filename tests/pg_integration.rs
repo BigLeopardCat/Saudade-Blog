@@ -3665,3 +3665,6 @@ mod editor_drafts;
 
 #[path = "pg/confirmation_batches.rs"]
 mod confirmation_batches;
+
+#[path = "pg/announcement_pins.rs"]
+mod announcement_pins;

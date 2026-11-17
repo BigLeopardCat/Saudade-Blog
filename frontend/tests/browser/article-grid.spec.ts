@@ -68,7 +68,7 @@ test('compact hover responds without resizing cards, moving neighbors or expandi
     await expect.poll(()=>card.evaluate(el=>new DOMMatrixReadOnly(getComputedStyle(el).transform).f)).toBe(-2)
     const hovered=(await card.boundingBox())!
     expect(hovered.width).toBeCloseTo(before.width,1)
-    expect(hovered.height).toBe(216)
+    expect(hovered.height).toBe(256)
     expect((await later.boundingBox())!.y).toBeCloseTo(neighbor.y,1)
     expect(await summary.evaluate(el=>el.clientHeight)).toBe(summaryHeight)
     await expect(summary).toHaveCSS('position','static')
@@ -86,4 +86,33 @@ test('compact hover responds without resizing cards, moving neighbors or expandi
     await page.emulateMedia({reducedMotion:'reduce'})
     await card.hover()
     await expect(card).toHaveCSS('transform','none')
+})
+
+
+test('tag folding follows available width and reveals all short tags when space permits', async ({page,sandboxURL}) => {
+    await page.setViewportSize({width:1280,height:1000})
+    await page.goto(sandboxURL)
+    const grid=page.locator('.allArticles')
+    await grid.evaluate(el=>{Object.assign((el as HTMLElement).style,{width:'860px',gridTemplateColumns:'1fr'})})
+    const card=page.locator('.ArticleCard').nth(2)
+    await card.scrollIntoViewIfNeeded()
+    const tags=card.locator('.tagFitVisible .ant-tag')
+    await expect(tags).toHaveCount(6)
+    await expect(tags.filter({hasText:/^\+/})).toHaveCount(0)
+    await grid.evaluate(el=>{(el as HTMLElement).style.width='430px'})
+    await expect(tags.filter({hasText:/^\+/})).toHaveCount(1)
+    const visible=(await tags.count())-1
+    expect(visible).toBeGreaterThan(2)
+    expect(visible).toBeLessThan(6)
+    await expect(tags.last()).toHaveText(`+${6-visible}`)
+    expect(await card.locator('.responsiveNoteTags').evaluate(el=>{
+        const host=el.getBoundingClientRect(),row=el.querySelector('.tagFitVisible')!.getBoundingClientRect()
+        return row.right<=host.right+1 && el.scrollWidth<=el.clientWidth+1
+    })).toBe(true)
+    await tags.last().hover()
+    await expect(page.locator('.ant-popover-inner')).toContainText('标签6')
+    await page.mouse.move(0,0)
+    await grid.evaluate(el=>{(el as HTMLElement).style.width='860px'})
+    await expect(tags).toHaveCount(6)
+    await expect(tags.filter({hasText:/^\+/})).toHaveCount(0)
 })

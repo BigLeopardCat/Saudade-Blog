@@ -32,3 +32,17 @@ function deleteAnnouncement(ids: number[]) {
 }
 
 export { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement }
+
+export interface AnnouncementItem {
+    id: number
+    title: string
+    content: string
+    createdAt: string
+    updatedAt?: string
+}
+export function getPinnedAnnouncements(signal?: AbortSignal) {
+    return http.get('/api/public/pinned-announcements', {signal})
+}
+export function pinAnnouncement(id: number, pinned: boolean) {
+    return http.put(`/api/protected/announcements/${id}/pin`, {pinned})
+}

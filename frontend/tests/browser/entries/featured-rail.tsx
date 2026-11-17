@@ -7,6 +7,7 @@ import '../../../src/frontHome/Content/ContentHome/featured.sass'
 import {MemoryRouter} from 'react-router-dom'
 import {createRoot} from 'react-dom/client'
 import {useState} from 'react'
+import type {AnnouncementItem} from '../../../src/apis/AnnouncementMethods'
 import FeaturedArticles from '../../../src/frontHome/Content/ContentHome/FeaturedArticles'
 import ArticleCard from '../../../src/components/ArticleCard'
 import CoverCropModal from '../../../src/components/CoverCropModal'
@@ -19,12 +20,14 @@ const notes: NoteType[] = Array.from({length: 7}, (_, index) => ({key: String(in
 function Fixture() {
     const [open, setOpen] = useState(false)
     const [items, setItems] = useState(notes)
+    const [announcements,setAnnouncements] = useState<AnnouncementItem[]>([])
     return <div className="frontRoot" style={{minHeight: '150vh', paddingTop: 120}}>
         <div style={{width: 'min(1120px, 92%)', margin: 'auto'}}>
-            <FeaturedArticles items={items} categories={[]} tags={[]} name="" avatar=""/>
+            <FeaturedArticles announcements={announcements} items={items} categories={[]} tags={[]} name="" avatar=""/>
             <div style={{marginTop: 80, width: 'min(360px, 100%)'}} data-testid="ordinary-card"><ArticleCard item={notes[0]}/></div>
         </div>
         <div style={{position: 'fixed', bottom: 0, right: 0}}>
+            <button onClick={() => setAnnouncements([{id:21,title:"站点维护公告",content:"维护期间页面仍可阅读。",createdAt:"2026-11-17 09:45:00"},{id:20,title:"阅读功能更新",content:"新版目录和对话窗口已上线。",createdAt:"2026-11-16 18:30:00"}])}>混排公告</button>
             <button onClick={() => setOpen(true)}>预览实际卡片</button>
             <button onClick={() => setItems(notes.slice(0,1))}>只显示一篇</button>
             <button onClick={() => setItems(items.length ? [] : notes)}>切换空列表</button>

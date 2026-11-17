@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'featured-photos' | 'photo-settings' | 'featured-rail' | 'reader-outline' | 'sakura-home' | 'admin-notes' | 'comment-manage' | 'sweep-loading' | 'asset-image' | 'article-cover' | 'weather' | 'seo' | 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
+type Entry = 'featured-rail' | 'reader-outline' | 'sakura-home' | 'admin-notes' | 'comment-manage' | 'sweep-loading' | 'asset-image' | 'article-cover' | 'weather' | 'seo' | 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 
@@ -92,7 +92,7 @@ export const test = base.extend<{ entry: Entry; cdnBaseURL: string; sandboxURL: 
       const origin = `http://127.0.0.1:${address.port}`
       await page.route('**/*', async route => {
         const url = new URL(route.request().url())
-        if (url.pathname === '/api/public/featured-photos' && route.request().method() === 'GET') {
+        if (url.pathname === '/api/public/pinned-announcements' && route.request().method() === 'GET') {
           await route.fulfill({json: {code: 200, data: []}})
         } else if (url.href === 'https://get.geojs.io/v1/ip/geo.json' && route.request().method() === 'GET') {
           // Layout fixtures have no IP location; weather-specific tests supply a city.

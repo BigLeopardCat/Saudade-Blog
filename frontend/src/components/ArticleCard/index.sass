@@ -139,7 +139,7 @@
   .ArticleFooter
     grid-column: 1 / -1
     padding-top: 8px
-    border-top: 1px solid var(--scene-edge, #eadce4)
+    border-top: 1px solid color-mix(in srgb, var(--scene-ink, #493749) 28%, transparent)
     display: grid
     grid-template-columns: minmax(0, 1fr) auto auto
     gap: 10px
@@ -190,3 +190,38 @@
     transition: none
     &:hover
       transform: none
+
+  &[data-card-kind='article']
+    height: 256px
+    padding: 16px
+    gap: 12px 14px
+    .ArticleContent
+      gap: 6px
+    .ArticleHead
+      height: 18px
+      font-size: 12px
+      line-height: 18px
+    .ArticleTitle
+      font-family: inherit
+      height: 52px
+      font-size: 19px
+      line-height: 26px
+      font-weight: 650
+    .descSlot
+      height: 42px
+    .ArticleDescription
+      font-size: 14px
+      line-height: 21px
+      max-height: 42px
+    .tags
+      min-height: 24px
+      .ant-tag
+        font-size: 12px
+        line-height: 22px
+    .ArticleStats
+      font-size: 12px
+      line-height: 18px
+    .ArticleFooter
+      padding-top: 10px
+      font-size: 12px
+      line-height: 18px

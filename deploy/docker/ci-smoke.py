@@ -35,53 +35,6 @@ def query(sql):
                    "-At", "-v", "ON_ERROR_STOP=1", "-c", sql).strip()
 
 
-def featured_album(token):
-    def api(path, body=None):
-        headers = {"Authorization": f"Bearer {token}"} if path.startswith("/api/protect") else {}
-        data = None
-        if body is not None:
-            headers["Content-Type"] = "application/json"
-            data = json.dumps(body).encode()
-        request = urllib.request.Request("http://127.0.0.1:8080" + path, data=data, headers=headers)
-        with urllib.request.urlopen(request, timeout=10) as response:
-            return json.load(response)
-
-    assert api("/api/public/featured-photos")["data"] == []
-    original = api("/api/protected/websetting")["data"]
-    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==")
-    for index in range(2):
-        boundary = "saudade-album-ci-boundary"
-        body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="album-{index}.png"\r\n'
-                'Content-Type: image/png\r\n\r\n').encode() + png + f"\r\n--{boundary}--\r\n".encode()
-        request = urllib.request.Request("http://127.0.0.1:8080/api/protect/upload", data=body,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": f"multipart/form-data; boundary={boundary}"})
-        with urllib.request.urlopen(request, timeout=10) as response:
-            assert json.load(response)["code"] == 200
-    images = api("/api/protect/gallery/images?limit=2")["data"]["items"]
-    selected = [{"imageId": image["imageKey"], "caption": f"春日 {index}"} for index, image in enumerate(images)]
-    assert len(selected) == 2
-    assert api("/api/protected/websetting", {"featuredPhotos": selected})["code"] == 200
-    photos = api("/api/public/featured-photos")["data"]
-    assert [photo["imageId"] for photo in photos] == [item["imageId"] for item in selected]
-    assert all(set(photo) == {"imageId", "url", "caption"} for photo in photos)
-    for photo in photos:
-        assert photo["url"].startswith("/api/public/media/")
-        with urllib.request.urlopen("http://127.0.0.1:8080" + photo["url"], timeout=10) as response:
-            assert response.read() == png
-    rejected = api("/api/protected/websetting", {"blogTitle": "must not be saved", "featuredPhotos": [{"imageId": 2147483647, "caption": "missing"}]})
-    assert rejected["code"] != 200
-    assert api("/api/protected/websetting")["data"]["blogTitle"] == original["blogTitle"]
-    image_id = selected[0]["imageId"]
-    # Exercise an older gallery entry that has not been assigned a stable public ID.
-    query(f"BEGIN; UPDATE images SET image_url=(SELECT source_url FROM image_location WHERE image_id={image_id}) WHERE image_key={image_id}; DELETE FROM image_location WHERE image_id={image_id}; COMMIT;")
-    assert api("/api/protected/websetting", {"featuredPhotos": selected})["code"] == 200
-    legacy = api("/api/public/featured-photos")["data"][0]
-    assert legacy["url"].startswith("/api/protect/download/")
-    assert api("/api/protected/websetting", {"featuredPhotos": []})["code"] == 200
-    assert api("/api/public/featured-photos")["data"] == []
-    print("Featured album smoke passed: selected-only publication, real media, legacy images, order and atomic validation")
-
-
 def main():
     config = json.loads(command("config", "--format", "json"))
     private_services = ["postgres", "backend"]
@@ -128,7 +81,6 @@ def main():
     with urllib.request.urlopen(request, timeout=10) as response:
         login = json.load(response)
     assert login["code"] == 200 and login["data"], "first administrator cannot log in"
-    featured_album(login["data"])
     payload = login["data"].split(".")[1]
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     assert claims["role"] == "superadmin", "first login did not receive superadministrator privileges"

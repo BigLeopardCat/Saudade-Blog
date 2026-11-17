@@ -6,9 +6,10 @@ import './index.sass'
 import '../../../scene.css'
 import './featured.sass'
 import FeaturedArticles from './FeaturedArticles'
-import FeaturedPhotos from './FeaturedPhotos'
+import {getPinnedAnnouncements, type AnnouncementItem} from '../../../apis/AnnouncementMethods'
+import {ANNOUNCEMENT_PUBLISHED_EVENT} from '../../../components/AnnouncementModal/pending'
 import SocialButton from "../../../components/Buttons/SocialButton";
-import {useEffect, useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {hasArticleInvalidation} from "../../../components/UserCenter/agentTurn.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
@@ -104,6 +105,30 @@ const ContentHome = () => {
     });
     const [feedState, setFeedState] = useState(feed.snapshot);
     const { items: otherArticles, hasMore: hasMoreArticles, loading } = feedState;
+    const [pinnedAnnouncements, setPinnedAnnouncements] = useState<AnnouncementItem[]>([])
+    const [pinError, setPinError] = useState(false)
+    const pinRequest = useRef<AbortController | null>(null)
+    const loadPins = useCallback(async () => {
+        pinRequest.current?.abort()
+        const controller = new AbortController()
+        pinRequest.current = controller
+        try {
+            const {data} = await getPinnedAnnouncements(controller.signal)
+            if (controller.signal.aborted) return
+            if (data.code !== 200 || !Array.isArray(data.data)) throw new Error('pin read failed')
+            setPinnedAnnouncements(data.data)
+            setPinError(false)
+        } catch {
+            if (!controller.signal.aborted) setPinError(true)
+        }
+    }, [])
+    useEffect(() => {
+        void loadPins()
+        const refresh = () => { void loadPins() }
+        window.addEventListener(ANNOUNCEMENT_PUBLISHED_EVENT, refresh)
+        return () => {pinRequest.current?.abort(); window.removeEventListener(ANNOUNCEMENT_PUBLISHED_EVENT, refresh)}
+    }, [loadPins])
+    useLiveRefresh(loadPins, {poll: false})
     const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles);
     useEffect(() => {
         const unsubscribe = feed.subscribe(setFeedState);
@@ -212,7 +237,7 @@ const ContentHome = () => {
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
-        <section className="homeFirstScreen" aria-label="首页与置顶文章">
+        <section className="homeFirstScreen" aria-label="首页与置顶内容">
         <div className="SelfDescription" ref={heroRef}>
             <div className="SayWords">
                 <h1 className="home-title-h3">Sereno da Saudade</h1>
@@ -238,12 +263,12 @@ const ContentHome = () => {
                         aria-hidden="true"
                     />
                 </figure>
-                <FeaturedPhotos/>
             </div>
         </div>
         <div className="homePinned">
-            {topError && <div role="status" className="homeLoadError">置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button></div>}
-            {topArticles.length > 0 && <FeaturedArticles items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
+            {topError && <div role="status" className="homeLoadError">置顶加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button></div>}
+            {pinError && <div role="status" className="homeLoadError">置顶公告加载失败 <button type="button" onClick={() => {void loadPins()}}>重试</button></div>}
+            {(topArticles.length > 0 || pinnedAnnouncements.length > 0) && <FeaturedArticles announcements={pinnedAnnouncements} items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
         </div>
         </section>
         <div className="ContentContainer dark-pic" id="home-articles">

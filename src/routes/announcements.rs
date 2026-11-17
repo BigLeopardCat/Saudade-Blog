@@ -19,20 +19,9 @@ pub struct AnnouncementDto {
     pub updated_at: String,
 }
 
-pub async fn list_announcements(
-    State(state): State<Arc<AppState>>,
-) -> Json<ApiResponse<Vec<AnnouncementDto>>> {
-    let items = match announcement::Entity::find()
-        .order_by_desc(announcement::Column::Id)
-        .all(&state.db)
-        .await
-    {
-        Ok(rows) => rows,
-        Err(error) => return super::db_error("查询公告", &error),
-    };
-    let dtos = items
-        .into_iter()
-        .map(|a| AnnouncementDto {
+impl From<announcement::Model> for AnnouncementDto {
+    fn from(a: announcement::Model) -> Self {
+        Self {
             id: a.id,
             title: a.title,
             content: a.content,
@@ -44,8 +33,22 @@ pub async fn list_announcements(
                 .updated_at
                 .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or_default(),
-        })
-        .collect();
+        }
+    }
+}
+
+pub async fn list_announcements(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<Vec<AnnouncementDto>>> {
+    let items = match announcement::Entity::find()
+        .order_by_desc(announcement::Column::Id)
+        .all(&state.db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => return super::db_error("查询公告", &error),
+    };
+    let dtos = items.into_iter().map(AnnouncementDto::from).collect();
     Json(ApiResponse::success(dtos))
 }
 

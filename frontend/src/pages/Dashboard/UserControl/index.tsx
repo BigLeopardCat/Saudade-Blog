@@ -8,7 +8,6 @@ import React, {useEffect, useState} from "react";
 import { webInfo } from "../../../interface/Setting";
 import http from "../../../apis/axios.tsx";
 import {useLocation, useNavigate} from "react-router-dom";
-import FeaturedPhotoSettings from './FeaturedPhotoSettings';
 import R2Storage from "./R2Storage";
 import {cjsDefault} from "../../../utils/cjsDefault";
 
@@ -149,11 +148,6 @@ const UserControl = () => {
                     </div>
                 </form>
             </>,
-        },
-        {
-            key: '3',
-            label: <h3>相册精选</h3>,
-            children: <FeaturedPhotoSettings />,
         },
         {
             key: '4',

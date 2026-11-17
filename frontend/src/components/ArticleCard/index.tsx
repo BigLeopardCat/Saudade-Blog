@@ -5,6 +5,7 @@ import type {NoteType} from '../../interface/NoteType'
 import type {CategoriesType} from '../../interface/CategoriesType'
 import AssetImage from '../AssetImage'
 import SweepLoading from '../SweepLoading'
+import ResponsiveNoteTags from '../ResponsiveNoteTags'
 import NoteByline from '../NoteByline'
 import {CommentIcon, EyeIcon, HeartIcon, StarIcon} from '../NoteStatIcons'
 import {renderNoteTagsCollapsed} from '../../apis/TagMethods'
@@ -82,7 +83,7 @@ export default function ArticleCard({item, categories = [], avatar = '', name = 
                     }
                 }} target={newTab ? '_blank' : undefined} rel={newTab ? 'noopener noreferrer' : undefined}>{item.noteTitle}</a>}</Heading>
             <div className="descSlot"><p className="ArticleDescription">{item.description}</p></div>
-            <div className="tags">{hasTags && renderNoteTagsCollapsed(item.noteTags, tags, 2, item.noteTagRefs)}</div>
+            <div className="tags">{hasTags && <ResponsiveNoteTags ids={item.noteTags} catalog={tags} refs={item.noteTagRefs}/>}</div>
         </div>
         <div className="ArticleFooter"><NoteByline item={item} siteAvatar={avatar} siteName={name} card/></div>
     </article>
