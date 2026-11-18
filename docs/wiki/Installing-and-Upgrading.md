@@ -3,6 +3,8 @@
 这条路线适用于**新的 Linux 主机或独立测试环境**。已有站点直接看本页升级部分，
 不重建数据库或覆盖配置。默认只安装核心博客，Agent、调度、R2 和模型均为可选。
 
+Release 提供预构建安装包时，可以按[预构建快速安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)导入镜像，再使用本页流程加 `--no-build`，避免在小服务器编译。先核对平台和完整提交，不能混用不同版本的源码与镜像。
+
 ## 1. 准备环境与地址
 
 准备 Git、Python 3.10+、Docker Engine、Docker Compose 2.30+，用部署账号核对：

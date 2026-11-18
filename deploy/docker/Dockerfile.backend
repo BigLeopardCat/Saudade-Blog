@@ -6,7 +6,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY LICENSE THIRD-PARTY.md /licenses/
 ENV CARGO_BUILD_JOBS=1
-RUN cargo build --release --locked --bins
+RUN cargo build --release --locked --bins && rustc -Vv > /build/rustc-version.txt
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
@@ -18,6 +18,7 @@ WORKDIR /srv
 COPY --from=build /build/target/release/saudade_blog_bin /usr/local/bin/
 COPY --from=build /build/target/release/saudade-bootstrap-admin /usr/local/bin/
 COPY --from=build /licenses /usr/share/doc/saudade
+COPY --from=build /build/rustc-version.txt /usr/share/doc/saudade/rustc-version.txt
 ARG REVISION
 LABEL org.opencontainers.image.source=https://github.com/BigLeopardCat/Saudade-Blog \
       org.opencontainers.image.revision=$REVISION

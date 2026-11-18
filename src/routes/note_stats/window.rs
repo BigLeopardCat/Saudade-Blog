@@ -14,9 +14,18 @@ pub struct DailyWindow {
     pub start: String,
     pub end: String,
     pub monthly_subtotals: Vec<MonthSubtotal>,
+    pub peak_views: Option<PeakViews>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeakViews {
+    pub value: i64,
+    pub dates: Vec<NaiveDate>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MonthSubtotal {
     pub month: String,
     pub start: NaiveDate,
@@ -25,6 +34,20 @@ pub struct MonthSubtotal {
     pub likes: i64,
     pub favorites: i64,
     pub comments: i64,
+    pub peak_views: Option<PeakViews>,
+}
+
+fn observe_peak(peak: &mut Option<PeakViews>, date: NaiveDate, views: i64) {
+    match peak {
+        Some(current) if views < current.value => {}
+        Some(current) if views == current.value => current.dates.push(date),
+        _ => {
+            *peak = Some(PeakViews {
+                value: views,
+                dates: vec![date],
+            })
+        }
+    }
 }
 
 pub(super) fn summarize(
@@ -33,7 +56,9 @@ pub(super) fn summarize(
     end: NaiveDate,
 ) -> DailyWindow {
     let mut months: BTreeMap<String, MonthSubtotal> = BTreeMap::new();
+    let mut peak_views = None;
     for (date, row) in daily {
+        observe_peak(&mut peak_views, *date, row.views);
         let month = date.format("%Y-%m").to_string();
         let subtotal = months.entry(month.clone()).or_insert(MonthSubtotal {
             month,
@@ -43,6 +68,7 @@ pub(super) fn summarize(
             likes: 0,
             favorites: 0,
             comments: 0,
+            peak_views: None,
         });
         subtotal.start = subtotal.start.min(*date);
         subtotal.end = subtotal.end.max(*date);
@@ -50,12 +76,25 @@ pub(super) fn summarize(
         subtotal.likes += row.likes;
         subtotal.favorites += row.favorites;
         subtotal.comments += row.comments;
+        observe_peak(&mut subtotal.peak_views, *date, row.views);
+    }
+    let mut monthly_subtotals: Vec<_> = months.into_values().collect();
+    for peak in std::iter::once(&mut peak_views)
+        .chain(
+            monthly_subtotals
+                .iter_mut()
+                .map(|month| &mut month.peak_views),
+        )
+        .flatten()
+    {
+        peak.dates.sort_unstable();
     }
     DailyWindow {
         scope: "rolling_window",
         start: start.to_string(),
         end: end.to_string(),
-        monthly_subtotals: months.into_values().collect(),
+        monthly_subtotals,
+        peak_views,
     }
 }
 
@@ -127,5 +166,48 @@ mod tests {
             vec!["2026-12", "2027-01"]
         );
         assert!(result.monthly_subtotals.iter().all(|row| row.views == 0));
+        assert_eq!(result.peak_views.as_ref().unwrap().value, 0);
+        assert_eq!(result.peak_views.as_ref().unwrap().dates, vec![start, end]);
+    }
+
+    #[test]
+    fn peaks_preserve_ties_and_cannot_leak_between_months() {
+        let date = |month, day| NaiveDate::from_ymd_opt(2026, month, day).unwrap();
+        let daily = [
+            (
+                date(10, 31),
+                DailyRow {
+                    views: 90,
+                    ..Default::default()
+                },
+            ),
+            (
+                date(11, 1),
+                DailyRow {
+                    views: 7,
+                    ..Default::default()
+                },
+            ),
+            (
+                date(11, 3),
+                DailyRow {
+                    views: 7,
+                    ..Default::default()
+                },
+            ),
+            (date(11, 2), DailyRow::default()),
+        ]
+        .into();
+        let result = summarize(&daily, date(10, 31), date(11, 3));
+        let peak = result.peak_views.unwrap();
+        assert_eq!(peak.value, 90);
+        assert_eq!(peak.dates, vec![date(10, 31)]);
+        let november = result.monthly_subtotals.last().unwrap();
+        assert_eq!(november.views, 14);
+        let peak = november.peak_views.as_ref().unwrap();
+        assert_eq!(peak.value, 7);
+        assert_eq!(peak.dates, vec![date(11, 1), date(11, 3)]);
+        let empty = summarize(&HashMap::new(), date(11, 1), date(11, 3));
+        assert!(empty.peak_views.is_none());
     }
 }
