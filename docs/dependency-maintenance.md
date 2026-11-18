@@ -9,7 +9,7 @@ Dependabot 按运行、测试和构建依赖分组；不因提交来自机器人
 安装或网络失败与业务断言失败分别处理。缓存只加速安装，不改变锁定版本；重跑前先核实失败原因。公开 PR 不使用生产密钥，部署仅在主线检查完成后执行。
 
 `Dependency audit` 用 cargo-deny 检查 Cargo.lock 锁定且实际启用的依赖图，包含测试依赖和
-各目标平台；只允许下节列出的、有期限的精确维护风险例外。保留 Cargo metadata、功能依赖树和 RustSec 原始
+各目标平台，不排除指定包、不忽略安全公告；保留 Cargo metadata、功能依赖树和 RustSec 原始
 JSON 结果。锁文件还可能登记未启用的可选后端，不能仅凭锁文件条目判断它们进入了程序。
 前端用 npm audit 检查锁定的生产和开发依赖。RustSec 的安全漏洞、当前门禁拒绝的未维护公告，
 以及 npm 的中危及以上漏洞阻止对应作业通过；工具或公告数据库不可用不算通过。
@@ -25,17 +25,3 @@ ESLint 使用支持 minimatch 11 的版本，TypeScript ESLint 的剩余旧版�
 默认项目允许列表回归验证，完整类型检查、ESLint 和浏览器构建也须通过。
 上游支持 minimatch 11 后移除这项局部覆盖；不忽略
 [glob 放大拒绝服务告警](https://github.com/advisories/GHSA-g3hv-75wg-m249)。
-
-## 有期限的维护风险
-
-RustSec 将 [chrono](https://rustsec.org/advisories/RUSTSEC-2026-0543.html) 和
-[humantime](https://rustsec.org/advisories/RUSTSEC-2026-0542.html) 标记为停止维护，
-未提供可直接升级的修复版本。本仓及 SeaORM、SQLx、object_store、日志组件仍依赖该链路。
-这两项是维护风险，不据此声称已确认存在可利用漏洞，也不声称依赖已恢复维护。
-
-`deny.toml` 仅为这两个公告设置精确 ID、理由、允许的父依赖版本及 2027-01-31 到期日。
-由锁定的 cargo-deny 0.21.0 自动执行；到期、引入新的父依赖或例外不再使用均阻断 CI。
-其他安全漏洞、未维护公告和 npm 审计门槛保持生效。不得以全局关闭 unmaintained 或忽略退出码续期。
-迁移任务与验收见 [#297](https://github.com/BigLeopardCat/Saudade-Blog/issues/297)，
-由项目维护者在截止前评估 jiff/time 及上游兼容版本，并验证数据库时间类型、时区、序列化、日志和 R2。
-发行说明应披露这项接受的维护风险；升级依赖后及时移除例外。

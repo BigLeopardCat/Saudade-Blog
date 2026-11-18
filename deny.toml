@@ -1,7 +1,2 @@
 [advisories]
 unused-ignored-advisory = "deny"
-# Maintenance-only risks tracked in #297; all other advisories still block CI.
-ignore = [
-  { id = "RUSTSEC-2026-0543", reason = "No patched chrono release; SeaORM/SQLx/object_store migration tracked in #297", expiry = "2027-01-31", allow = ["saudade_blog@0.3.0", "object_store@0.14.2", "sea-orm@1.1.20", "sea-query@0.32.7", "sea-query-binder@0.7.0", "sqlx-core@0.8.6", "sqlx-postgres@0.8.6", "tracing-subscriber@0.3.23"] },
-  { id = "RUSTSEC-2026-0542", reason = "No patched humantime release; object_store migration tracked in #297", expiry = "2027-01-31", allow = ["object_store@0.14.2"] },
-]
