@@ -129,10 +129,27 @@ Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从
 
 ## 6. 文档入口
 
+- [文档导航](docs/README.md)：按使用、开发、运维和业务契约查找内容。
+- [配置导航](docs/configuration.md)、[代码导读](docs/code-reading.md)、[排障](docs/troubleshooting.md)。
 - [安全边界](docs/security-boundary.md)：身份、权限、限额与信任边界。
 - [部署与运维](docs/deployment-and-ops.md)：拓扑、服务管理、日志、回滚与备份。
 - [路线图](ROADMAP.md)：当前工作、待办和约束。
 - 各接口契约保留在 `docs/`；一次性审计、修复记录和生成过程可从 Git 历史查阅，不另留副本。
+
+### Wiki 维护
+
+`docs/wiki/` 保存教程源稿，GitHub Wiki 是发布镜像。使用指南描述当前界面，教程按任务提供步骤，
+接口、配置默认值、迁移和发布要求只在仓库规范文档维护；两边相互链接，不复制密钥表或测试数字。
+新规范页加入文档索引，新教程页加入 Wiki Home 和 `_Sidebar.md`。检查相对链接、图片和源码路径，
+运行 `git diff --check`；没有业务代码改动时不以完整构建代替文档验证。
+
+发布时克隆 `git@github.com:BigLeopardCat/Saudade-Blog.wiki.git`，从经验证的完整源码提交复制
+`docs/wiki/*.md`。将本仓 `blob/cn_sora_blog/`、`tree/cn_sora_blog/` 链接固定到该完整提交，
+保证新教程引用的规范页在合并前也可读取。核对 Wiki 分支、差异及远程更新后单独提交，
+不强推、不覆盖他人修改、不删除源稿之外的页面。Wiki 提交附来源 SHA 与源码 PR；后续先改源稿再同步。
+截图的生成、清晰度检查和稳定文件名见[教程截图](docs/screenshots.md)。同步时递归复制 assets，
+将相对图片地址转为 raw.githubusercontent.com/wiki 的对应地址。文档与图片链接由
+`node --test frontend/tests/documentation-links.test.mjs` 检查，使用已安装锁定依赖的开发环境。
 
 ## 7. 跨仓协作与交接
 

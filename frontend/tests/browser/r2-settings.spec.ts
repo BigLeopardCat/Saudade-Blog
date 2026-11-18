@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import type {Page} from '@playwright/test'
 import type {R2Usage} from '../../src/interface/Setting'
 import {test, expect} from './sandbox'
@@ -72,6 +73,7 @@ test('gallery navigation state opens storage settings, restores saved values and
   await expect.poll(() => fillRatio(page)).toBeCloseTo(0.5, 2)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   expect(server.writes).toEqual([])
+  await wikiShot(page, 'r2-settings')
 })
 
 test('failed usage lookup shows its reason with a zero gray bar instead of fabricated capacity', async ({page, sandboxURL}) => {
