@@ -1,6 +1,6 @@
 import {test, expect} from './sandbox'
 test.use({entry: 'reader-outline'})
-for (const width of [1440, 1920]) {
+for (const width of [1201, 1320, 1440, 1920, 2560]) {
     test(`outline and reading URL share real heading anchors at ${width}px`, async ({page, sandboxURL}) => {
         await page.setViewportSize({width, height: 900})
         await page.goto(sandboxURL + '#沿途风景-2')
@@ -13,7 +13,10 @@ for (const width of [1440, 1920]) {
         const chat = (await page.getByTestId('reader-chat').boundingBox())!
         const leftGap = card.x - chat.x - chat.width
         expect(Math.abs(leftGap - 20)).toBeLessThan(2)
-        expect(card.width).toBeGreaterThanOrEqual(width * .49)
+        expect(Math.abs(card.x + card.width / 2 - width / 2)).toBeLessThan(1)
+        expect(card.width).toBeGreaterThanOrEqual(Math.min(width * .45, 1200))
+        expect(chat.width).toBeGreaterThanOrEqual(280)
+        expect(chat.x).toBeGreaterThanOrEqual(0)
         const toc = (await page.locator('.navigation').boundingBox())!
         expect(toc.width).toBeGreaterThanOrEqual(280)
         const rightGap = toc.x - card.x - card.width
