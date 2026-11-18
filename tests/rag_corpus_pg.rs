@@ -7,7 +7,9 @@ use axum::{
 use saudade_blog::{
     create_router, rate_limiter::LoginRateLimiter, risk::PostRateLimiter, AppState,
 };
-use sea_orm::{ConnectionTrait, Database, DbBackend, Statement, TransactionTrait};
+use sea_orm::{
+    AccessMode, ConnectionTrait, Database, DbBackend, IsolationLevel, Statement, TransactionTrait,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -294,4 +296,103 @@ async fn corpus_pagination_is_complete_public_and_revision_bound() {
     let restored = fixture_snapshot(&app).await;
     assert_eq!(restored["data"]["total"], public_total);
     assert_eq!(restored["data"]["documents"], deleted["data"]["documents"]);
+
+    let old_writer = writer
+        .begin_with_config(
+            Some(IsolationLevel::RepeatableRead),
+            Some(AccessMode::ReadWrite),
+        )
+        .await
+        .unwrap();
+    assert!(old_writer
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT id FROM note WHERE id=910000101",
+        ))
+        .await
+        .unwrap()
+        .is_some());
+    writer
+        .execute_unprepared(
+            "INSERT INTO note(id,title,content,status,is_public,created_at,updated_at) \
+             VALUES(910000105,'concurrent insert','committed first','public',true,NOW(),NOW())",
+        )
+        .await
+        .unwrap();
+    old_writer
+        .execute_unprepared("UPDATE note SET content='edited in old snapshot' WHERE id=910000101")
+        .await
+        .expect("an unrelated public commit cannot cause a serialization failure");
+    old_writer.commit().await.unwrap();
+
+    let old_writer_committed = fixture_snapshot(&app).await;
+    assert_eq!(old_writer_committed["data"]["total"], public_total + 1);
+    assert_eq!(
+        document(&old_writer_committed, 910000101).unwrap()["content"],
+        "edited in old snapshot",
+    );
+    assert_eq!(
+        document(&old_writer_committed, 910000105).unwrap()["content"],
+        "committed first",
+    );
+
+    let holding_writer = writer
+        .begin_with_config(
+            Some(IsolationLevel::RepeatableRead),
+            Some(AccessMode::ReadWrite),
+        )
+        .await
+        .unwrap();
+    holding_writer
+        .execute_unprepared("UPDATE note SET content='holding writer' WHERE id=910000101")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let independent = writer
+            .begin_with_config(
+                Some(IsolationLevel::RepeatableRead),
+                Some(AccessMode::ReadWrite),
+            )
+            .await
+            .unwrap();
+        independent
+            .execute_unprepared("UPDATE note SET content='independent writer' WHERE id=910000109")
+            .await
+            .unwrap();
+        independent.commit().await.unwrap();
+    })
+    .await
+    .expect("an independent corpus writer can commit while another writer is open");
+
+    let during_hold = fixture_snapshot(&app).await;
+    assert_eq!(during_hold["data"]["total"], public_total + 1);
+    assert_eq!(
+        document(&during_hold, 910000101).unwrap()["content"],
+        "edited in old snapshot",
+    );
+    assert_eq!(
+        document(&during_hold, 910000109).unwrap()["content"],
+        "independent writer",
+    );
+    holding_writer.commit().await.unwrap();
+
+    let after_hold = fixture_snapshot(&app).await;
+    assert_eq!(after_hold["data"]["total"], public_total + 1);
+    assert_ne!(
+        after_hold["data"]["revision"],
+        during_hold["data"]["revision"]
+    );
+    assert_eq!(
+        document(&after_hold, 910000101).unwrap()["content"],
+        "holding writer",
+    );
+    assert_eq!(
+        document(&after_hold, 910000109).unwrap()["content"],
+        "independent writer",
+    );
+
+    writer
+        .execute_unprepared("DELETE FROM note WHERE id BETWEEN 910000101 AND 910000110")
+        .await
+        .unwrap();
 }

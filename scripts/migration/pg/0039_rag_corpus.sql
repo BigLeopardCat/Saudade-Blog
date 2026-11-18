@@ -8,6 +8,12 @@ CREATE TABLE IF NOT EXISTS public.rag_corpus_state (
     generation uuid NOT NULL DEFAULT gen_random_uuid(),
     document_count bigint NOT NULL CHECK (document_count >= 0)
 );
+ALTER TABLE public.rag_corpus_state ADD COLUMN IF NOT EXISTS folded bit(128) NOT NULL DEFAULT 0::bit(128);
+CREATE TABLE IF NOT EXISTS public.rag_corpus_change (
+    writer xid8 PRIMARY KEY,
+    token bit(128) NOT NULL DEFAULT (('x' || replace(gen_random_uuid()::text, '-', ''))::bit(128)),
+    document_delta bigint NOT NULL
+);
 CREATE TABLE IF NOT EXISTS public.rag_corpus_document (
     id integer PRIMARY KEY,
     revision bytea NOT NULL CHECK (octet_length(revision) = 32),
@@ -46,18 +52,61 @@ BEGIN
 END
 $$;
 
+-- A writer owns its change row for its entire transaction, including bulk edits.
+-- A fold moves only previously committed changes; its timing cannot change the wire revision.
+CREATE OR REPLACE VIEW public.rag_corpus_snapshot AS
+SELECT encode(sha256(uuid_send(s.generation) || bit_send(s.folded # coalesce(c.tokens, 0::bit(128)))), 'hex') AS revision,
+       s.document_count + coalesce(c.delta, 0)::bigint AS document_count
+FROM public.rag_corpus_state s
+CROSS JOIN (SELECT bit_xor(token) AS tokens, sum(document_delta) AS delta FROM public.rag_corpus_change) c
+WHERE s.singleton;
+
+CREATE OR REPLACE FUNCTION public.rag_corpus_record_change(amount bigint)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    own_xid xid8 := pg_current_xact_id();
+BEGIN
+    INSERT INTO public.rag_corpus_change (writer, document_delta)
+    VALUES (own_xid, amount) ON CONFLICT (writer) DO NOTHING;
+    IF NOT FOUND THEN
+        UPDATE public.rag_corpus_change SET document_delta = document_delta + amount WHERE writer = own_xid;
+        RETURN;
+    END IF;
+    -- Serializable business transactions should acquire no predicate dependency on unrelated edits.
+    IF current_setting('transaction_isolation') = 'serializable' THEN RETURN; END IF;
+    IF NOT EXISTS (SELECT FROM public.rag_corpus_change WHERE writer <> own_xid) THEN RETURN; END IF;
+
+    BEGIN
+        PERFORM 1 FROM public.rag_corpus_state WHERE singleton FOR UPDATE SKIP LOCKED;
+        IF FOUND THEN
+            WITH consumed AS (
+                DELETE FROM public.rag_corpus_change WHERE writer <> own_xid
+                RETURNING token, document_delta
+            ), changes AS (
+                SELECT bit_xor(token) AS tokens, sum(document_delta)::bigint AS delta FROM consumed
+            )
+            UPDATE public.rag_corpus_state s
+            SET folded = s.folded # c.tokens, document_count = s.document_count + c.delta
+            FROM changes c WHERE s.singleton AND c.tokens IS NOT NULL;
+        END IF;
+    EXCEPTION WHEN serialization_failure THEN
+        -- A newer snapshot already folded these rows. Our own change survives in the journal.
+        NULL;
+    END;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION public.rag_corpus_note_changed()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     was_visible boolean := false;
     is_visible boolean := false;
+    removed bigint;
 BEGIN
     IF TG_OP = 'TRUNCATE' THEN
         DELETE FROM public.rag_corpus_document;
-        IF FOUND THEN
-            UPDATE public.rag_corpus_state SET generation = DEFAULT, document_count = 0 WHERE singleton;
-            IF NOT FOUND THEN RAISE EXCEPTION 'missing public corpus state'; END IF;
-        END IF;
+        GET DIAGNOSTICS removed = ROW_COUNT;
+        IF removed > 0 THEN PERFORM public.rag_corpus_record_change(-removed); END IF;
         RETURN NULL;
     END IF;
     IF TG_OP <> 'INSERT' THEN
@@ -83,10 +132,7 @@ BEGIN
         ON CONFLICT (id) DO UPDATE SET revision = EXCLUDED.revision,
             escaped_text_bytes = EXCLUDED.escaped_text_bytes;
     END IF;
-    UPDATE public.rag_corpus_state
-    SET generation = DEFAULT, document_count = document_count + is_visible::int - was_visible::int
-    WHERE singleton;
-    IF NOT FOUND THEN RAISE EXCEPTION 'missing public corpus state'; END IF;
+    PERFORM public.rag_corpus_record_change(is_visible::int - was_visible::int);
     RETURN NULL;
 END
 $$;

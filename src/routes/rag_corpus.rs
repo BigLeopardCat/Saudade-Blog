@@ -122,8 +122,7 @@ async fn page(
         .await?;
     let state = CorpusState::find_by_statement(Statement::from_string(
         DbBackend::Postgres,
-        "SELECT encode(sha256(uuid_send(generation)), 'hex') AS revision, document_count \
-         FROM public.rag_corpus_state WHERE singleton",
+        "SELECT revision, document_count FROM public.rag_corpus_snapshot",
     ))
     .one(&tx)
     .await?
