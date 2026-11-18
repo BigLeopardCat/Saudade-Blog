@@ -9,6 +9,7 @@
 | --- | --- |
 | 写作、图库和聊天操作 | [使用指南](user-guide.md)、[Wiki 场景教程](wiki/Home.md) |
 | 安装一个站点 | [新装与容器](../deploy/docker/README.md)、[原生部署入口](../deploy/README.md) |
+| 准备发行包 | [构建、校验与发布](../deploy/prebuilt.md#4-构建校验与发布)、[数据库迁移](deployment-and-ops.md#postgresql)、[依赖审计](dependency-maintenance.md) |
 | 理解代码或参与开发 | [架构](architecture.md)、[代码导读](code-reading.md)、[CONTRIBUTING](../CONTRIBUTING.md) |
 | 处理配置和故障 | [配置导航](configuration.md)、[部署运维](deployment-and-ops.md)、[排障](troubleshooting.md) |
 
