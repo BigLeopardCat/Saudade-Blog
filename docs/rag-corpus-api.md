@@ -61,8 +61,9 @@ PostgreSQL 在传输所选正文前先计算 JSON 大小。
 传输调用方允许完整响应外层结构最多占 16 MiB，此限制独立于普通 API 响应预算。
 
 文档修订值是紧凑 UTF-8 JSON 数组 `[title, content]` 的 SHA-256。
-语料修订值是对按序排列的公开文章 ID、标题和内容哈希元数据计算的不透明 SHA-256；
-调用方只比较该值，不自行重建其计算过程。即使 `updated_at` 未变化，正文变化也会使修订值失效。
+语料修订值由 PostgreSQL 的投影代次和已提交变更记录生成，为不透明的 64 字符十六进制串。
+调用方只比较该值。即使 `updated_at` 未变化，公开成员或正文实际发生变化时旧修订值也会失效。
+迁移重复执行和已提交记录折叠都保留当前修订值。
 
 每次响应都在 PostgreSQL 的 `REPEATABLE READ, READ ONLY` 事务中读取。
 后续分页若携带过期修订值，返回 HTTP 409、`code=409`、`message=corpus_revision_changed`。
