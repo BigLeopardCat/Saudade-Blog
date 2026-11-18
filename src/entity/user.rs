@@ -10,7 +10,7 @@ pub struct Model {
     pub nickname: String,
     pub nickname_auto_renamed: i16,
     pub avatar: Option<String>,
-    pub password: String, // Note: In a real app, this should be hashed!
+    pub password: String,
     pub role: String,
     pub status: i16,
     pub token_version: i32,
