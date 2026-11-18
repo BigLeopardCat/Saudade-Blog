@@ -9,11 +9,10 @@ use axum::{
     Json,
 };
 use sea_orm::{
-    sea_query::Expr, AccessMode, ColumnTrait, EntityTrait, FromQueryResult, IsolationLevel,
-    QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    AccessMode, ColumnTrait, DbBackend, DbErr, EntityTrait, FromQueryResult, IsolationLevel,
+    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 #[derive(Default, Deserialize)]
@@ -22,13 +21,16 @@ pub struct CorpusQuery {
     pub limit: Option<u64>,
     pub revision: Option<String>,
 }
-#[derive(FromQueryResult, Serialize)]
-struct DigestRow {
+#[derive(FromQueryResult)]
+struct CorpusState {
+    revision: String,
+    document_count: i64,
+}
+#[derive(FromQueryResult)]
+struct PageMember {
     id: i32,
-    title: String,
-    content_hash: String,
-    #[serde(skip_serializing)]
-    content_json_bytes: i64,
+    revision: String,
+    escaped_text_bytes: i32,
 }
 #[derive(Serialize)]
 pub struct CorpusDocument {
@@ -59,64 +61,48 @@ fn error(status: StatusCode, message: &str) -> Response {
     )
         .into_response()
 }
-fn revision(rows: &[DigestRow]) -> String {
-    hex::encode(Sha256::digest(
-        serde_json::to_vec(rows).expect("serializable corpus metadata"),
-    ))
-}
-fn document(row: note::Model) -> CorpusDocument {
-    let revision = super::document_visibility::content_revision(&row.title, &row.content);
-    CorpusDocument {
-        id: row.id,
-        title: row.title,
-        content: row.content,
-        revision,
-    }
-}
-fn selected_ids(
-    rows: &[DigestRow],
-    after: i32,
+fn page_length(
+    candidates: &[PageMember],
+    total: usize,
     limit: usize,
     page_revision: &str,
-) -> Result<Vec<i32>, sea_orm::DbErr> {
+) -> Result<usize, DbErr> {
     let empty = CorpusPage {
         schema_version: 1,
         revision: page_revision.to_owned(),
-        total: rows.len(),
+        total,
         documents: vec![],
         // Reserve the largest positive i32 cursor in the envelope.
         next_cursor: Some(i32::MAX),
     };
-    let mut bytes = serde_json::to_vec(&empty)
+    let mut bytes = serde_json::to_vec(&ApiResponse::success(empty))
         .expect("serializable corpus page")
         .len();
-    let mut selected = Vec::new();
-    for row in rows.iter().filter(|row| row.id > after).take(limit) {
-        let body_bytes = usize::try_from(row.content_json_bytes)
-            .map_err(|_| sea_orm::DbErr::Custom("invalid document size".into()))?;
+    let mut selected = 0;
+    for row in candidates.iter().take(limit) {
+        let text_bytes = usize::try_from(row.escaped_text_bytes)
+            .map_err(|_| DbErr::Custom("invalid document size".into()))?;
         let empty_document = CorpusDocument {
             id: row.id,
-            title: row.title.clone(),
+            title: String::new(),
             content: String::new(),
-            revision: "0".repeat(64),
+            revision: row.revision.clone(),
         };
         let size = serde_json::to_vec(&empty_document)
             .expect("serializable corpus document")
             .len()
-            .checked_add(body_bytes)
-            .and_then(|value| value.checked_sub(2))
-            .ok_or_else(|| sea_orm::DbErr::Custom("invalid document size".into()))?;
+            + text_bytes;
         if size > MAX_DOCUMENT_BYTES {
             return Err(sea_orm::DbErr::Custom(
                 "corpus document exceeds byte limit".into(),
             ));
         }
-        let with_separator = size + usize::from(!selected.is_empty());
+        let with_separator = size + usize::from(selected > 0);
         if bytes + with_separator > MAX_PAGE_BYTES {
             break;
         }
         bytes += with_separator;
-        selected.push(row.id);
+        selected += 1;
     }
     Ok(selected)
 }
@@ -126,7 +112,7 @@ async fn page(
     after: i32,
     limit: u64,
     expected: Option<&str>,
-) -> Result<Option<CorpusPage>, sea_orm::DbErr> {
+) -> Result<Option<CorpusPage>, DbErr> {
     let tx = state
         .db
         .begin_with_config(
@@ -134,68 +120,77 @@ async fn page(
             Some(AccessMode::ReadOnly),
         )
         .await?;
-    // Hash in PostgreSQL: do not transfer every article body on every page.
-    // Content edits, deletions and visibility changes all invalidate this token.
-    let digests = note::Entity::find()
-        .filter(public_condition())
-        .select_only()
-        .column(note::Column::Id)
-        .column(note::Column::Title)
-        .expr_as(
-            Expr::cust("encode(sha256(convert_to(\"content\", 'UTF8')), 'hex')"),
-            "content_hash",
-        )
-        .expr_as(
-            Expr::cust("octet_length(to_json(\"content\")::text)::bigint"),
-            "content_json_bytes",
-        )
-        .order_by_asc(note::Column::Id)
-        .into_model::<DigestRow>()
-        .all(&tx)
-        .await?;
-    let current = revision(&digests);
-    if expected.is_some_and(|want| want != current) {
+    let state = CorpusState::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        "SELECT encode(sha256(uuid_send(generation)), 'hex') AS revision, document_count \
+         FROM public.rag_corpus_state WHERE singleton",
+    ))
+    .one(&tx)
+    .await?
+    .ok_or_else(|| DbErr::Custom("missing public corpus state".into()))?;
+    if expected.is_some_and(|want| want != state.revision) {
         tx.rollback().await?;
         return Ok(None);
     }
-    let ids = selected_ids(&digests, after, limit as usize, &current)?;
-    let rows = if ids.is_empty() {
+    let total = usize::try_from(state.document_count)
+        .map_err(|_| DbErr::Custom("invalid corpus count".into()))?;
+    let candidates = PageMember::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, encode(revision, 'hex') AS revision, escaped_text_bytes \
+         FROM public.rag_corpus_document WHERE id > $1 ORDER BY id LIMIT $2",
+        [after.into(), (limit as i64 + 1).into()],
+    ))
+    .all(&tx)
+    .await?;
+    let count = page_length(&candidates, total, limit as usize, &state.revision)?;
+    let members = &candidates[..count];
+    let next_cursor = members
+        .last()
+        .filter(|_| count < candidates.len())
+        .map(|row| row.id);
+    let rows = if members.is_empty() {
         Vec::new()
     } else {
         note::Entity::find()
             .filter(public_condition())
-            .filter(note::Column::Id.is_in(ids.clone()))
+            .filter(note::Column::Id.is_in(members.iter().map(|row| row.id)))
+            .select_only()
+            .columns([note::Column::Id, note::Column::Title, note::Column::Content])
             .order_by_asc(note::Column::Id)
+            .into_tuple::<(i32, String, String)>()
             .all(&tx)
             .await?
     };
-    if rows.iter().map(|row| row.id).collect::<Vec<_>>() != ids {
-        return Err(sea_orm::DbErr::Custom("incomplete corpus page".into()));
+    if rows
+        .iter()
+        .map(|row| row.0)
+        .ne(members.iter().map(|row| row.id))
+    {
+        return Err(DbErr::Custom("incomplete corpus page".into()));
     }
-    let next_cursor = ids
-        .last()
-        .copied()
-        .filter(|last| digests.last().is_some_and(|row| row.id > *last));
     let result = CorpusPage {
         schema_version: 1,
-        revision: current,
-        total: digests.len(),
-        documents: rows.into_iter().map(document).collect(),
+        revision: state.revision,
+        total,
+        documents: rows
+            .into_iter()
+            .zip(members)
+            .map(|((id, title, content), member)| CorpusDocument {
+                id,
+                title,
+                content,
+                revision: member.revision.clone(),
+            })
+            .collect(),
         next_cursor,
     };
-    // Recheck the actual serialized frame before it leaves this boundary.
-    if serde_json::to_vec(&result)
-        .expect("serializable corpus page")
-        .len()
-        > MAX_PAGE_BYTES
-        || result.documents.iter().any(|row| {
-            serde_json::to_vec(row)
-                .expect("serializable corpus document")
-                .len()
-                > MAX_DOCUMENT_BYTES
-        })
-    {
-        return Err(sea_orm::DbErr::Custom(
+    if result.documents.iter().any(|row| {
+        serde_json::to_vec(row)
+            .expect("serializable corpus document")
+            .len()
+            > MAX_DOCUMENT_BYTES
+    }) {
+        return Err(DbErr::Custom(
             "corpus serialized byte limit exceeded".into(),
         ));
     }
@@ -224,12 +219,20 @@ pub async fn export(
     }
     match page(&state, after, limit, query.revision.as_deref()).await {
         Ok(Some(page)) => {
-            let mut response = Json(ApiResponse::success(page)).into_response();
-            response.headers_mut().insert(
-                axum::http::header::CACHE_CONTROL,
-                axum::http::HeaderValue::from_static("no-store"),
-            );
-            response
+            let body = serde_json::to_vec(&ApiResponse::success(page))
+                .expect("serializable corpus response");
+            if body.len() > MAX_PAGE_BYTES {
+                tracing::error!("[rag] corpus response exceeds byte limit");
+                return error(StatusCode::SERVICE_UNAVAILABLE, "corpus_unavailable");
+            }
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, "application/json"),
+                    (axum::http::header::CACHE_CONTROL, "no-store"),
+                ],
+                body,
+            )
+                .into_response()
         }
         Ok(None) => error(StatusCode::CONFLICT, "corpus_revision_changed"),
         Err(e) => {
@@ -274,34 +277,30 @@ mod tests {
     }
     #[test]
     fn byte_bounded_pages_keep_whole_documents_and_advance_the_actual_cursor() {
-        let rows: Vec<DigestRow> = (1..=4)
-            .map(|id| DigestRow {
+        let rows: Vec<PageMember> = (1..=4)
+            .map(|id| PageMember {
                 id,
-                title: "正文🐈".into(),
-                content_hash: "a".repeat(64),
-                content_json_bytes: 3_500_000,
+                revision: "b".repeat(64),
+                escaped_text_bytes: 3_500_000,
             })
             .collect();
-        let first = selected_ids(&rows, 0, 50, &"a".repeat(64)).unwrap();
-        assert_eq!(first, [1, 2, 3]);
-        let last = *first.last().unwrap();
-        assert_eq!(selected_ids(&rows, last, 50, &"a".repeat(64)).unwrap(), [4]);
-        assert!(selected_ids(&rows, 4, 50, &"a".repeat(64))
-            .unwrap()
-            .is_empty());
-        assert_eq!(selected_ids(&rows, 0, 2, &"a".repeat(64)).unwrap(), [1, 2]);
+        let rev = "a".repeat(64);
+        let first = page_length(&rows, 4, 50, &rev).unwrap();
+        assert_eq!(first, 3);
+        assert_eq!(rows[first - 1].id, 3);
+        assert_eq!(page_length(&rows[first..], 4, 50, &rev).unwrap(), 1);
+        assert_eq!(page_length(&[], 4, 50, &rev).unwrap(), 0);
+        assert_eq!(page_length(&rows, 4, 2, &rev).unwrap(), 2);
     }
 
     #[test]
     fn escaped_json_size_and_envelope_count_toward_the_document_limit() {
-        let row = DigestRow {
+        let row = PageMember {
             id: 1,
-            title: "unicode🐈 \"".into(),
-            content_hash: "a".repeat(64),
-            content_json_bytes: MAX_DOCUMENT_BYTES as i64,
+            revision: "a".repeat(64),
+            escaped_text_bytes: MAX_DOCUMENT_BYTES as i32,
         };
-        // The body alone fits; its typed envelope makes the complete document too large.
-        assert!(selected_ids(&[row], 0, 50, &"a".repeat(64)).is_err());
+        assert!(page_length(&[row], 1, 50, &"a".repeat(64)).is_err());
         let escaped = "\u{0001}".repeat(800_000);
         assert!(escaped.len() < MAX_DOCUMENT_BYTES);
         assert!(serde_json::to_vec(&escaped).unwrap().len() > MAX_DOCUMENT_BYTES);
@@ -309,7 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_json_projection_matches_complete_wire_document_bytes() {
-        use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+        use sea_orm::{ConnectionTrait, Database};
         let Ok(url) = std::env::var("TEST_PG_URL") else {
             eprintln!("SKIP corpus JSON size PostgreSQL: TEST_PG_URL not set");
             return;
@@ -317,37 +316,27 @@ mod tests {
         let db = Database::connect(url)
             .await
             .expect("configured test database is reachable");
+        let title = "🐈 \"";
         let content = "JSON \" \\ \r\n🐈 é \u{0001}";
         let row = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT octet_length(to_json($1::text)::text)::bigint AS bytes",
-                vec![content.into()],
+                "SELECT encode(revision, 'hex') AS revision, escaped_text_bytes \
+                 FROM public.rag_corpus_entry($1, $2)",
+                [title.into(), content.into()],
             ))
             .await
             .unwrap()
             .unwrap();
-        let bytes: i64 = row.try_get("", "bytes").unwrap();
-        assert_eq!(bytes as usize, serde_json::to_vec(content).unwrap().len());
-    }
-
-    #[test]
-    fn revision_covers_content_title_and_membership() {
-        let rows = || {
-            vec![DigestRow {
-                id: 1,
-                title: "one".into(),
-                content_hash: "a".into(),
-                content_json_bytes: 2,
-            }]
-        };
-        let baseline = revision(&rows());
-        let mut changed = rows();
-        changed[0].content_hash = "b".into();
-        assert_ne!(baseline, revision(&changed));
-        changed = rows();
-        changed[0].title = "two".into();
-        assert_ne!(baseline, revision(&changed));
-        assert_ne!(baseline, revision(&[]));
+        let bytes: i32 = row.try_get("", "escaped_text_bytes").unwrap();
+        let revision: String = row.try_get("", "revision").unwrap();
+        assert_eq!(
+            bytes as usize,
+            serde_json::to_vec(&(title, content)).unwrap().len() - 7
+        );
+        assert_eq!(
+            revision,
+            super::super::document_visibility::content_revision(title, content)
+        );
     }
 }
