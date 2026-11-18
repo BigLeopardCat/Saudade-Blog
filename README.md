@@ -105,9 +105,10 @@ npm run dev
 
 ## 文档
 
-[使用指南](docs/user-guide.md) · [文档索引](docs/README.md) · [架构](docs/architecture.md) · [开发](CONTRIBUTING.md) · [部署运维](docs/deployment-and-ops.md) · [安全边界](docs/security-boundary.md)
+[使用指南](docs/user-guide.md) · [Wiki 教程](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [文档索引](docs/README.md) · [配置](docs/configuration.md) · [代码导读](docs/code-reading.md) · [排障](docs/troubleshooting.md)
 
-短使用步骤与版本相关说明随源码维护；更长的场景教程可放 Wiki 并链接这些文档。截图使用合成数据，避免包含真实账号、私信与密钥。
+界面、接口、配置与运维说明随源码维护；Wiki 按写作、图库、安装与恢复组织教程，
+[源稿](docs/wiki/Home.md)随 PR 评审。截图使用合成数据，不包含真实账号、私信与密钥。
 
 ## 贡献与许可
 

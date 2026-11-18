@@ -407,7 +407,7 @@ const ArticleResource = ({id}: {id: string}) => {
                         </motion.div>
                     </div>
                     <div className='readDescription'>
-                        <span style={{color:'rgb(9,10,21)',fontSize:15,fontWeight:600,marginRight:10}}>内容概述:</span>
+                        <span className="readDescriptionLabel">内容概述:</span>
                         <p>{article?.description}</p>
                     </div>
                     <div className='readContent markdown-body'>

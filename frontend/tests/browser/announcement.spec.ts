@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import { test, expect } from './sandbox'
 
 test.use({ entry: 'announcement' })
@@ -33,6 +34,7 @@ for (const failure of ['business', 'transport'] as const) {
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('标题').fill('待发布公告')
     await dialog.getByLabel('内容').fill('失败也要保留的正文')
+    if (failure === 'business') await wikiShot(page, 'announcement', dialog)
     const save = dialog.getByRole('button', { name: /保\s*存/ })
     await save.click()
     await expect.poll(() => requests).toBe(1)

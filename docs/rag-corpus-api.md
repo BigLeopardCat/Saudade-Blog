@@ -1,103 +1,91 @@
-# Public document reads and RAG corpus
+# 公开文档读取与 RAG 语料接口
 
-## Original text
+本文说明博客宿主提供的原文读取、语料导出和可见性校验接口。RAG（检索增强生成）的索引发布、向量化配置和检索由 Agent 负责；接口字段使用英文标识符，不限制文章正文的语言。
 
-`GET /api/public/documents/{type}/{id}/read` reads one public document without
-recording a view. `type` is `note`, `talk`, `board` or `announcement`; IDs are
-positive i32 values. Notes use the published-root predicate below; talks and
-board messages must match their source type and be approved. Private drafts and
-editor buffers are not available through this route.
+## 原文读取
 
-`offset` and `limit` count Unicode code points in the selected original Markdown.
-The default limit is 12,000 and the maximum is 24,000. An optional `section`
-selects a unique heading or source section ID; a parent section includes its
-descendants. Duplicate titles return an empty unresolved frame with `source=null`,
-never an arbitrary match. Images remain their original Markdown references.
+`GET /api/public/documents/{type}/{id}/read` 读取一份公开文档，不增加浏览量。
+`type` 支持 `note`、`talk`、`board` 和 `announcement`，ID 必须是正数且在 i32 范围内。
+文章必须满足下文的公开根文章条件；说说和留言必须匹配对应来源类型且已审核通过。
+此接口不提供私有草稿或编辑器中尚未保存的内容。
 
-Successful data includes `content`, `contentRevision`, `sectionSchema`,
-`readOffset`, `nextOffset`, `totalChars`, `readComplete` and a bounded section list.
-`source` binds type, ID, canonical revision, section schema, selected section ID
-and the exact visible range. A complete selected section does not imply the
-whole document was read. For continuation or an `sN` section ID, provide both
-`revision=contentRevision` and `section_schema=sectionSchema`. Changed content or
-section policy returns 409; missing locator versions or invalid ranges return 400.
-The current section policy is `commonmark-top-level-source-v1`. Oversized source
-bodies above 4 MiB return 413; unavailable data, admission or deadline returns 503.
-Successful reads use `Cache-Control: no-store`.
+`offset` 和 `limit` 按所选原始 Markdown 的 Unicode 码点计数。
+`limit` 默认 12,000，最大 24,000。可选参数 `section` 用于选择唯一标题或来源章节 ID，
+父章节包含其下的子章节。标题重复时返回未解析的空结果，`source=null`，不会任意选择同名章节。
+图片保留为原始 Markdown 引用。
 
-For notes, `metadata` also contains the existing public author display name/avatar,
-article description and cover/fit/focal/zoom fields. It reuses the public article
-profile projection, without exposing author IDs, email, role or credentials.
-Display names and descriptions are bounded to 80 and 2,000 Unicode code points.
-URLs above 2,048 code points become null rather than an invalid URL prefix. Each
-bounded text/URL has its corresponding `Truncated` flag. Unknown authors remain
-null; an unset description is an empty string. Nonfinite or invalid image geometry
-is unknown, not a fabricated default. Metadata-only consumers may request `limit=1`;
-no separate body/statistics or per-author HTTP request is needed.
+成功响应的 `data` 包含 `content`、`contentRevision`、`sectionSchema`、
+`readOffset`、`nextOffset`、`totalChars`、`readComplete` 和数量受限的章节列表。
+`source` 绑定文档类型、ID、规范内容修订、章节规则版本、所选章节 ID 及精确可见范围。
+读完所选章节不代表读完全文。续读或使用 `sN` 形式的章节 ID 时，必须同时传入
+`revision=contentRevision` 和 `section_schema=sectionSchema`。
+内容或章节规则已变化时返回 409；缺少定位所需版本或读取范围无效时返回 400。
+当前章节规则为 `commonmark-top-level-source-v1`。原文超过 4 MiB 时返回 413；
+数据不可用、请求无法获准处理或处理超时时返回 503。成功读取使用 `Cache-Control: no-store`。
 
-`GET /api/public/notes/{id}/stats` is independent of body reads and does not add a
-view. It shares the same public-root rule; database failures return 503 rather
-than pretending the article is missing. Public consumers should use numeric
-counts only; anonymous `liked=false` does not describe an authenticated user.
+对于文章，`metadata` 还包含已有的公开作者显示名、头像、文章简介，以及封面地址和
+fit、focal、zoom 字段。它复用公开文章的资料投影，不暴露作者 ID、邮箱、角色或凭据。
+显示名和简介分别限制为 80 和 2,000 个 Unicode 码点。
+URL 超过 2,048 个码点时返回 null，不返回截断后可能无效的 URL 前缀。
+每项受长度限制的文本或 URL 都有对应的 `Truncated` 标记。
+未知作者保持 null，未填写的简介为空字符串。图片几何参数非有限值或无效时表示未知，不伪造默认值。
+只需要元信息的调用方可传入 `limit=1`，无需为此额外请求正文、统计或逐个作者资料。
 
-## Corpus export
+`GET /api/public/notes/{id}/stats` 独立于正文读取，也不增加浏览量。
+它使用相同的公开根文章条件；数据库故障返回 503，不伪装成文章不存在。
+公开调用方只应使用其中的计数值；匿名响应中的 `liked=false` 不代表已登录用户的点赞状态。
 
-GET /api/public/rag/corpus exports only records accepted by notes::public_condition:
-public/published status, is_public=true, and draft_of IS NULL. It reuses the same
-predicate as public detail reads. It does not increment views or expose internal user IDs.
+## 语料导出
 
-Parameters:
+`GET /api/public/rag/corpus` 只导出通过 `notes::public_condition` 的记录：
+状态为公开/已发布、`is_public=true`，且 `draft_of IS NULL`。
+它与公开详情读取复用同一条件，不增加浏览量，也不暴露内部用户 ID。
 
-| Parameter | Meaning |
-|---|---|
-| limit | Page size, default 50, allowed 1..100 |
-| after | Exclusive positive article ID cursor; omitted for the first page |
-| revision | Required with after; 64-character corpus revision from the first page |
+参数如下：
 
-The success envelope remains code/message/data. data contains schema_version=1,
-revision, total, documents and next_cursor. Each document has id, title, content
-and revision. next_cursor is null on the last page. IDs are strictly increasing.
+| 参数 | 含义 |
+| --- | --- |
+| `limit` | 每页数量，默认 50，允许 1..100 |
+| `after` | 以正数文章 ID 表示的排他游标；第一页不传 |
+| `revision` | 传入 `after` 时必填，使用第一页返回的 64 字符语料修订值 |
 
-Each complete serialized document is limited to 4 MiB and the complete corpus
-page to 12 MiB. PostgreSQL projects JSON sizes before any selected bodies are
-transferred. A page may contain fewer than `limit` documents because of this byte
-budget; only `next_cursor=null` means the end. A non-null cursor is the last
-returned ID. A single oversized document fails explicitly with 503 and is never
-truncated or silently omitted. Transport consumers allow up to 16 MiB for the
-complete response envelope, independent of the ordinary API response budget.
+成功响应沿用 `code`、`message`、`data` 外层结构。
+`data` 包含 `schema_version=1`、`revision`、`total`、`documents` 和 `next_cursor`。
+每份文档包含 `id`、`title`、`content` 和 `revision`，ID 严格递增。
+最后一页的 `next_cursor` 为 null。
 
-Document revision is SHA-256 of the compact UTF-8 JSON array [title, content].
-Corpus revision is an opaque SHA-256 over the ordered public ID/title/content-hash
-metadata; consumers compare it without reconstructing its implementation.
-Body changes invalidate it even when updated_at stays unchanged.
+每份完整序列化文档限制为 4 MiB，整页语料限制为 12 MiB。
+PostgreSQL 在传输所选正文前先计算 JSON 大小。
+受字节预算影响，一页返回的文档数可能少于 `limit`；只有 `next_cursor=null` 才表示读取结束。
+非空游标是本页最后一份文档的 ID。单份文档超限时明确返回 503，不截断，也不静默跳过。
+传输调用方允许完整响应外层结构最多占 16 MiB，此限制独立于普通 API 响应预算。
 
-Each response is read in a PostgreSQL REPEATABLE READ, READ ONLY transaction.
-A later page with an obsolete revision returns HTTP 409, code=409,
-message=corpus_revision_changed. The consumer discards that partial attempt and
-starts a new snapshot. Database failures return HTTP 503/code=503 with no documents.
-Malformed cursor, revision or limit returns HTTP 400. Successful exports use
-Cache-Control: no-store.
+文档修订值是紧凑 UTF-8 JSON 数组 `[title, content]` 的 SHA-256。
+语料修订值是对按序排列的公开文章 ID、标题和内容哈希元数据计算的不透明 SHA-256；
+调用方只比较该值，不自行重建其计算过程。即使 `updated_at` 未变化，正文变化也会使修订值失效。
 
-Consumers verify schema version, per-document revision, stable corpus revision and
-total, monotonic unique IDs, forward cursors, and final count before publishing an index.
-Empty is valid only after a successful complete snapshot. Never interpret an error
-or a partial page as an empty corpus.
+每次响应都在 PostgreSQL 的 `REPEATABLE READ, READ ONLY` 事务中读取。
+后续分页若携带过期修订值，返回 HTTP 409、`code=409`、`message=corpus_revision_changed`。
+调用方必须丢弃本次已读取的部分结果，从头重新获取快照。
+数据库故障返回 HTTP 503、`code=503`，且不返回文档；游标、修订值或数量格式错误返回 HTTP 400。
+成功导出使用 `Cache-Control: no-store`。
 
-The host owns the public corpus contract. The Agent owns index publication,
-embedding configuration and retrieval. See the Agent's current RAG documentation:
-https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/rag-design.md
+调用方发布索引前必须校验：结构版本、每份文档的修订值、稳定的语料修订值和总数、
+单调且唯一的 ID、向前推进的游标，以及最终文档数量。
+只有成功读完完整快照，才能确认语料为空；不能把错误或不完整分页当成空语料。
 
-## Current visibility
+宿主负责公开语料契约，Agent 负责索引发布、向量化配置和检索，详见
+[Agent RAG 设计](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/rag-design.md)。
 
-`POST /api/public/documents/validate` checks candidate article identities against
-the current public corpus before the Agent presents retrieval results. The body
-is `{documents:[{type:"note",id,revision}]}`; revision is the canonical content
-hash. At most 256 request rows and 64 unique IDs are accepted.
+## 当前可见性校验
 
-Data has `schemaVersion:1` and exactly one entry per requested ID, in any order:
-`{type:"note",id,visible,contentRevision}`. Missing, deleted and non-public
-articles all return `visible:false,contentRevision:null`, without titles, bodies
-or hidden metadata. Visible entries return the current canonical content hash;
-the consumer requires an exact candidate revision match. Database failure,
-capacity exhaustion and deadline expiry return 503, never a successful zero-hit
-result. Malformed identities return 400 before database access.
+`POST /api/public/documents/validate` 在 Agent 展示检索结果前，对照当前公开语料校验候选文章身份。
+请求体为 `{documents:[{type:"note",id,revision}]}`，其中 `revision` 是规范内容哈希。
+最多接受 256 条请求记录和 64 个不同 ID。
+
+响应 `data` 包含 `schemaVersion:1`，并为每个请求 ID 返回且仅返回一项，顺序不限：
+`{type:"note",id,visible,contentRevision}`。
+不存在、已删除或非公开的文章统一返回 `visible:false,contentRevision:null`，
+不返回标题、正文或隐藏元信息。可见文章返回当前规范内容哈希，调用方要求它与候选修订值完全一致。
+数据库故障、容量耗尽或处理超时返回 503，不返回表示零命中的成功结果。
+身份参数格式错误时，在访问数据库前返回 400。

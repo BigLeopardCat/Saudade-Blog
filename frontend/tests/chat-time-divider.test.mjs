@@ -286,7 +286,12 @@ console.log('\n== 场景 3：storage 触发 pullHistory（60s 窗口内 → l �
   dump('60s 内 pull 后');
   const msgs = msgsOf();
   const last = msgs[msgs.length - 1];
-  assert(msgs.length === 51, '50 历史 + user（l 保留；无 mid 错误气泡被孤儿清理收敛到 DB 视图）', msgs.length);
+  const earlier = msgs.find(msg => msg.dataset.mid === 'd1895');
+  const localInputs = msgs.filter(msg => msg.dataset.mid?.startsWith('l'));
+  assert(msgs.length === 52 && localInputs.length === 2, '50 条历史和两轮未确认的本地输入', msgs.length);
+  assert(earlier?.querySelector('.msg-delivery')?.textContent === '已接收', '服务器历史保留原轮接收状态');
+  assert(localInputs.every(msg => msg.querySelector('.msg-delivery')?.textContent === '未确认送达'),
+         '两轮失败请求各自保留未确认送达');
   assert(last.dataset.mid.startsWith('l'), 'l 轮仍在', last.dataset.mid);
   assert(!(last.previousSibling && last.previousSibling.classList.contains('chat-time-divider')), 'user 上方无 TD（与 1895 间隔 <5min）');
   const tds = tdsOf();

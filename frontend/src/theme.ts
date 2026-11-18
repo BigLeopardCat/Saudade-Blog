@@ -1,9 +1,11 @@
-// 主题工具（App/Head/PhoneSwitch/Dashboard 共用）
+// Shared day/night state for React pages and the native chat widget.
 import { useEffect, useState } from 'react'
 
 export function readDarkMode(): boolean {
-    const v = localStorage.getItem('isDarkMode');
-    return v === 'true' || v === '"true"';
+    try {
+        const v = localStorage.getItem('isDarkMode');
+        return v === 'true' || v === '"true"';
+    } catch { return false; }
 }
 
 export function currentThemeDay(): string {
@@ -79,10 +81,16 @@ export function useIsDarkMode(): boolean {
     const [isDark, setDark] = useState(readDarkMode);
     useEffect(() => {
         const onChange = (e: Event) => setDark(!!(e as CustomEvent).detail);
+        const onStorage = (e: StorageEvent) => {
+            if (e.key === 'isDarkMode' || e.key === null) setDark(readDarkMode());
+        };
         window.addEventListener('darkmode-change', onChange);
-        // 补读一次：组件可能在主题已切换之后才挂载（如从首页点进文章详情）
+        window.addEventListener('storage', onStorage);
         setDark(readDarkMode());
-        return () => window.removeEventListener('darkmode-change', onChange);
+        return () => {
+            window.removeEventListener('darkmode-change', onChange);
+            window.removeEventListener('storage', onStorage);
+        };
     }, []);
     return isDark;
 }
@@ -91,6 +99,7 @@ export function useAutoThemeSwitch(): void {
     useEffect(() => {
         const persist = (e: Event) => {
             const on = !!(e as CustomEvent).detail;
+            document.documentElement.dataset.sceneDark = String(on);
             try { localStorage.setItem('isDarkMode', JSON.stringify(on)); } catch { /* 隐私模式写不了，忽略 */ }
         };
         const prefersAuto = () => {
@@ -101,13 +110,21 @@ export function useAutoThemeSwitch(): void {
                 }
             } catch { /* 读 localStorage 失败不致命，下一分钟再来 */ }
         };
+        document.documentElement.dataset.sceneDark = String(readDarkMode());
         window.addEventListener('darkmode-change', persist);
+        const onStorage = (e: StorageEvent) => {
+            if (e.key === 'isDarkMode' || e.key === null) {
+                document.documentElement.dataset.sceneDark = String(readDarkMode());
+            }
+        };
+        window.addEventListener('storage', onStorage);
         prefersAuto();
         const timer = setInterval(prefersAuto, 60 * 1000);
         const onVisible = () => { if (!document.hidden) prefersAuto(); };
         document.addEventListener('visibilitychange', onVisible);
         return () => {
             window.removeEventListener('darkmode-change', persist);
+            window.removeEventListener('storage', onStorage);
             clearInterval(timer);
             document.removeEventListener('visibilitychange', onVisible);
         };

@@ -1,3 +1,4 @@
+import {wikiShot} from './wiki-shot'
 import { test, expect } from './sandbox'
 
 test.describe('account tabs', () => {
@@ -7,7 +8,11 @@ test.describe('account tabs', () => {
       const claims = btoa(JSON.stringify({sub: 7, role: 'admin', exp: Date.now()/1000 + 600}))
       localStorage.setItem('tokenKey', `test.${claims}.test`)
     })
-    await page.route('**/api/temp-users', route => route.fulfill({ json: [] }))
+    await page.route('**/api/temp-users', route => route.fulfill({ json: [
+      {id: 11, username: 'reader-demo', role: 'user', status: 0, chatQuotaUsed: 3, chatQuotaLimit: 20},
+      {id: 12, username: 'limited-demo', role: 'zako', status: 0, chatQuotaUsed: 0, chatQuotaLimit: 5},
+      {id: 13, username: 'editor-demo', role: 'admin', status: 0, chatQuotaUsed: 8, chatQuotaLimit: 100},
+    ] }))
     await page.route('**/api/protected/quota/requests**', route => route.fulfill({ json: { code: 200, data: [], total: 0 } }))
     await page.goto(sandboxURL)
     const accounts = page.getByRole('tab', { name: '账号管理', exact: true })
@@ -23,6 +28,7 @@ test.describe('account tabs', () => {
     await page.mouse.click(box!.x + box!.width - 2, box!.y + box!.height / 2)
     await expect(accounts).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.tu-section')).toBeVisible()
+    await wikiShot(page, 'users')
   })
 })
 

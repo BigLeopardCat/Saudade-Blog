@@ -182,8 +182,12 @@
 :root .frontRoot .SelfDescription .SocialBtn .BG { display: none; }
 :root .frontRoot .readContainer { background: transparent; padding-top: 100px; }
 :root .frontRoot .readContainer .readCover { width: min(1240px, 94%); border-radius: 20px; }
-:root .frontRoot .readContainer .readContent { background: var(--scene-surface); border: 1px solid var(--scene-edge); border-radius: 20px; box-shadow: var(--scene-shadow); }
-:root .frontRoot .readContainer .readContent .markdown-body { background: transparent; color: var(--scene-ink); }
+:root .frontRoot .readContainer .readDescription { background: var(--scene-glass); border: 1px solid var(--scene-edge); box-shadow: var(--scene-shadow); color: var(--scene-ink); }
+:root .frontRoot .readContainer .readContent { color: var(--scene-ink); background: var(--scene-surface); border: 1px solid var(--scene-edge); border-radius: 20px; box-shadow: var(--scene-shadow); }
+:root .frontRoot .readContainer .readContent .markdown-body { max-width: none; background: transparent; color: var(--scene-ink); }
+:root .frontRoot .readContainer .readContent :is(blockquote, figcaption, .footnotes) { color: var(--scene-muted); }
+:root .frontRoot .readContainer .readContent :is(blockquote, h1, h2, hr) { border-color: color-mix(in srgb, var(--scene-ink) 24%, transparent); }
+:root .frontRoot .readContainer .readContent hr { background: color-mix(in srgb, var(--scene-ink) 24%, transparent); }
 :root .frontRoot .readContainer .readContent .navigation .markdown-navigation { backdrop-filter: blur(18px) saturate(1.12); -webkit-backdrop-filter: blur(18px) saturate(1.12); background: color-mix(in srgb, var(--scene-surface) 58%, transparent); border: 1px solid var(--scene-edge); }
 :root .frontRoot .readContainer .readContent .markdown-body :is(h1,h2,h3,h4,h5,h6) { color: var(--scene-ink); }
 :root .frontRoot .readContainer .readContent .markdown-body a { color: var(--scene-accent); }
@@ -219,12 +223,12 @@
 :root .frontRoot .readContainer .readContent { width: calc(100% - 40px); box-sizing: border-box; }
 :root {
   --reader-layout: min(100vw, 2200px);
-  --reader-edge: calc((100vw - var(--reader-layout)) / 2 + 24px);
+  --reader-edge: calc((100vw - var(--reader-width)) / 2 - var(--reader-chat-width) - var(--reader-gap));
   --reader-gap: 20px;
   --reader-top: 100px;
-  --reader-chat-width: clamp(300px, 23vw, 420px);
+  --reader-chat-width: var(--reader-toc-width);
   --reader-toc-width: clamp(280px, 18vw, 320px);
-  --reader-width: calc(var(--reader-layout) - 48px - var(--reader-chat-width) - var(--reader-toc-width) - 40px);
+  --reader-width: min(1200px, calc(var(--reader-layout) - 48px - 2 * (var(--reader-toc-width) + var(--reader-gap))));
 }
 :root .frontRoot .readContainer .readContent { margin-inline: auto; }
 :root .frontRoot .SelfDescription .Social { flex-wrap: wrap; gap: 12px; }
@@ -247,20 +251,15 @@
 #content :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: var(--reading-offset, 100px); }
 @media (min-width: 1201px) {
   :root .frontRoot .readContainer .readContent {
-    width: calc(var(--reader-layout) - 48px - var(--reader-toc-width) - var(--reader-gap));
-    max-width: none; align-self: flex-start; margin-left: var(--reader-edge); margin-right: 0;
+    width: var(--reader-width);
+    max-width: none; margin-inline: auto;
   }
   :root .frontRoot .readContainer .readContent .navigation {
     top: 0; width: var(--reader-toc-width);
     right: calc(-1 * (var(--reader-toc-width) + var(--reader-gap)));
   }
   :root .frontRoot .readContainer .readContent article { max-width: none; }
-}
-@media (min-width: 1320px) {
-  :root .frontRoot .readContainer .readContent {
-    width: var(--reader-width);
-    margin-left: calc(var(--reader-edge) + var(--reader-chat-width) + var(--reader-gap));
-  }
+  :root .frontRoot .readContainer .readDescription { width: var(--reader-width); max-width: none; }
 }
 
 :root .frontRoot .headContainer[data-hidden] {
