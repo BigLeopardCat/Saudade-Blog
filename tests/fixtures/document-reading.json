@@ -211,5 +211,47 @@
         "bodyEnd": 12
       }
     ]
+  },
+  {
+    "name": "atx_tab_delimiters",
+    "title": "标题",
+    "content": "#\t父标题\t###\t\r\n开篇🐈\r\n## 子标题 ###\t###\r\n正文\r\n### \\#字面\\#\t\r\n尾部",
+    "contentRevision": "965769cd7d35e9c8871d7faaceb581fdb949ff8cd6d0eef71fd58160c7644247",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "父标题",
+        "level": 1,
+        "path": [
+          "父标题"
+        ],
+        "bodyStart": 12,
+        "bodyEnd": 17
+      },
+      {
+        "id": "s2",
+        "title": "子标题 ###",
+        "level": 2,
+        "path": [
+          "父标题",
+          "子标题 ###"
+        ],
+        "bodyStart": 33,
+        "bodyEnd": 37
+      },
+      {
+        "id": "s3",
+        "title": "\\#字面\\#",
+        "level": 3,
+        "path": [
+          "父标题",
+          "子标题 ###",
+          "\\#字面\\#"
+        ],
+        "bodyStart": 50,
+        "bodyEnd": 52
+      }
+    ]
   }
 ]

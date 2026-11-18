@@ -20,6 +20,31 @@ pub struct Section {
     pub byte_end: usize,
 }
 
+fn heading_title(content: &str, start: usize, end: usize, inner: Option<(usize, usize)>) -> String {
+    let source = content[start..end].trim_end_matches(['\r', '\n']);
+    let line = source.trim_start_matches(' ');
+    // A single-line ATX heading can close with hashes surrounded by spaces or tabs.
+    if line.starts_with('#') && !line.contains(['\r', '\n']) {
+        let body = line.trim_start_matches('#').trim_end_matches([' ', '\t']);
+        let before_hashes = body.trim_end_matches('#');
+        let title = if before_hashes.ends_with([' ', '\t']) {
+            before_hashes
+        } else {
+            body
+        };
+        return title.trim().to_owned();
+    }
+    inner
+        .map(|(mut a, b)| {
+            // Text event spans omit the leading CommonMark escape marker.
+            if a > start && content.as_bytes()[a - 1] == b'\\' {
+                a -= 1;
+            }
+            content[a..b].replace("\r\n", "\n").replace('\r', "\n")
+        })
+        .unwrap_or_default()
+}
+
 pub fn outline(content: &str, title: &str) -> Vec<Section> {
     let mut headings = Vec::new();
     let mut depth = 0usize;
@@ -35,15 +60,7 @@ pub fn outline(content: &str, title: &str) -> Vec<Section> {
             }
             Event::End(TagEnd::Heading(_)) if depth == 1 => {
                 if let Some((start, end, level, inner)) = current.take() {
-                    let heading = inner
-                        .map(|(mut a, b)| {
-                            // Text event spans omit the leading CommonMark escape marker.
-                            if a > start && content.as_bytes()[a - 1] == b'\\' {
-                                a -= 1;
-                            }
-                            content[a..b].replace("\r\n", "\n").replace('\r', "\n")
-                        })
-                        .unwrap_or_default();
+                    let heading = heading_title(content, start, end, inner);
                     headings.push((start, end, level, heading));
                 }
                 depth -= 1;
