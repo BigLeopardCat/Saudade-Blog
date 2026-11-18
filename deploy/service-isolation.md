@@ -9,7 +9,6 @@ Rust 使用 `saudade-blog`；Agent HTTP、scheduler 和保留清理任务使用
 | `/srv/saudade-agent/releases/<sha>` | 独立 venv 与固定提交；部署账号拥有、Agent 组只读 |
 | `/srv/saudade-agent/current` | 部署账号切换的发布链接 |
 | `/var/lib/saudade-blog/uploads` | Rust 上传目录，原有下载 URL 不变 |
-| `/var/lib/saudade-blog/article-graph` | 可选文章图谱产物，由 Rust 管理 |
 | `/var/lib/saudade-agent` | 本地运行数据、私有 trace、日志与评测缓存 |
 | `/var/cache/saudade-agent` | uv 等运行缓存 |
 | `/etc/saudade/*-runtime.env` | root 拥有，对应服务组可读，0640；不进入发布包 |
@@ -33,8 +32,8 @@ Rust 只读取 `/etc/saudade/blog-runtime.env`；Agent HTTP、scheduler 和维�
 发布工具只读取部署账号的私有 R2 文件，见[发布配置](../docs/deployment-and-ops.md#发布工具配置)。
 
 Agent 设置 `TRACE_DIR=/var/lib/saudade-agent/traces`、`BLOG_ROOT=/run/saudade-host`，
-本地文件数据放在 `/var/lib/saudade-agent/data`，检索与向量索引存储在配置的 PostgreSQL；Rust 设置
-`UPLOAD_DIR=/var/lib/saudade-blog/uploads`、`GRAPH_ARTIFACT_DIR=/var/lib/saudade-blog/article-graph`。
+本地文件数据放在 `/var/lib/saudade-agent/data`，检索与向量索引存储在配置的 PostgreSQL。Rust 设置
+`UPLOAD_DIR=/var/lib/saudade-blog/uploads`。文章向量图谱在线功能暂停，部署无需配置图谱产物目录。
 业务与 checkpoint/scheduling 数据库隔离。运行配置按 systemd EnvironmentFile 格式保存，
 由 root 拥有、相应服务组读取；发布账号拥有代码，服务账号没有 sudo 权限。
 
@@ -48,7 +47,7 @@ Agent 设置 `TRACE_DIR=/var/lib/saudade-agent/traces`、`BLOG_ROOT=/run/saudade
 
 不移动或覆盖已有数据。执行 daemon-reload 后，先核对 systemctl show 的实际账号、
 EnvironmentFiles、ExecStart 和可写路径，再重启正式服务。验证就绪、版本、检索、持久会话、
-受保护身份读取、公开图片/图谱及 scheduler 存活；启用维护 timer，首次只读检查 trace 清单。
+受保护身份读取、公开图片及 scheduler 存活；启用维护 timer，首次只读检查 trace 清单。
 账号沙箱应拒绝 home/SSH、其他服务密钥和 sudo，进程 `NoNewPrivs=1`、有效 capabilities 为零。
 
 维护单元从当前固定 release 依次清理 trace、过期且不可恢复的 checkpoint、已结束的 DBOS
@@ -57,7 +56,7 @@ EnvironmentFiles、ExecStart 和可写路径，再重启正式服务。验证就
 运行时必须支持带会话锁与恢复状态复查的保留清理。旧 cron 若调用开发目录下的回归或清理
 脚本，先备份 crontab，再仅移除被新 timer 接管的条目；线上维护不执行模型评测和测试套件。
 
-Rust 将已发布二进制只读 bind 到 `/srv/saudade-blog/saudade_blog_bin`，图谱挂载可选，
+Rust 将已发布二进制只读 bind 到 `/srv/saudade-blog/saudade_blog_bin`。
 核心博客无需安装 Agent。宿主视图中的目标可以是零字节占位文件；实际二进制在服务的
 mount namespace 内可见。核对产物时记录 `/proc/<MainPID>/exe` 的 SHA256，并使用
 `nsenter --target <MainPID> --mount` 检查绑定路径，不能依据宿主占位文件判断损坏。
