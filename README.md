@@ -61,15 +61,9 @@ flowchart LR
 
 ## 安装与发布验证
 
-当前公开版本为 [v0.2.0](https://github.com/BigLeopardCat/Saudade-Blog/releases/tag/v0.2.0)。首次安装可在 Linux 构建机使用 Docker Engine 与 Docker Compose 2.30+：
+从 [最新发行版](https://github.com/BigLeopardCat/Saudade-Blog/releases/latest) 获取 Linux amd64 容器归档或原生安装包。按[预构建安装指南](deploy/prebuilt.md)校验 SHA256SUMS，再按 manifest 固定的版本安装。容器安装需要 Docker Engine 与 Docker Compose 2.30+。
 
-```sh
-git clone --branch v0.2.0 https://github.com/BigLeopardCat/Saudade-Blog.git
-cd Saudade-Blog
-bash deploy/install.sh --site-url http://localhost:8080
-```
-
-默认安装核心博客，绑定回环地址；公开域名、TLS、管理员初始化和可选 Agent 需按[容器指南](deploy/docker/README.md)配置。当前提供固定源码构建；镜像转移和离线启动方式也见该指南，尚未提供公共预构建镜像。现有 systemd 实例使用[固定版本发布流程](docs/deployment-and-ops.md)。
+默认安装核心博客并绑定回环地址。公开域名、TLS、首个管理员及可选 Agent 按[容器指南](deploy/docker/README.md)配置。现有 systemd 实例按[部署和升级指南](docs/deployment-and-ops.md)操作。
 
 [公开 PR 检查](https://github.com/BigLeopardCat/Saudade-Blog/actions) 验证 Rust、临时 PostgreSQL、前端类型与组件、Playwright 浏览器，以及容器安装、备份恢复与失败回退。仅博客安装和启用 Agent 的组合分别验证，不依赖维护者服务器或私有密钥。浏览器测试使用真实组件和合成接口数据；隔离验收不等于真实流量表现或所有线上操作已经完成。
 
