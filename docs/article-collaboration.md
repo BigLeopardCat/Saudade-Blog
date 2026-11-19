@@ -17,6 +17,45 @@
 
 客户端动作通过 Agent 的 LangGraph interrupt 等待有界回报；工具标识用于断点重放，独立读取使用新标识。回报不授予业务权限，也不是数据库事务凭据。
 
+## 保存、审阅与发布
+
+```mermaid
+sequenceDiagram
+    actor User as 作者
+    participant Editor as 浏览器编辑器
+    participant Agent as 可选 Agent
+    participant Host as Rust 业务后端
+    participant DB as PostgreSQL
+    participant Corpus as 公开语料消费者
+    User->>Editor: 编辑文章
+    Editor->>Host: 携带版本的自动保存
+    Host->>DB: 新建草稿或保存公开文章的独立修改稿
+    opt 请求 Agent 润色
+        Editor->>Host: 提交文章协作请求
+        Host->>Agent: 鉴权后转发请求
+        Agent-->>Host: 正文或标题修改建议
+        Host-->>Editor: 转发修改建议
+        Editor-->>User: 展示差异并等待采纳
+        User->>Editor: 采纳或拒绝建议
+    end
+    User->>Editor: 保存并选择发布
+    Editor->>Host: 当前内容、发布状态与预期版本
+    Host->>Host: 当前账号权限和字段校验
+    Host->>DB: 事务锁定根文章并核对版本
+    alt 版本冲突
+        Host-->>Editor: 拒绝覆盖，要求重新读取
+    else 版本有效且事务提交成功
+        Host->>DB: 提交发布变更
+        Host-->>Editor: 已保存的文章结果
+        Corpus->>Host: 后续获取公开语料快照
+        Host-->>Corpus: 仅公开且已发布的根文章
+    end
+```
+
+采纳编辑器建议、自动保存草稿、发布文章、更新 RAG 索引是四个不同事实。
+Agent 的客户端回报不能代替发布回执。语料消费者仍须完整抓取、核验版本并成功发布索引，
+不能在文章发布后立即声称检索已经更新；详见[语料接口](rag-corpus-api.md)。
+
 ## 回归
 
 Rust/PostgreSQL 验证版本条件和保存/发布冲突。真实 ByteMD 浏览器测试验证标题/正文差异、采纳、原生撤销、摘要确认后应用、继续输入、账号切换与发布对话框。Agent 使用真实框架恢复工具调用，不能仅用桩最终回答替代链路验证。

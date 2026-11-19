@@ -8,56 +8,15 @@
 
 在线站点展示实际部署；后台管理和协作编辑需要管理员身份。
 
-## 从写作到管理
+## 从这里开始
 
-| 场景 | 当前能力 |
+| 我想做什么 | 入口 |
 | --- | --- |
-| 写作与发布 | Markdown、公式和 Mermaid，草稿保存、标题与摘要、分类标签、封面布局及发布设置 |
-| 阅读与发现 | 文章流自动加载、置顶封面、聚合检索、分类标签、时间轴、收藏和评论 |
-| 图库整理 | 默认本地存储、可选 R2；文件夹、详情预览、描述与收藏，批量移动/复制及跨存储转移 |
-| 站内互动 | 河灯留言、公告、个人通知、站内信和未读汇总；管理员审核、账号与内容管理 |
-| Agent 协作 | 看板娘对话、文章取证问答、编辑器差异审阅、人工确认写入和来源会话结果回报 |
-| AI 生图 | 后台界面审阅提示词、参考图及生成参数，批准后生成；查看结果再确认入库，需要封面时另行选择 |
+| 阅读、写作、用图库或和看板娘对话 | [使用指南](docs/user-guide.md) · [任务教程](docs/wiki/Home.md) |
+| 安装或维护站点 | [部署入口](deploy/README.md) · [配置](docs/configuration.md) · [兼容与升级](docs/compatibility-and-upgrades.md) |
+| 看懂系统或改代码 | [系统架构](docs/architecture.md) · [代码导读](docs/code-reading.md) · [贡献指南](CONTRIBUTING.md) |
 
-界面操作与合成数据截图见[使用指南](docs/user-guide.md)。
-
-## 架构与业务边界
-
-```mermaid
-flowchart LR
-    Browser["React 浏览器界面"] --> Proxy["nginx / TLS"]
-    Proxy --> Rust["Rust / Axum 业务后端"]
-    Rust <--> PG["PostgreSQL"]
-    Rust --> Storage["本地文件 / 可选 R2"]
-    Rust --> Agent["可选 Agent 服务"]
-    Agent --> Rust
-    Rust --> Images["可选生图 API"]
-    Rust --> Vectors["可选 pgvector / embedding"]
-```
-
-| 工程问题 | 当前处理方式 |
-| --- | --- |
-| 编辑与发布冲突 | 区分原文、草稿和编辑器工作副本；保存与发布校验版本，避免旧自动保存覆盖新内容。[协作编辑](docs/article-collaboration.md) |
-| 内容加载与分页 | 首页使用游标和卡片摘要投影；后台按查询条件分页，数量与当前页条目分别表达。[数据流](docs/architecture.md#数据流与一致性) |
-| 图片与资产生命周期 | 图片身份、存储位置和分类元数据分别管理；本地与 R2 使用统一图库入口，预览与原始资产权限分开。[使用指南](docs/user-guide.md#图库与-ai-生图) |
-| Agent 写入与账号隔离 | Rust 复核当前身份、目标及业务版本；Agent 负责提议与确认，聊天文本和客户端回报不提供授权。[安全边界](docs/security-boundary.md) |
-| 付费任务与故障恢复 | 生图请求与结果入库分别审阅；后台任务有并发和停机边界，未知结果不自动重发付费请求。[运行架构](docs/architecture.md#可选能力) |
-
-博客保存业务事实和聊天原文；Agent 保存模型执行 checkpoint 与任务预算。组件职责、源码目录和跨仓契约见[架构文档](docs/architecture.md)。
-
-## 可选能力怎么接入
-
-核心博客的写作、阅读、管理、普通检索和本地图库不需要运行 Agent，也不需要模型或 R2 密钥。
-
-| 可选能力 | 依赖与未启用时的边界 |
-| --- | --- |
-| 对话与协作编辑 | 独立 Agent、模型端点和 Agent 状态数据库；未启用时不提供这些交互，普通博客照常运行 |
-| 管理员 AI 生图 | Rust 直接使用配置的生图 API，不要求运行 Agent；Agent 可调用同一受控业务入口 |
-| AI 辅助审核 | 可配置独立 `AI_REVIEW_URL`，或接 Agent 的审核端点；人工审核不依赖模型 |
-| 文章向量图谱 | 暂停提供可视化入口与图谱 API；保留构建工具源码，普通搜索与 Agent RAG 不受影响 |
-| R2 对象存储 | 按需配置；未配置时使用本地图库存储 |
-
-图谱的数据来源、构建及降级见[可选构建工具](tools/article-graph/README.md)。IoT 为独立的[可选演示集成](iot/README.md)，不作为博客安装前置条件。
+核心博客可独立部署。Agent、AI 审核、生图、R2 和 IoT 按需要接入。[可选能力](docs/architecture.md#可选能力)
 
 ## 安装与发布验证
 

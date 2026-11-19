@@ -26,9 +26,4 @@
 
 ## 三种跨仓固定版本
 
-- `frontend/widget.lock.json`：组件提交和资源子树，影响浏览器。
-- `deploy/docker/agent.lock.json`：容器组合的 Agent 源码版本。
-- Agent 仓 `.github/host-contract.json`：Agent 测试所读宿主源码，不表示生产后端版本。
-
-这些锁用途不同，不为追赶 HEAD 同步更新。核对运行实例还需前端 build-info、后端产物出处及
-Agent `/version`。接入与升级步骤见[部署](../deploy/docker/README.md)，故障见[排障](troubleshooting.md)。
+组件、Compose Agent 和测试宿主各自使用独立的锁。锁的归属、运行版本核对和升级顺序见[兼容与升级](compatibility-and-upgrades.md)。

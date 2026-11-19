@@ -5,8 +5,7 @@
 
 ## 核对版本和范围
 
-前端查当前 build-info，后端查发布产物来源与实际进程，Agent 查其内部 `/version`。
-本地 checkout、组件锁和容器 Agent 锁都不能替代实际运行版本。不要输出配置全文或凭据。
+按[实际版本对照表](compatibility-and-upgrades.md#版本从哪里查)核对前端 build-info、后端产物和 Agent 进程。分享故障材料前遮蔽配置和凭据。
 日志路径、服务管理及回滚命令以[部署运维](deployment-and-ops.md)和
 [容器运维](../deploy/docker/README.md#运维与备份)为准，避免混用两种部署的目录。
 

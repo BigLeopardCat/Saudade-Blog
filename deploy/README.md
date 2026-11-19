@@ -15,4 +15,4 @@ bash deploy/install.sh --site-url http://localhost:8080
 - `nginx/`：原生反向代理模板与共享响应头；容器站点由 `stack.py` 生成。
 - `deploy.env.example`：原生 CI/R2 发布控制配置，不能用作应用运行配置。
 
-PostgreSQL 基线和编号迁移位于 `scripts/migration/pg/`。Agent 源码和镜像由[独立仓库](https://github.com/BigLeopardCat/saudade-blog-agent)维护，容器安装固定 `docker/agent.lock.json` 的完整提交。该锁与前端组件锁、Agent 的宿主契约锁分别管理。
+已有站点先确定[组件兼容与升级顺序](../docs/compatibility-and-upgrades.md)，维护者准备发行附件时使用[发行维护](releasing.md)。PostgreSQL 基线和编号迁移位于 `scripts/migration/pg/`。
