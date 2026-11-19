@@ -1,6 +1,6 @@
 # 聊天持久化与上下文职责
 
-登录用户的 `/api/chat/stream` 使用标准 SSE 具名事件。`text` 逐步显示，`done` 表示上游成功结束，且本轮回复、执行回执和待确认状态保存成功。访客不创建聊天记录。非流式接口在相同保存条件满足后返回成功。
+宿主保存登录用户的聊天原文、执行回执与待确认展示状态。访客请求直接交付回复。SSE 事件和完成条件见[跨仓流式协议](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/chat-stream-protocol.md#博客保存完成边界)。流式与非流式入口使用同一保存条件。
 
 ## 保存与失败
 

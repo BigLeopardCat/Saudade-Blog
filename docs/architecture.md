@@ -1,4 +1,8 @@
-# 架构
+# 博客系统架构
+
+## 系统范围
+
+博客提供阅读、写作、内容管理和站内互动。核心站点由浏览器、nginx、Rust 后端与 PostgreSQL 组成，图库默认使用本地持久存储。Agent 作为可选集成，使用宿主的业务接口和身份边界。
 
 ## 组件
 
@@ -15,81 +19,69 @@ flowchart LR
 
 Rust 后端拥有账号、文章、图库、通知、信箱和业务事务；Agent 通过受控 API 使用这些能力。业务字段计算、版本条件、分页与权限位于后端。浏览器负责工作副本、交互和实际页面操作的回报。
 
-## 目录
-
-| 路径 | 职责 |
-| --- | --- |
-| `src/main.rs` | 服务启动、数据库与路由装配 |
-| `src/routes/` | 业务 HTTP 入口与事务 |
-| `src/entity/` | 数据模型 |
-| `src/lifecycle.rs` | HTTP 与已接受后台任务的优雅停机 |
-| `frontend/src/` | 阅读、后台、共享组件与客户端状态 |
-| `scripts/migration/pg/` | PostgreSQL 基线与编号迁移 |
-| `scripts/`、`deploy/` | CI、部署、健康检查与服务模板 |
-| `tests/`、`frontend/tests/` | Rust、数据库与前端回归 |
-| `iot/` | 可选设备演示 |
-
-## 数据流与一致性
-
-- 文章原文、草稿和编辑器工作副本分别管理。保存和发布使用版本条件，不能让旧自动保存覆盖已发布的新内容。
-- Agent 提议不等于执行；人工确认后后端再次验证目标、权限及版本。浏览器回报仅证明本地动作，不证明数据库保存或发布。
-- 聊天原文由博客存储，运行 checkpoint 与任务预算由 Agent 管理。用户删除触发双方清理；宿主不再生成并回写运行摘要。
-- 公开语料通过带修订号的分页快照导出；消费者验证完整性后发布索引。异常和半页结果不能冒充空语料。
-- 图库身份由图片记录与对象键决定，文件夹和描述是业务元数据。签名预览只授权指定用途和短期读取，不能作为登录凭据。
-
-公开首页使用 `GET /api/public/notes/feed?limit=6&cursor=…`：`limit` 为 1–50，响应 `data` 包含 `items` 和可空 `nextCursor`。游标按 `(created_at DESC, id DESC)` 排序，查询只投影卡片摘要并读取一条额外记录判断后续页，不执行全表计数或 OFFSET。缺省游标从头读取；非法游标返回 400，数据库查询失败返回 503。原页码接口继续供其他消费方使用。新增索引迁移为 `0035_note_feed_order.sql`，须在部署新版后端前执行；版本化发布会核对索引契约。
-
-## 保存、审阅与发布时序
+## 端到端请求时序
 
 ```mermaid
 sequenceDiagram
-    actor User as 作者
-    participant Editor as 浏览器编辑器
-    participant Agent as 可选 Agent
+    actor User as 用户
+    participant UI as React / 看板娘
+    participant Proxy as nginx
     participant Host as Rust 业务后端
     participant DB as PostgreSQL
-    participant Corpus as 公开语料消费者
-    User->>Editor: 编辑文章
-    Editor->>Host: 携带版本的自动保存
-    Host->>DB: 新建草稿或保存公开文章的独立修改稿
-    opt 请求 Agent 润色
-        Editor->>Agent: 经宿主鉴权的协作请求
-        Agent-->>Editor: 正文或标题修改建议
-        Editor-->>User: 展示差异并等待采纳
-        User->>Editor: 采纳或拒绝建议
-    end
-    User->>Editor: 保存并选择发布
-    Editor->>Host: 当前内容、发布状态与预期版本
-    Host->>Host: 当前账号权限和字段校验
-    Host->>DB: 事务锁定根文章并核对版本后提交
-    alt 版本冲突
-        Host-->>Editor: 拒绝覆盖，要求重新读取
-    else 提交成功
-        Host-->>Editor: 已保存的文章结果
-        Corpus->>Host: 后续获取公开语料快照
-        Host-->>Corpus: 仅公开且已发布的根文章
+    participant Agent as 可选 Agent
+    participant Model as 模型服务
+
+    User->>UI: 阅读、操作或提交对话
+    UI->>Proxy: 请求博客 API
+    Proxy->>Host: 转发请求
+    alt 普通业务 API
+        Host->>Host: 校验参数与所需权限
+        opt 涉及业务数据
+            Host->>DB: 查询或提交事务
+            DB-->>Host: 数据或提交结果
+        end
+        Host-->>Proxy: HTTP 响应
+        Proxy-->>UI: 返回业务结果
+    else 一轮登录用户的 Agent 对话
+        Host->>Host: 核对登录态与会话归属
+        Host->>Agent: 短期身份断言、会话与本轮输入
+        loop 按任务推进模型和工具
+            Agent->>Model: 调用模型
+            Model-->>Agent: 正文或工具请求
+            opt 调用博客业务工具
+                Agent->>Host: 通过受控接口发起请求
+                Host->>Host: 校验身份和本次操作权限
+                Host-->>Agent: 数据、回执或错误
+            end
+            Agent-->>Host: SSE 进度、正文或结构化卡片
+            Host-->>Proxy: 转发应用事件
+            Proxy-->>UI: 更新对话和卡片
+        end
+        opt 上游正常结束且本轮保存成功
+            Host-->>Proxy: done
+            Proxy-->>UI: 标记本轮完成
+        end
     end
 ```
 
-采纳编辑器建议、自动保存草稿、发布文章、更新 RAG 索引是四个不同事实。
-Agent 的客户端回报不能代替发布回执。语料消费者仍须完整抓取、核验版本并成功发布索引，
-不能在文章发布后立即声称检索已经更新；详见[语料接口](rag-corpus-api.md)。
+登录用户的对话采用流式交付，涉及业务写入时由对应契约检查人工确认和执行结果。[宿主聊天持久化](chat-persistence.md)说明保存顺序，[Agent 架构](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/agent-architecture.md)说明模型循环、执行状态与暂停接续。
+
+## 数据流与一致性
+
+| 对象 | 权威来源与边界 |
+| --- | --- |
+| 账号权限、文章、图库和互动数据 | 由博客后端校验并写入业务库。版本条件与事务保护并发变更。[安全边界](security-boundary.md) |
+| 编辑器工作副本与草稿 | 浏览器维护工作副本，宿主区分草稿与发布版本。[协作编辑](article-collaboration.md) |
+| 业务变更与浏览器动作 | 数据库或业务回执证明事务结果，浏览器回报证明页面动作。[安全边界](security-boundary.md) |
+| 聊天与执行状态 | 博客保存对话原文和展示回执。Agent 持有运行 checkpoint、预算及执行账。[聊天持久化](chat-persistence.md) |
+| 公开语料与索引 | 博客发布带修订的语料快照。Agent 核验完整语料后更新检索索引，两者独立推进。[语料接口](rag-corpus-api.md) |
 
 ## 可选能力
 
-Agent、AI 审核、向量服务、图片生成及 IoT 均是外部可选服务。核心博客部署不依赖它们启动；相关入口应显示未配置或不可用。外部失败不应拖垮普通页面或持有无界后台任务。
+Agent、AI 审核、图片生成和 IoT 按配置接入。核心博客可以独立启动。外部服务故障影响对应功能，普通阅读和业务界面继续运行。图库可选 R2。
 
-聚合检索是文本入口。发布构建关闭文章向量图谱的前端入口，同时保留 HTTP 路由供兼容。
-manifest 返回 `{}`，产物返回 404，符合鉴权和输入要求的查询返回 `graph_disabled`。
-离线建图工具可以读取已发布的 PostgreSQL 向量和公开文章元数据，用 TF-IDF/PCA 派生展示产物。
-Agent RAG 独立运行，宿主提供[语料契约](rag-corpus-api.md)。
+聚合搜索提供文本入口。发布构建关闭文章向量图谱界面和在线查询，保留离线建图工具。Agent RAG 消费公开语料接口。[离线图谱工具](../tools/article-graph/README.md)
 
-AI 生图经两次人工批准：冻结请求后调用计费服务，返回结果待审，批准入库后才形成图库资产。运行并发受限，停机通过应用共用的任务跟踪器等待已经接受的请求和结果持久化，不自动重发结果未知的付费请求。
+AI 生图先批准参数再调用供应商，结果审阅后另行批准入库。宿主限制并发并等待已接受任务持久化，未知结果通过原任务核对。
 
-## 测试与发布
-
-PR 检查不需要维护者服务器、密钥或 Agent 实例，数据库测试使用 CI 的临时 PostgreSQL。浏览器测试加载真实组件并拦截接口；未预期网络和页面错误使其失败。
-
-主线发布固定源码快照，通过检查后构建并部署。Agent 独立发布，前端组件版本由 lock 固定；跨仓接口改动需分别核对部署顺序。详细操作见[运维](deployment-and-ops.md)。
-
-图谱构建和只读向量角色的配置见 [可选构建工具](../tools/article-graph/README.md)，不依赖 Agent 服务。
+源码及回归入口见[代码导读](code-reading.md)，组件与版本组合见[兼容与升级](compatibility-and-upgrades.md)。

@@ -27,39 +27,10 @@ Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)�
 
 ## 2. 取得源码，选择安装方案
 
-```sh
-git clone --branch cn_sora_blog https://github.com/BigLeopardCat/Saudade-Blog.git
-cd Saudade-Blog
-git rev-parse HEAD
-```
+在[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)选择并校验固定发行版，或按[容器指南的首次安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#首次安装)准备固定源码。记录实际提交，生成私有配置前决定是否启用 Agent 和调度。
 
-记录完整提交。生产选择自己已验证的发布/提交，不自动追随远端 HEAD；安装器要求干净源码。
-以下两种方案**择一**，在首次生成配置前决定。
-
-### 方案 A：先体验核心博客
-
-```sh
-bash deploy/install.sh --site-url http://localhost:8080 --prepare-only
-```
-
-只生成私有配置，暂不启动服务。默认本机绑定 `127.0.0.1:8080`，外部设备不能直接访问它。
-
-### 方案 B：同时启用 Agent 和后台计划
-
-先建立只有自己可读的密钥文件，用编辑器填入一行模型密钥，真实密钥不要写进命令历史：
-
-```sh
-install -d -m 700 ~/.config/saudade
-install -m 600 /dev/null ~/.config/saudade/model-key
-nano ~/.config/saudade/model-key
-bash deploy/install.sh --site-url http://localhost:8080 \
-  --with-agent --with-scheduler \
-  --model-key-file ~/.config/saudade/model-key --prepare-only
-```
-
-默认模型适配器是 OpenCode，密钥必须匹配其端点；使用其他供应商时，在启动前按
-[Agent 配置教程](https://github.com/BigLeopardCat/saudade-blog-agent/wiki/Configuration)修改生成的 agent.env。
-不需要后台计划就省略 `--with-scheduler`。不要先按 A 生成配置，再期待追加首次参数会自动切换方案。
+- 首次体验可以从核心博客开始。选择站点地址，生成配置，并检查本地监听范围。
+- 需要对话与后台计划时，按[容器指南的 Agent 接入](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#agent-与可选功能)准备私有模型密钥并选择所需开关。默认适配器为 OpenCode，其他供应商按 Agent 配置调整。
 
 ## 3. 审阅配置与首次账号
 
@@ -77,10 +48,7 @@ bash deploy/install.sh --site-url http://localhost:8080 \
 
 ## 4. 启动、登录与验收
 
-```sh
-bash deploy/install.sh --reuse
-curl --fail http://127.0.0.1:8080/api/health/ready
-```
+按所选[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)或[源码容器安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#首次安装)的命令启动并检查就绪。
 
 浏览器打开 `http://localhost:8080`，用管理员文件中的账号登录，先在个人中心更换初始密码。
 初始文件不会随登录后的密码变更自动更新；重新运行安装器不会重置旧账号。
@@ -102,6 +70,8 @@ curl --fail http://127.0.0.1:8080/api/health/ready
 证书续期不会自动完成；不要只把 URL 改成 https 却没有证书与 TLS 监听。
 
 ## 已有站点升级
+
+先按[兼容与升级](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/compatibility-and-upgrades.md)确定要替换的组件和回退范围。
 
 1. 记录实际博客、Agent 和组件版本，备份数据库、上传和私有目录。
 2. 审查新增 PostgreSQL 编号迁移，在隔离库验证后执行适用增量；不重跑基线。

@@ -8,8 +8,8 @@
 | 目标 | 入口 |
 | --- | --- |
 | 写作、图库和聊天操作 | [使用指南](user-guide.md)、[Wiki 场景教程](wiki/Home.md) |
-| 安装一个站点 | [新装与容器](../deploy/docker/README.md)、[原生部署入口](../deploy/README.md) |
-| 准备发行包 | [构建、校验与发布](../deploy/prebuilt.md#4-构建校验与发布)、[数据库迁移](deployment-and-ops.md#postgresql)、[依赖审计](dependency-maintenance.md) |
+| 安装一个站点 | [安装入口](../deploy/README.md) → [预构建安装](../deploy/prebuilt.md) |
+| 准备发行包 | [发行维护](../deploy/releasing.md) → [兼容与升级](compatibility-and-upgrades.md) |
 | 理解代码或参与开发 | [架构](architecture.md)、[代码导读](code-reading.md)、[CONTRIBUTING](../CONTRIBUTING.md) |
 | 处理配置和故障 | [配置导航](configuration.md)、[部署运维](deployment-and-ops.md)、[排障](troubleshooting.md) |
 
@@ -17,10 +17,11 @@
 
 | 文档 | 负责解释 |
 | --- | --- |
-| [架构](architecture.md) | 组件、目录、数据归属及可选能力 |
+| [架构](architecture.md) | 系统边界、组件职责、请求时序、数据归属及可选能力 |
 | [代码导读](code-reading.md) | 请求鉴权、编辑保存、Agent 代理与事务的入口 |
 | [使用指南](user-guide.md) | 当前界面的版本化操作说明 |
 | [配置导航](configuration.md) | 必需配置、可选能力、配置归属及启用条件 |
+| [兼容与升级](compatibility-and-upgrades.md) | 组件、宿主、Agent、数据库的发布顺序与运行版本 |
 | [部署运维](deployment-and-ops.md) | systemd、迁移、发布、日志、备份和回滚 |
 | [排障](troubleshooting.md) | 实际版本、跨仓故障、图片与写入未知结果 |
 | [安全边界](security-boundary.md) | 身份、委托、签名、确认和资源授权 |
@@ -33,7 +34,7 @@
 
 | 领域 | 文档 |
 | --- | --- |
-| 文章 | [文章操作](article-actions.md)、[协作编辑](article-collaboration.md) |
+| 文章 | [首页文章流](public-feed-api.md)、[文章操作](article-actions.md)、[协作编辑](article-collaboration.md) |
 | 管理 | [账号操作](account-actions.md)、[后台目录](admin-catalog-api.md)、[审核](moderation-api.md) |
 | 个人数据 | [通知与信箱](mailbox-api.md)、[个人活动](own-activity-api.md)、[工作队列](dashboard-queue-api.md) |
 | Agent 接入 | [聊天存储](chat-persistence.md)、[RAG 语料](rag-corpus-api.md)、[安全边界](security-boundary.md) |
