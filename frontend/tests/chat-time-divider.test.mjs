@@ -289,7 +289,7 @@ console.log('\n== 场景 3：storage 触发 pullHistory（60s 窗口内 → l �
   const earlier = msgs.find(msg => msg.dataset.mid === 'd1895');
   const localInputs = msgs.filter(msg => msg.dataset.mid?.startsWith('l'));
   assert(msgs.length === 52 && localInputs.length === 2, '50 条历史和两轮未确认的本地输入', msgs.length);
-  assert(earlier?.querySelector('.msg-delivery')?.textContent === '已接收', '服务器历史保留原轮接收状态');
+  assert(earlier?.querySelector('.msg-delivery')?.textContent === '已读', '服务器历史保留原轮已读状态');
   assert(localInputs.every(msg => msg.querySelector('.msg-delivery')?.textContent === '未确认送达'),
          '两轮失败请求各自保留未确认送达');
   assert(last.dataset.mid.startsWith('l'), 'l 轮仍在', last.dataset.mid);
