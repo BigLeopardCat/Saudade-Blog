@@ -1,6 +1,6 @@
 # 使用预构建产物快速安装
 
-Release 提供两种 Linux x86_64 安装包，避免在小服务器重新编译 Rust 与前端。它们来自相同完整提交和经过安装、备份恢复验证的 CI 镜像，不包含站点数据或密钥。
+带预构建附件的 Release 提供两种 Linux x86_64 安装包，避免在小服务器重新编译 Rust 与前端。两种附件来自同一完整提交和经安装、备份恢复验证的 CI 镜像。站点数据和密钥由部署者单独配置。
 
 | 附件 | 用途与环境 |
 | --- | --- |
@@ -22,16 +22,23 @@ python3 -m json.tool release-manifest.json
 
 每个下载的归档必须显示 `OK`；`--ignore-missing` 只允许另一种未下载的安装包缺席，不能忽略校验失败。核对 manifest 的 `source_revision`、`agent_revision` 和 Release 说明一致。公开归档不需要、也不会附维护者的数据库或模型凭据。
 
+从同一份已校验的 manifest 提取版本和宿主提交，后续命令在同一个 shell 中执行。
+
+```sh
+RELEASE_VERSION="$(python3 -c 'import json; print(json.load(open("release-manifest.json"))["version"])')"
+SOURCE_REVISION="$(python3 -c 'import json; print(json.load(open("release-manifest.json"))["source_revision"])')"
+```
+
 ## 2. 推荐：导入容器镜像并安装
 
 要求 Docker Compose 2.30+，首次安装步骤及工具安装链接见 [Compose 指南](docker/README.md)。以下示例仅用于新站点、新的私有状态目录，不接管已有数据库。
 
 ```sh
-docker load --input saudade-blog-0.3.0-images-linux-amd64.tar.gz
-git clone --branch v0.3.0 --single-branch https://github.com/BigLeopardCat/Saudade-Blog.git
+docker load --input "saudade-blog-$RELEASE_VERSION-images-linux-amd64.tar.gz"
+git clone --branch "v$RELEASE_VERSION" --single-branch https://github.com/BigLeopardCat/Saudade-Blog.git
 cd Saudade-Blog
-git rev-parse HEAD
-bash deploy/install.sh --site-url http://localhost:8080 --prepare-only
+test "$(git rev-parse HEAD)" = "$SOURCE_REVISION" &&
+  bash deploy/install.sh --site-url http://localhost:8080 --prepare-only
 ```
 
 `git rev-parse HEAD` 必须等于 manifest 的 `source_revision`。`--prepare-only` 只生成配置；先按指南检查站点地址、监听范围和初始管理员信息，再启动：
@@ -44,15 +51,15 @@ bash deploy/install.sh --reuse --no-build
 
 需要 Agent/后台计划时，在第一次准备配置时按 [Compose 指南](docker/README.md)选择 `--with-agent`/`--with-scheduler` 并提供自己的私有模型 key 文件。镜像包已经包含锁定 Agent 镜像，但仍需准备该提交的公开源码供安装器校验，不会编译模型或自动获得模型调用额度。不要将密钥写进命令参数、文章或截图。
 
-升级现有容器站点前按指南备份数据库、上传目录与配置，审阅编号迁移和配套 Agent 版本；导入新包后使用指南的升级流程并增加 `--no-build`。不要重新创建生产数据库或删除已有数据卷。应用降级不等于数据库还原。
+升级现有容器站点前按指南备份数据库、上传目录与配置，核对适用的[编号迁移和先后顺序](../docs/deployment-and-ops.md#postgresql)。公开 RAG 语料使用 0039 的版本投影，已有数据库先完成该迁移，再切换宿主读流量。导入新包后使用指南的升级流程并增加 `--no-build`，复用现有数据卷和私有状态。回退应用与恢复持久数据分别演练。
 
 ## 3. 可选：原生部署复用二进制与前端
 
-适合已有 PostgreSQL、nginx 和 systemd 的维护者。先解压到新的目录，保留旧版本和状态；不要解压覆盖运行中的目录。
+适合已有 PostgreSQL、nginx 和 systemd 的维护者。从附件下载目录解压到新位置，保留旧版本和状态。
 
 ```sh
-tar -xzf saudade-blog-0.3.0-linux-x86_64.tar.gz
-cd saudade-blog-0.3.0
+tar -xzf "saudade-blog-$RELEASE_VERSION-linux-x86_64.tar.gz"
+cd "saudade-blog-$RELEASE_VERSION"
 uname -m
 getconf GNU_LIBC_VERSION
 ldd target/release/saudade_blog_bin
@@ -69,8 +76,18 @@ ldd target/release/saudade-bootstrap-admin
 
 启动后检查就绪、登录、文章读取、上传和前端资源；Agent 单独检查 `/ready` 和 `/version`。原生包通过镜像内业务烟测及 CI 动态库检查，不等于你的机器已经完成 nginx、systemd、数据库和外部服务接线验证。
 
-## 4. 复现、许可与限制
+## 4. 构建、校验与发布
 
-`PostgreSQL container` 工作流在隔离环境完成含 Agent/Worker 的安装、首次登录、配置复用、数据库/上传恢复、核心博客独立安装及 root 安装的非 root nginx 验证。手动选择 `package_images` 后，从同一批已验证镜像提取原生文件并导出镜像；任一步失败不生成可发布附件。只允许将附件附加到目标完整提交匹配的草稿 Release，正式发布另行完成审计。
+准备构建前冻结宿主完整提交、`deploy/docker/agent.lock.json` 和 `frontend/widget.lock.json`。
+核对 manifest 的 `source_revision`、`agent_revision`、`widget_revision` 与候选组合，
+并核对草稿目标、tag 和附件校验值。独立 Agent 服务的 `/version` 只反映该实例。
+
+`PostgreSQL container` 工作流验证可选 Agent/Worker、首次登录、配置复用、数据库/上传恢复、
+核心博客独立安装和非 root nginx。手动构建传入 `package_images=true`，从同一批验证过的镜像
+提取原生文件及可导入镜像。传入 `release_tag` 时只附加到完整提交与构建一致的已有草稿。
+任何版本变更都重新构建附件。依赖审计独立核对，保留 [审计结论](../docs/dependency-maintenance.md)
+及适用迁移、已知限制和回滚步骤随版说明。
+
+## 5. 许可与限制
 
 包保留博客 GPL、Agent 代码 MIT、美术 CC BY-NC-SA 及第三方许可。Live2D Cubism Core 遵循其独立专有条款；完整资源约束见 [THIRD-PARTY](../THIRD-PARTY.md) 和归档中的 `licenses/`。预构建不改变非商用美术限制。可选 embedding/tokenizer、GPU 运行时、站点数据和模型凭据不在包内。
