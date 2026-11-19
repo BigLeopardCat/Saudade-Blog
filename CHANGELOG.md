@@ -2,7 +2,7 @@
 
 只记录用户可感知的版本变化；实现细节见提交与 PR。未发布条目不代表已发布新版本。
 
-## 0.3.0（未发布）
+## [0.3.0](https://github.com/BigLeopardCat/Saudade-Blog/releases/tag/v0.3.0)（2026-11-19）
 
 - 统计接口返回滚动窗口及分月子集的最高日阅读和全部并列日期，避免由 Agent 猜测高峰。
 - 为可选 scheduler 启用初始化完成后的进程健康检查，修复 Compose 等待启动失败。
