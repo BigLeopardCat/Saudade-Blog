@@ -136,7 +136,7 @@ Agent 的 `CHECKPOINT_DSN` 指向独立数据库；不要把框架 schema 建到
 
 服务模板位于 `deploy/systemd/`，nginx 和安装入口位于 `deploy/`。先审阅模板中的账号、路径、站点及可选能力，再安装。辅助脚本不能替代运行环境核对，特别是已有数据库和远程对象存储。
 
-主线 `cn_sora_blog` 的发布工作流先运行 Rust、PostgreSQL、前端及浏览器检查，再构建固定提交产物、上传 R2 并通知服务器部署。PR 不部署，也不读取生产 secret。主线文档提交同样触发完整快照发布。发布后分别核对 `/build-info.json`、Rust 二进制产物来源及校验值、Agent `/version`，再查探针、静态资源和服务日志；本地 HEAD、组件 pin 和 CI 绿灯不能代替实际运行版本。
+主线 `main` 的发布工作流先运行 Rust、PostgreSQL、前端及浏览器检查，再构建固定提交产物、上传 R2 并通知服务器部署。PR 不部署，也不读取生产 secret。主线文档提交同样触发完整快照发布。发布后分别核对 `/build-info.json`、Rust 二进制产物来源及校验值、Agent `/version`，再查探针、静态资源和服务日志；本地 HEAD、组件 pin 和 CI 绿灯不能代替实际运行版本。
 
 后端公开 `GET /api/health/live`（进程可响应）及 `GET /api/health/ready`（两秒内完成数据库只读探测）。
 就绪检查成功返回 HTTP 200 与 `{"ready":true}`，失败或超时返回 503 与 `{"ready":false}`；

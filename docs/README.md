@@ -1,5 +1,7 @@
 # 文档导航
 
+[English technical guide](en/README.md) · 中文文档
+
 使用发行版时在对应 tag 下查阅文档；主线说明不证明生产已经部署。
 博客负责业务数据、权限、事务与页面；Agent 负责模型执行、运行记忆和调度。
 
@@ -49,3 +51,7 @@
 
 Agent 的内部原理和扩展见[Agent 文档](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/README.md)，
 使用助手见[Agent Wiki](https://github.com/BigLeopardCat/saudade-blog-agent/wiki)。博客不重复维护模型循环与检索算法说明。
+
+## 工程案例
+
+[关键问题与设计取舍](engineering-cases.md)提供中英文案例，链接当前代码、验证入口及限制；不是开发流水账或新的发布报告。

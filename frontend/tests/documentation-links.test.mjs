@@ -54,7 +54,7 @@ test('every Wiki tutorial is reachable and local source references exist',()=>{
   for(const file of markdownFiles(directory)) for(const link of links(readFileSync(file,'utf8'))){
     const target=decodeURIComponent(link.split('#')[0])
     if(target.startsWith(base+'wiki/')) assert.ok(pages.includes(target.slice((base+'wiki/').length)),link)
-    for(const kind of ['blob/cn_sora_blog/','tree/cn_sora_blog/'])
+    for(const kind of ['blob/main/','tree/main/'])
       if(target.startsWith(base+kind)) assert.ok(existsSync(path.join(root,target.slice((base+kind).length))),link)
   }
 })

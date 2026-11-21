@@ -24,8 +24,8 @@
 截图来自真实组件的隔离浏览器场景，使用合成账号、示例域名与占位图片，不是生产后台或真实生图质量证明。
 每张图放在对应步骤旁；先看图下说明，再按自己的账号和版本操作。配置密钥不会出现在截图中。
 
-版本化的接口、配置和运维规范见[仓库文档](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/README.md)，
-开发阅读见[代码导读](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/code-reading.md)。
+版本化的接口、配置和运维规范见[仓库文档](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/README.md)，
+开发阅读见[代码导读](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/code-reading.md)。
 另一仓的职责和教程见[配套 Wiki](https://github.com/BigLeopardCat/saudade-blog-agent/wiki)。
 
 教程源稿在 docs/wiki 中随源码 PR 维护；源码与截图可能先于应用部署，不能据此推断站点已经升级。

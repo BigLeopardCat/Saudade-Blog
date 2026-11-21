@@ -31,7 +31,7 @@
 | AGENT_ASSERTION_SECRET | Rust 与 Agent 相同的服务身份断言密钥 | 两端各生成一个不同值 |
 | BLOG_DELEGATION_SECRET | 仅 Rust 持有的工具委托签名密钥 | 复制给 Agent；它应转发宿主签发的有限委托 |
 
-模型、邮箱、审核和图片生成字段从[环境模板](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/.env.example)
+模型、邮箱、审核和图片生成字段从[环境模板](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/.env.example)
 逐项选择。未使用的可选能力保持关闭，不要为了清空提示填入假密钥。
 
 ## 后台站点设置
@@ -75,4 +75,4 @@ Secret Access Key 和该桶对应的 S3 endpoint。不要把公开图片域名�
 后台设置保存后按页面提示重读；服务端环境变更需要按安装方式重启对应服务；
 前端构建字段改变需要重新构建和发布静态文件。生产使用部署指南里的命令，不能直接启动开发工作树。
 先核对就绪、实际构建和一次只读请求，再验收需要的功能。
-完整来源与升级约束见[配置导航](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/configuration.md)。
+完整来源与升级约束见[配置导航](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/configuration.md)。

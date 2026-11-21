@@ -11,5 +11,5 @@
 - [前台阅读、搜索与日常互动](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Reading-and-Community)
 - [Agent、组件和宿主的接入](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Agent-Integration)
 - [故障定位、备份与恢复](https://github.com/BigLeopardCat/Saudade-Blog/wiki/Operations-and-Recovery)
-- [仓库规范](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/README.md)
+- [仓库规范](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/README.md)
 - [配套 Wiki](https://github.com/BigLeopardCat/saudade-blog-agent/wiki)

@@ -26,7 +26,7 @@
 ![从图库选中图片后的封面预览](assets/gallery-cover.jpg)
 
 列表、缩略图、选中预览和裁剪是不同资源请求；某一步失败按
-[图片排障](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/troubleshooting.md#图片加载的具体检查)查实际状态，
+[图片排障](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/troubleshooting.md#图片加载的具体检查)查实际状态，
 不反复上传同一张图片，也不绕过访问授权。
 
 ## 3. 审阅一次生成请求

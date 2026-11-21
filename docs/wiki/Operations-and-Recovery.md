@@ -11,7 +11,7 @@
 - 聊天失败：关联宿主请求与 Agent trace，核对是否有执行回执、完整结束和宿主保存。
 - 后台计划失败：分别查 Worker、委托、触发和来源会话结果投递。
 
-具体清单见[排障](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/troubleshooting.md)。
+具体清单见[排障](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/troubleshooting.md)。
 
 ## 不知道写入是否成功
 
@@ -25,5 +25,5 @@
 生产备份是否有效须由自己的恢复演练证明，不能直接引用项目 CI 成绩。
 
 容器不要用删除卷的停止方式；升级程序不等于迁移数据库，应用回滚也不等于数据回滚。
-完整命令见[容器运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#运维与备份)与
-[原生运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/deployment-and-ops.md)。
+完整命令见[容器运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md#运维与备份)与
+[原生运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/deployment-and-ops.md)。
