@@ -345,6 +345,25 @@ jobs:
           ref: 7da21228f6699c9db95bb8c46816f842f4312489
           path: _agent-stack
           persist-credentials: false
+      # Pin browser assertions separately so locale support does not upgrade the Python fixture.
+      - name: Checkout locale-explicit stack browser entries
+        if: needs.check.outputs.backend_candidate == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: BigLeopardCat/saudade-blog-agent
+          ref: 474e3f69548c80f1be5eb9d7a8a3095e79869f17
+          path: _widget-browser-fixtures
+          sparse-checkout: |
+            frontend/tests/chat-stack.browser.mjs
+            frontend/tests/image-stack.browser.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Install fixed stack browser entries
+        if: needs.check.outputs.backend_candidate == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          cp _widget-browser-fixtures/frontend/tests/chat-stack.browser.mjs _agent-stack/frontend/tests/chat-stack.browser.mjs
+          cp _widget-browser-fixtures/frontend/tests/image-stack.browser.mjs _agent-stack/frontend/tests/image-stack.browser.mjs
       - name: Setup stack Python
         if: needs.check.outputs.backend_candidate == 'true'
         uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
