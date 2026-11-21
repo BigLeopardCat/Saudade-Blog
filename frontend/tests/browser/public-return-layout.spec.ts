@@ -28,6 +28,10 @@ for (const width of [390, 1440]) {
       }
       await page.locator('.AnnouncementCard h3 button').first().click()
       const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await expect.poll(() => dialog.evaluate(element => element.getAnimations({subtree: true})
+        .filter(animation => animation.playState === 'running').length)).toBe(0)
+      await expect(dialog).toHaveCSS('opacity', '1')
       const inset = await dialog.evaluate(element => {
         const surface = element.querySelector('.ant-modal-content')!.getBoundingClientRect()
         const heading = element.querySelector('.ant-modal-title')!.getBoundingClientRect()
@@ -60,7 +64,17 @@ for (const width of [390, 1440]) {
       })
       expect(onTop).toBe(true)
       await page.locator('#agent-layer-probe').evaluate(element => element.remove())
-      if (returned) await page.screenshot({path: test.info().outputPath(`pinned-announcement-return-${width}.png`), animations: 'disabled'})
+      await expect(dialog.locator('.pinnedAnnouncementTitle')).toBeInViewport()
+      if (returned) {
+        console.log('Announcement layout', await dialog.evaluate(element => ({
+          opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform,
+          wrapScroll: element.parentElement!.scrollTop,
+          bounds: element.getBoundingClientRect().toJSON(),
+        })))
+        await page.screenshot({path: test.info().outputPath(`pinned-announcement-return-${width}.png`)})
+        await expect(dialog.locator('.pinnedAnnouncementTitle')).toBeInViewport()
+        await expect(dialog).toHaveCSS('opacity', '1')
+      }
       await dialog.getByRole('button', {name: 'Close', exact: true}).click()
       await expect(dialog).not.toBeVisible()
     }
