@@ -212,6 +212,9 @@ const document = {
 
 /** 装上 DOM 全局。返回 `{ document, Element }`，调用方一般用不到返回值。 */
 export function installDom() {
+  // Chinese fixtures are explicit; host OS and Node language must not change assertions.
+  Object.defineProperty(globalThis, 'navigator', {configurable: true,
+    value: {language: 'zh-CN', languages: ['zh-CN']}});
   // Layout and resize delivery are checked in Playwright; this harness wires events only.
   globalThis.matchMedia = media => ({media, matches: false, onchange: null,
     addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}});

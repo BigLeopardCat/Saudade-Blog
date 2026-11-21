@@ -2,6 +2,7 @@ import {fireEvent, render, screen, act} from '@testing-library/react';
 import {describe, expect, it, vi} from 'vitest';
 import LanguageSwitcher from '../../src/components/LanguageSwitcher';
 import {LOCALE_EVENT, LOCALE_KEY, readLocale, setLocale, t, useLocale} from '../../src/i18n';
+import {RoleBadge} from '../../src/components/RoleBadge';
 
 function PublicFixture() {
     useLocale();
@@ -54,5 +55,11 @@ describe('interface language', () => {
         expect(t('第 {page} 页，本页 {count} 条，共 {total} 条', {page: 2, count: 1, total: 4}))
             .toBe('Page 2 · Results: 1 of 4');
         expect(t('分类-{0}', {0: '首页'})).toBe('Category — 首页');
+    });
+
+    it('keeps unknown roles as plain labels when switching languages', () => {
+        setLocale('en');
+        const {container} = render(<RoleBadge role="__proto__" />);
+        expect(container.textContent).toContain('__proto__');
     });
 });

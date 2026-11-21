@@ -40,8 +40,8 @@ const buildLabel = ({ tokenUid = null, lastUser = undefined } = {}) => {
   };
   // chat-engine 用裸 atob（浏览器全局）。桩里补上 base64 解码（Node 有 Buffer）
   const atob = (b64) => Buffer.from(b64, 'base64').toString('binary');
-  const fn = new Function('localStorage', 'atob', `${BLOCK}\nreturn userLabel;`);
-  return fn(localStorage, atob);
+  const fn = new Function('localStorage', 'atob', 'ui', `${BLOCK}\nreturn userLabel;`);
+  return fn(localStorage, atob, {t: key => key});
 };
 
 const remembered = (nickname, username) =>
