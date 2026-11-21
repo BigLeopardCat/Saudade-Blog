@@ -2,9 +2,9 @@ name: Dependency audit
 
 on:
   pull_request:
-    branches: [cn_sora_blog]
+    branches: [main]
   push:
-    branches: [cn_sora_blog]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

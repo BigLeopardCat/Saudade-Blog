@@ -9,7 +9,7 @@
 应用镜像以完整 Git SHA 命名，Agent 版本由 `agent.lock.json` 固定。首次源码构建需要联网取得工具链、锁定依赖、组件和基础镜像。构建开销明显高于运行开销，应在构建机或 CI 构建并传送镜像，避免在承载生产的低内存服务器上构建。
 
 ```sh
-git clone --branch cn_sora_blog https://github.com/BigLeopardCat/Saudade-Blog.git
+git clone --branch main https://github.com/BigLeopardCat/Saudade-Blog.git
 cd Saudade-Blog
 # 正式安装前 checkout 已审查的完整提交。
 bash deploy/install.sh --site-url http://localhost:8080

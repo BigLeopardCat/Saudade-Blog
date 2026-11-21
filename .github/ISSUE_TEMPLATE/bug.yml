@@ -10,7 +10,7 @@ body:
         测试被静默跳过。如遇此类问题，请写清**如何发现它没有生效**。
 
         **安全问题不要在这里报**，见
-        [SECURITY.md](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/SECURITY.md)。
+        [SECURITY.md](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/SECURITY.md)。
         另外：这个仓连着的是一个**真的在用的站点**，请别在报告里贴真实用户的
         文章原文、会话内容或任何令牌——用你自己造的样例复现。
   - type: textarea

@@ -3,7 +3,7 @@
 这条路线适用于**新的 Linux 主机或独立测试环境**。已有站点直接看本页升级部分，
 不重建数据库或覆盖配置。默认只安装核心博客，Agent、调度、R2 和模型均为可选。
 
-Release 提供预构建安装包时，可以按[预构建快速安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)导入镜像，再使用本页流程加 `--no-build`，避免在小服务器编译。先核对平台和完整提交，不能混用不同版本的源码与镜像。
+Release 提供预构建安装包时，可以按[预构建快速安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/prebuilt.md)导入镜像，再使用本页流程加 `--no-build`，避免在小服务器编译。先核对平台和完整提交，不能混用不同版本的源码与镜像。
 
 ## 1. 准备环境与地址
 
@@ -27,10 +27,10 @@ Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)�
 
 ## 2. 取得源码，选择安装方案
 
-在[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)选择并校验固定发行版，或按[容器指南的首次安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#首次安装)准备固定源码。记录实际提交，生成私有配置前决定是否启用 Agent 和调度。
+在[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/prebuilt.md)选择并校验固定发行版，或按[容器指南的首次安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md#首次安装)准备固定源码。记录实际提交，生成私有配置前决定是否启用 Agent 和调度。
 
 - 首次体验可以从核心博客开始。选择站点地址，生成配置，并检查本地监听范围。
-- 需要对话与后台计划时，按[容器指南的 Agent 接入](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#agent-与可选功能)准备私有模型密钥并选择所需开关。默认适配器为 OpenCode，其他供应商按 Agent 配置调整。
+- 需要对话与后台计划时，按[容器指南的 Agent 接入](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md#agent-与可选功能)准备私有模型密钥并选择所需开关。默认适配器为 OpenCode，其他供应商按 Agent 配置调整。
 
 ## 3. 审阅配置与首次账号
 
@@ -48,7 +48,7 @@ Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)�
 
 ## 4. 启动、登录与验收
 
-按所选[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/prebuilt.md)或[源码容器安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#首次安装)的命令启动并检查就绪。
+按所选[预构建安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/prebuilt.md)或[源码容器安装](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md#首次安装)的命令启动并检查就绪。
 
 浏览器打开 `http://localhost:8080`，用管理员文件中的账号登录，先在个人中心更换初始密码。
 初始文件不会随登录后的密码变更自动更新；重新运行安装器不会重置旧账号。
@@ -66,12 +66,12 @@ Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)�
 ## 5. 公开访问和 HTTPS
 
 默认回环端口适合由宿主反向代理提供公网 HTTPS。也可让容器 nginx 直接终止 TLS，
-按[证书与端口配置](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md#tls-与隔离)配置自己的域名、证书和监听地址。
+按[证书与端口配置](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md#tls-与隔离)配置自己的域名、证书和监听地址。
 证书续期不会自动完成；不要只把 URL 改成 https 却没有证书与 TLS 监听。
 
 ## 已有站点升级
 
-先按[兼容与升级](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/compatibility-and-upgrades.md)确定要替换的组件和回退范围。
+先按[兼容与升级](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/compatibility-and-upgrades.md)确定要替换的组件和回退范围。
 
 1. 记录实际博客、Agent 和组件版本，备份数据库、上传和私有目录。
 2. 审查新增 PostgreSQL 编号迁移，在隔离库验证后执行适用增量；不重跑基线。
@@ -80,5 +80,5 @@ Compose 按[官方插件指南](https://docs.docker.com/compose/install/linux/)�
 5. 验证真实页面与关键操作；异常时先确认 schema 向后兼容，再回到原版本。
 
 不要用删除卷的方式“重新安装”。已有核心博客追加 Agent、离线镜像交付与完整回滚命令见
-[容器指南](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/deploy/docker/README.md)。
-原生 systemd 实例走[原生运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/deployment-and-ops.md)，不混用两套状态目录。
+[容器指南](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/deploy/docker/README.md)。
+原生 systemd 实例走[原生运维](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/deployment-and-ops.md)，不混用两套状态目录。

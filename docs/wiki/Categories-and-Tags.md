@@ -40,4 +40,4 @@
 通过 Agent 修改时，使用准确名称或编号，并核对确认卡上的层级、父标签和目标文章。
 
 **完成标志：**字典列表能重读到保存结果，目标文章保存后显示正确分类/标签。
-当前接口范围见[后台目录](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/admin-catalog-api.md)。
+当前接口范围见[后台目录](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/admin-catalog-api.md)。

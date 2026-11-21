@@ -144,7 +144,7 @@ Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从
 运行 `git diff --check`；没有业务代码改动时不以完整构建代替文档验证。
 
 发布时克隆 `git@github.com:BigLeopardCat/Saudade-Blog.wiki.git`，从经验证的完整源码提交复制
-`docs/wiki/*.md`。将本仓 `blob/cn_sora_blog/`、`tree/cn_sora_blog/` 链接固定到该完整提交，
+`docs/wiki/*.md`。将本仓 `blob/main/`、`tree/main/` 链接固定到该完整提交，
 保证新教程引用的规范页在合并前也可读取。核对 Wiki 分支、差异及远程更新后单独提交，
 不强推、不覆盖他人修改、不删除源稿之外的页面。Wiki 提交附来源 SHA 与源码 PR；后续先改源稿再同步。
 截图的生成、清晰度检查和稳定文件名见[教程截图](docs/screenshots.md)。同步时递归复制 assets，
@@ -154,7 +154,7 @@ Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从
 ## 7. 跨仓协作与交接
 
 每个任务使用独立工作树，先核对用户给定的完整提交或配套 PR；未指定时更新本仓主线
-`cn_sora_blog` 和 Agent 主线 `main`。不要以本机另一个旧 checkout 的 HEAD 代替任务基线。
+`main` 和 Agent 主线 `main`。不要以本机另一个旧 checkout 的 HEAD 代替任务基线。
 会话间通过已推送的分支、完整提交和 PR 交接，不相互复制未提交文件或覆盖共享分支。
 
 | 固定版本文件 | 作用 | 何时更新 |

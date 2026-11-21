@@ -55,4 +55,4 @@
 完成后核对状态和通知。用户自己的申请入口在个人中心「对话额度」，不是后台权限申请。
 
 **完成标志：**刷新后的账号/申请状态与操作结果一致，必要时让测试账号重新登录验证。
-[账号契约](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/account-actions.md)说明版本和权限边界。
+[账号契约](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/account-actions.md)说明版本和权限边界。

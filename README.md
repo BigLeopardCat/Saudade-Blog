@@ -1,36 +1,42 @@
 # Saudade Blog
 
-可独立部署的个人博客与内容管理应用，覆盖写作发布、阅读检索、图库和站内互动；可选接入 Agent 协作与 AI 生图。
+English · [简体中文](README.zh-CN.md)
 
-后端使用 **Rust / Axum / SeaORM / PostgreSQL**，前端使用 **React / TypeScript / Vite**。业务数据、权限和事务由博客管理，模型执行由独立的 [Saudade Blog Agent](https://github.com/BigLeopardCat/saudade-blog-agent) 提供。
+A self-hosted blog and content management application with article publishing, categories and tags, a media gallery, reader interactions, and optional agent-assisted workflows.
 
-[在线博客](https://saudade.site/) · [使用指南](docs/user-guide.md) · [部署](deploy/docker/README.md) · [架构](docs/architecture.md) · [版本发布](https://github.com/BigLeopardCat/Saudade-Blog/releases)
+The backend uses **Rust / Axum / SeaORM / PostgreSQL**; the frontend uses **React / TypeScript / Vite**. The blog owns business data, authentication, permissions, and transactions. The separate [Saudade Blog Agent](https://github.com/BigLeopardCat/saudade-blog-agent) supplies model execution and the Lingyue chat widget.
 
-在线站点展示实际部署；后台管理和协作编辑需要管理员身份。
+[Live site](https://saudade.site/) · [Technical guide](docs/en/README.md) · [Engineering cases](docs/en/engineering-cases.md) · [Releases](https://github.com/BigLeopardCat/Saudade-Blog/releases)
 
-## 从这里开始
+The current UI, tutorials, and most articles are in Chinese. English documentation is available below; this does not imply that the product already has an English UI. The live site reflects its deployed version, and administration requires an authorized account.
 
-| 我想做什么 | 入口 |
+## Capabilities
+
+| Area | Behavior |
 | --- | --- |
-| 阅读、写作、用图库或和看板娘对话 | [使用指南](docs/user-guide.md) · [任务教程](docs/wiki/Home.md) |
-| 安装或维护站点 | [部署入口](deploy/README.md) · [配置](docs/configuration.md) · [兼容与升级](docs/compatibility-and-upgrades.md) |
-| 看懂系统或改代码 | [系统架构](docs/architecture.md) · [代码导读](docs/code-reading.md) · [贡献指南](CONTRIBUTING.md) |
+| Publishing | Article editing, drafts, cover selection, categories/tags, and version-aware save/publish flows |
+| Reading and interaction | Article browsing/search, comments, announcements, reader accounts, and personal activity |
+| Media | Local persistent gallery storage, optional R2, and separately approved image-generation workflows |
+| Optional Agent | Source-backed article questions, writing assistance, reviewed operations, and supported scheduled tasks |
+| Operations | Fixed-source builds, prebuilt packages, isolated service accounts, backups, and restore/recovery checks |
 
-核心博客可独立部署。Agent、AI 审核、生图、R2 和 IoT 按需要接入。[可选能力](docs/architecture.md#可选能力)
+The core blog runs independently. Model providers, Agent, moderation, R2, and device integration are optional; configure only the capabilities you need.
 
-## 安装与发布验证
+```mermaid
+flowchart LR
+    Browser[React frontend] --> Proxy[nginx / TLS]
+    Proxy --> Host[Rust business backend]
+    Host <--> Database[PostgreSQL]
+    Host --> Media[Local storage / optional R2]
+    Host --> Agent[Optional Python Agent]
+    Agent --> Host
+```
 
-从 [最新发行版](https://github.com/BigLeopardCat/Saudade-Blog/releases/latest) 获取 Linux amd64 容器归档或原生安装包。按[预构建安装指南](deploy/prebuilt.md)校验 SHA256SUMS，再按 manifest 固定的版本安装。容器安装需要 Docker Engine 与 Docker Compose 2.30+。
+## Install or develop
 
-默认安装核心博客并绑定回环地址。公开域名、TLS、首个管理员及可选 Agent 按[容器指南](deploy/docker/README.md)配置。现有 systemd 实例按[部署和升级指南](docs/deployment-and-ops.md)操作。
+For deployment, start with the [English setup guide](docs/en/getting-started.md). When a matching prebuilt release is available, verify its manifest and checksums before following the [prebuilt installation guide (中文)](deploy/prebuilt.md). Native packages have platform/ABI requirements; container installation requires Docker Engine and Docker Compose 2.30+.
 
-[公开 PR 检查](https://github.com/BigLeopardCat/Saudade-Blog/actions) 验证 Rust、临时 PostgreSQL、前端类型与组件、Playwright 浏览器，以及容器安装、备份恢复与失败回退。仅博客安装和启用 Agent 的组合分别验证，不依赖维护者服务器或私有密钥。浏览器测试使用真实组件和合成接口数据；隔离验收不等于真实流量表现或所有线上操作已经完成。
-
-配套 Agent 的模型任务通过率、缓存与时延见 [Agent 发布证据](https://github.com/BigLeopardCat/saudade-blog-agent/releases)；这些指标不代替博客自身的功能与部署验收。
-
-## 开发起步
-
-需要 Rust 1.92+、Node 24.22.1（见 `.node-version`）和 PostgreSQL 16。
+For local development, use Rust 1.92+, the Node version in [.node-version](.node-version), and a dedicated PostgreSQL 16 instance:
 
 ```sh
 git clone https://github.com/BigLeopardCat/Saudade-Blog.git
@@ -38,13 +44,7 @@ cd Saudade-Blog
 cp .env.example .env
 ```
 
-创建开发数据库与应用角色，按[开发指南](CONTRIBUTING.md)应用 PostgreSQL 基线及编号迁移。填写 `DATABASE_URL`、随机 `JWT_SECRET` 和本站地址，再启动：
-
-```sh
-cargo run
-```
-
-另开终端运行前端：
+Set up the development database and apply the schema/migrations using the [setup guide](docs/en/getting-started.md). After configuring development-only credentials, start the backend with `cargo run`. In another terminal:
 
 ```sh
 cd frontend
@@ -54,17 +54,20 @@ npm run vendor:live2d
 npm run dev
 ```
 
-看板娘源码在 Agent 仓库；本仓通过 `frontend/widget.lock.json` 固定提交与子树哈希。组件下载先于 Live2D vendor 准备，构建缺失资源时应失败。
+Widget source lives in the Agent repository. This host pins the source commit and subtree hashes in `frontend/widget.lock.json`; fetch the widget before preparing the renderer runtime.
 
-## 文档
+## Inspect the engineering
 
-[使用指南](docs/user-guide.md) · [Wiki 教程](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [文档索引](docs/README.md) · [配置](docs/configuration.md) · [代码导读](docs/code-reading.md) · [排障](docs/troubleshooting.md)
+[Architecture](docs/en/architecture.md) explains business/state ownership and the Agent boundary. [Engineering cases](docs/en/engineering-cases.md) cover version-aware editor changes and independently versioned host/runtime/widget delivery. Agent-side [context, retrieval, and write-recovery cases](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/en/engineering-cases.md) are maintained with their implementation.
 
-界面、接口、配置与运维说明随源码维护；Wiki 按写作、图库、安装与恢复组织教程，
-[源稿](docs/wiki/Home.md)随 PR 评审。截图使用合成数据，不包含真实账号、私信与密钥。
+[Public CI](https://github.com/BigLeopardCat/Saudade-Blog/actions) checks Rust, disposable PostgreSQL, frontend types/components, browser interactions, and container installation/recovery. Synthetic interfaces and isolated installation checks are identified separately from production behavior and real-model evaluation. A passing build or merged PR does not prove deployment.
 
-## 贡献与许可
+## Documentation and contribution
 
-提交采用 `type(scope): 中文说明`，完整检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。后续方向见 [ROADMAP.md](ROADMAP.md)，用户可见变化见 [CHANGELOG.md](CHANGELOG.md)，安全问题见 [SECURITY.md](SECURITY.md)。
+[English guide](docs/en/README.md) · [中文文档](docs/README.md) · [User guide (中文)](docs/user-guide.md) · [Wiki (中文)](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
 
-博客代码按 [GPL-2.0](LICENSE) 分发，来源与第三方声明见 [THIRD-PARTY.md](THIRD-PARTY.md)。Agent 聊天组件代码使用 MIT，角色及美术资源另有许可，见 [Agent 资源许可](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md)。
+English core guides and Chinese operational/protocol references are linked by topic. Use documentation from your source revision or release. Both repositories use `main` as their primary branch. English contributions are welcome under the shared commit and verification rules.
+
+## License
+
+Blog code is distributed under [GPL-2.0](LICENSE); see [third-party notices](THIRD-PARTY.md). Agent widget code is MIT licensed, while character/art assets have separate terms in the [Agent asset license](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md).

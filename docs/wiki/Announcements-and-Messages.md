@@ -40,4 +40,4 @@ Agent 的读取行为不一定自动标为已读，修改已读状态属于独�
 历史成功说明当时提交过，公告后来可能已被修改或删除。
 
 **完成标志：**目标公告/通知可重新读取、受众正确、未读或置顶状态与操作一致。
-详见[通知与信箱](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/mailbox-api.md)。
+详见[通知与信箱](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/mailbox-api.md)。

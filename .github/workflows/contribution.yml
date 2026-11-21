@@ -2,10 +2,10 @@ name: Contribution policy
 
 on:
   pull_request:
-    branches: [cn_sora_blog]
+    branches: [main]
     types: [opened, reopened, synchronize, edited, ready_for_review]
   push:
-    branches: [cn_sora_blog]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

@@ -73,4 +73,4 @@
 图：原文、修改建议与采纳入口。示例数据仅用于说明。
 
 AI 建议不是已保存的文章，生成或保留图片也不会自动发布。
-当前约束见[协作编辑](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/article-collaboration.md)。
+当前约束见[协作编辑](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/article-collaboration.md)。

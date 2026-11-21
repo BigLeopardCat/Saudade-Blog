@@ -26,7 +26,7 @@ Agent 转发使用，不持有其签名密钥。确认卡使用 Agent 独立密�
 导航、外观与编辑器动作等待有界浏览器回报，回报不授予账号权限。
 后台计划还需独立 Worker 和有限委托，普通聊天断连不能当成后台持续执行。
 
-接入配置见[配置导航](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/configuration.md)，
-契约见[聊天存储](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/chat-persistence.md)与
-[安全边界](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/docs/security-boundary.md)。
+接入配置见[配置导航](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/configuration.md)，
+契约见[聊天存储](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/chat-persistence.md)与
+[安全边界](https://github.com/BigLeopardCat/Saudade-Blog/blob/main/docs/security-boundary.md)。
 模型和任务使用见[Agent Wiki](https://github.com/BigLeopardCat/saudade-blog-agent/wiki)。
