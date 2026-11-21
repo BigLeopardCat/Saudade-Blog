@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import './index.sass'
 import {useEffect, useRef} from 'react';
 import {Link, useSearchParams} from 'react-router-dom';
@@ -9,6 +10,7 @@ import {usePublicTalkQuery, useTalkFeedInfiniteQuery} from '../../../store/publi
 import SeoHelmet from '../../../components/SeoHelmet';
 
 const TalkList = () => {
+    useLocale();
     const [searchParams] = useSearchParams();
     const requestedId = Number(searchParams.get('tk'));
     const tk = Number.isSafeInteger(requestedId) && requestedId > 0 && requestedId <= 2147483647
@@ -38,15 +40,15 @@ const TalkList = () => {
         return feed.isFetchNextPageError ? feed.fetchNextPage() : feed.refetch();
     };
     return <div className='TalkContainer'>
-        <SeoHelmet title='说说' url='/talk' />
-        <h2>说说</h2>
-        {tk > 0 && <Link className='talkBrowseAll' to='/talk'>查看全部说说</Link>}
-        {loading && <div className='talkEmpty' role='status'>正在加载说说…</div>}
+        <SeoHelmet title={tr("说说")} url='/talk' />
+        <h2>{tr("说说")}</h2>
+        {tk > 0 && <Link className='talkBrowseAll' to='/talk'>{tr("查看全部说说")}</Link>}
+        {loading && <div className='talkEmpty' role='status'>{tr("正在加载说说…")}</div>}
         {failed && <div className='talkEmpty' role='alert'>
-            <span>{tk ? '这条说说不存在或暂时无法读取' : '说说没能读取出来，请稍后再试'}</span>
-            <Button onClick={retry} loading={tk ? detail.isFetching : feed.isFetching}>重试</Button>
+            <span>{tk ? tr("这条说说不存在或暂时无法读取") : tr("说说没能读取出来，请稍后再试")}</span>
+            <Button onClick={retry} loading={tk ? detail.isFetching : feed.isFetching}>{tr("重试")}</Button>
         </div>}
-        {!loading && !failed && talkList.length === 0 && <div className='talkEmpty'>还没有说说</div>}
+        {!loading && !failed && talkList.length === 0 && <div className='talkEmpty'>{tr("还没有说说")}</div>}
         {talkList.map((talk, index) => {
             const at = dayjs(talk.createTime);
             return <motion.div key={talk.talkKey}
@@ -69,7 +71,7 @@ const TalkList = () => {
             </motion.div>;
         })}
         {!tk && feed.hasNextPage && !failed && <Button className='talkLoadMore'
-            loading={feed.isFetching} onClick={() => feed.fetchNextPage()}>加载更多说说</Button>}
+            loading={feed.isFetching} onClick={() => feed.fetchNextPage()}>{tr("加载更多说说")}</Button>}
     </div>;
 };
 

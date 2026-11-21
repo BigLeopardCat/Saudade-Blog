@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import SeoHelmet from "../../../components/SeoHelmet";
 
 import {SITE_TITLE, SITE_DESCRIPTION} from "../../../utils/siteUrl";
@@ -63,6 +64,7 @@ const mapRows = (rows: unknown[]): NoteType[] => rows.map(raw => {
 });
 
 const ContentHome = () => {
+    useLocale();
     const heroRef = useRef<HTMLDivElement>(null);
 
     const pageSizeRef = useRef(cachedPageSize);
@@ -237,7 +239,7 @@ const ContentHome = () => {
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
-        <section className="homeFirstScreen" aria-label="首页与置顶内容">
+        <section className="homeFirstScreen" aria-label={tr("首页与置顶内容")}>
         <div className="SelfDescription" ref={heroRef}>
             <div className="SayWords">
                 <h1 className="home-title-h3">Sereno da Saudade</h1>
@@ -266,14 +268,14 @@ const ContentHome = () => {
             </div>
         </div>
         <div className="homePinned">
-            {topError && <div role="status" className="homeLoadError">置顶加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button></div>}
-            {pinError && <div role="status" className="homeLoadError">置顶公告加载失败 <button type="button" onClick={() => {void loadPins()}}>重试</button></div>}
+            {topError && <div role="status" className="homeLoadError">{tr("置顶加载失败")} <button type="button" onClick={() => { void fetchTop(); }}>{tr("重试")}</button></div>}
+            {pinError && <div role="status" className="homeLoadError">{tr("置顶公告加载失败")} <button type="button" onClick={() => {void loadPins()}}>{tr("重试")}</button></div>}
             {(topArticles.length > 0 || pinnedAnnouncements.length > 0) && <FeaturedArticles announcements={pinnedAnnouncements} items={topArticles} categories={Categories} avatar={avatar} name={name} tags={tagList}/>}
         </div>
         </section>
         <div className="ContentContainer dark-pic" id="home-articles">
             <div className="homeSectionHeading">
-                <SectionHeading icon="document">文章</SectionHeading>
+                <SectionHeading icon="document">{tr("文章")}</SectionHeading>
             </div>
 
             <div className="allArticles allArticlesMeasure" aria-hidden="true" ref={measureRef}>
@@ -287,12 +289,12 @@ const ContentHome = () => {
                 ))}
             </div>
             {feedState.error && <div role="status" className="homeLoadError">
-                {feedState.error} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>重试</button>
+                {tr(feedState.error)} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>{tr("重试")}</button>
             </div>}
-            {feedState.loaded && !feedState.error && otherArticles.length === 0 && <p role="status">暂无公开文章</p>}
+            {feedState.loaded && !feedState.error && otherArticles.length === 0 && <p role="status">{tr("暂无公开文章")}</p>}
             <div className="homeFeedBoundary" ref={feedBoundaryRef} role="status" aria-live="polite">
-                {loading ? '正在加载文章…' : !feedState.error && feedState.loaded && otherArticles.length > 0
-                    ? hasMoreArticles ? '继续向下浏览' : '已经看到全部文章了' : null}
+                {loading ? tr("正在加载文章…") : !feedState.error && feedState.loaded && otherArticles.length > 0
+                    ? hasMoreArticles ? tr("继续向下浏览") : tr("已经看到全部文章了") : null}
             </div>
         </div>
     </>

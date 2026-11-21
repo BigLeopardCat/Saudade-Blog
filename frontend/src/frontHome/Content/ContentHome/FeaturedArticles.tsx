@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import {useNavigate} from 'react-router-dom'
 import SectionHeading from '../../../components/SectionHeading'
 import ArticleCard from '../../../components/ArticleCard'
@@ -25,6 +26,7 @@ const SPEED = 18
 const EMPTY: AnnouncementItem[] = []
 type PinnedEntry = {kind: 'article'; key: string; title: string; article: NoteType} | {kind: 'announcement'; key: string; title: string; announcement: AnnouncementItem}
 export default function FeaturedArticles({items, announcements = EMPTY, categories, avatar, name, tags}: Props) {
+    useLocale();
     const entries = useMemo<PinnedEntry[]>(() => [
         ...announcements.map(item => ({kind: 'announcement' as const, key: `announcement-${item.id}`, title: item.title, announcement: item})),
         ...items.map(item => ({kind: 'article' as const, key: `article-${item.key}`, title: item.noteTitle, article: item})),
@@ -118,7 +120,7 @@ export default function FeaturedArticles({items, announcements = EMPTY, categori
         : <AnnouncementCard item={entry.announcement} number={index % entries.length + 1} preview={preview}
             tabIndex={copy ? -1 : undefined} onOpen={() => setOpened(entry.announcement)}/>
 
-    return <section className="featuredArticles" ref={root} aria-label="置顶" data-paused={paused}
+    return <section className="featuredArticles" ref={root} aria-label={tr("置顶")} data-paused={paused}
         onPointerEnter={event => {if (event.pointerType === 'mouse') setHovered(true)}}
         onPointerLeave={event => {if (event.pointerType === 'mouse') {setHovered(false); setPreview(null)}}}
         onFocusCapture={event => {
@@ -130,7 +132,7 @@ export default function FeaturedArticles({items, announcements = EMPTY, categori
             }
         }}
         onBlurCapture={event => {if (!event.currentTarget.contains(event.relatedTarget)) {setFocused(false); setPreview(null)}}}>
-        <div className="featuredLabel"><SectionHeading icon="top">置顶</SectionHeading></div>
+        <div className="featuredLabel"><SectionHeading icon="top">{tr("置顶")}</SectionHeading></div>
         <div className="featuredViewport" ref={viewport}
             onPointerDown={event => {
                 swiped.current = false
@@ -172,10 +174,10 @@ export default function FeaturedArticles({items, announcements = EMPTY, categori
                     {previewItems.map(index => <div key={entries[index].key}>{card(entries[index], index, true)}</div>)}
                 </div></div>
             </div>}
-            <div className="featuredSegments" role="group" aria-label="置顶内容分组">
+            <div className="featuredSegments" role="group" aria-label={tr("置顶内容分组")}>
                 {Array.from({length: groups}, (_, index) => {
                     const labels = Array.from({length: count}, (_, slot) => entries[(index * count + slot) % entries.length].title)
-                    return <button type="button" key={index} aria-label={`第 ${index + 1} 组：${labels.join('、')}`}
+                    return <button type="button" key={index} aria-label={tr("第 {0} 组：{1}", {"0": index + 1, "1": labels.join('、')})}
                         aria-pressed={group === index} onPointerEnter={event => {if (event.pointerType === 'mouse') setPreview(index)}}
                         onFocus={event => {if (event.currentTarget.matches(':focus-visible')) setPreview(index)}} onClick={() => jump(index)}
                         onKeyDown={event => {

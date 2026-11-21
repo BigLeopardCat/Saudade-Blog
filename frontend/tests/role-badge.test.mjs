@@ -98,7 +98,7 @@ ok(/ROLE_LABEL\[role\]/.test(strip(badge)),
 ok(!/['"`](站长|管理员|普通用户|杂鱼)['"`]/.test(strip(badge)),
     '组件的代码里没有任何身份中文名字面量（第二份名字表就是这么长出来的）',
     strip(badge).match(/['"`](站长|管理员|普通用户|杂鱼)['"`]/))
-ok(/label = \(role && ROLE_LABEL\[role\]\) \|\| role \|\| '—'/.test(badge),
+ok(/label = role && Object\.prototype\.hasOwnProperty\.call\(ROLE_LABEL, role\)\s*\? t\(ROLE_LABEL\[role\]\) : role \|\| '—'/.test(badge),
     '取不到就回退原值（漏改映射时显示英文 role 而不是编一个名字）')
 ok(/^\s{4}superadmin:\s*'/m.test(strip(auth)),
     'ROLE_LABEL 的**键名仍是 superadmin**（取值域是后端 authz::KNOWN_ROLES，改键要一次迁移）')

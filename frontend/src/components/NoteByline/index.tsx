@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import { Avatar } from "antd";
 import dayjs from "dayjs";
 import type { NoteType } from "../../interface/NoteType";
@@ -14,11 +15,12 @@ interface NoteBylineProps {
 }
 
 const NoteByline = ({ item, siteName, siteAvatar, compact = false, card = false }: NoteBylineProps) => {
+    useLocale();
     const who = noteAuthor(item, { name: siteName, avatar: siteAvatar });
 
     if (card) return <>
         <span className="noteCardAuthor" title={who.name}><Avatar src={who.avatar || undefined} size={24}/><span>{who.name}</span></span>
-        {([['发布', item.createTime], ['更新', item.updateTime]] as const).map(([label, value]) => {
+        {([[tr("发布"), item.createTime], [tr("更新"), item.updateTime]] as const).map(([label, value]) => {
             const date = dayjs(value);
             return <span className="noteCardDate" key={label}><span>{label}</span>
                 <time className="post-date" dateTime={date.isValid() ? date.toISOString() : undefined}>{date.isValid() ? date.format('YYYY-MM-DD') : '—'}</time>
@@ -32,11 +34,11 @@ const NoteByline = ({ item, siteName, siteAvatar, compact = false, card = false 
             <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
                 <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
                     <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                    发布于 {dayjs(item.createTime).format('YYYY-MM-DD')}
+                    {tr("发布于")}{dayjs(item.createTime).format('YYYY-MM-DD')}
                 </span>
                 {!compact && <span style={{ position: 'absolute', top: '100%', marginTop: '6px', left: 0, fontSize: 12, color: '#7f7e7e', lineHeight: '22px', whiteSpace: 'nowrap' }} className='post-date'>
                     <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                    更新于 {dayjs(item.updateTime).format('YYYY-MM-DD')}
+                    {tr("更新于")}{dayjs(item.updateTime).format('YYYY-MM-DD')}
                 </span>}
             </div>
         </>

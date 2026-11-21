@@ -16,6 +16,8 @@ Node 版本使用 `.node-version`；库版本以 `frontend/package.json` 和锁�
 
 首次浏览器验证执行 `npx playwright install --with-deps chromium`。CI 固定 zh-CN、Asia/Shanghai 和中文字体，单 worker；失败保留 trace 和截图，不自动重试掩盖失败。构建、Rust 和真实 PostgreSQL 检查也在公开 PR 中执行。
 
+真实 HTTP 演练的 Python 运行时夹具与浏览器入口分别固定到公开提交；后者显式指定 `zh-CN`，使中文语义断言不受浏览器默认语言影响。工作流只替换两份已固定的浏览器测试入口，不改变运行时夹具、依赖锁或生产 Agent 版本。
+
 ## 新测试
 
 纯逻辑直接导入生产模块；React 行为使用 Testing Library 和真实控件。样式、滚动、命中区域、图片比例和浏览器生命周期由 Playwright 验证，不用 jsdom 的尺寸证明布局正确。

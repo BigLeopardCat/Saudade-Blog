@@ -71,7 +71,7 @@ ok(pageTsx.includes('{profile?.nicknameAutoRenamed && ('),
     '横幅用 `profile?.nicknameAutoRenamed &&` 门控（undefined 安静地不渲染）');
 ok(pageTsx.includes('你的昵称和其他用户重复了'), '横幅标题是这句话');
 const iBanner = pageTsx.indexOf('ucNickBanner');
-const iField = pageTsx.indexOf('<span className="ucLabel">昵称</span>');
+const iField = pageTsx.indexOf('<span className="ucLabel">{tr("昵称")}</span>');
 ok(iBanner > 0 && iField > iBanner, '横幅排在昵称输入框**之前**（说的是"去改掉"，改的地方就在下一行）');
 ok(pageTsx.includes("import { Alert,"), 'Alert 已从 antd 引入');
 ok(/\.ucNickBanner[\s\S]{0,160}\.ant-alert-message/.test(sass),

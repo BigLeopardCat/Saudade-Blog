@@ -4,6 +4,7 @@ import { reportError } from '../../utils/report'
 import { isStaleChunkError, recoverFromStaleChunk } from '../../utils/staleChunk'
 import { readDarkMode } from '../../theme'
 import './index.sass'
+import {t, subscribeLocale} from '../../i18n'
 
 interface Props {
     children: ReactNode
@@ -17,6 +18,10 @@ interface State {
 
 class ErrorBoundary extends Component<Props, State> {
     state: State = { error: null }
+    private stopLocale: (() => void) | undefined
+
+    componentDidMount() { this.stopLocale = subscribeLocale(() => this.forceUpdate()) }
+    componentWillUnmount() { this.stopLocale?.() }
 
     static getDerivedStateFromError(error: Error): State {
         return { error }
@@ -51,12 +56,12 @@ class ErrorBoundary extends Component<Props, State> {
             <div className={className}>
                 <div className="errorBoundary__card">
                     <div className="errorBoundary__title">
-                        {stale ? '页面已更新' : '页面出了点小问题'}
+                        {t(stale ? '页面已更新' : '页面出了点小问题')}
                     </div>
                     <div className="errorBoundary__desc">
-                        {stale
+                        {t(stale
                             ? '网站刚更新过，这一页还停在上一版，它要的资源已经换掉了。刷新一下就接着用。'
-                            : '这一块内容没能加载出来，已经记录下来。刷新一下通常就好了。'}
+                            : '这一块内容没能加载出来，已经记录下来。刷新一下通常就好了。')}
                     </div>
                     {!stale && (
                         <pre className="errorBoundary__msg">{error.message || String(error)}</pre>
@@ -72,9 +77,9 @@ class ErrorBoundary extends Component<Props, State> {
                                 else this.setState({ error: null })
                             }}
                         >
-                            {stale ? '刷新页面' : '重试'}
+                            {t(stale ? '刷新页面' : '重试')}
                         </button>
-                        <a className="errorBoundary__btn" href="/">回到首页</a>
+                        <a className="errorBoundary__btn" href="/">{t('回到首页')}</a>
                     </div>
                 </div>
             </div>

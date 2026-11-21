@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import {useEffect, useRef, useState} from 'react';
 
 type Section = {id: string; label: string; level: number};
@@ -6,6 +7,7 @@ const hashId = () => { try { return decodeURIComponent(location.hash.slice(1)); 
 
 /** One heading map drives the outline, deep links, and the Agent's current_url. */
 export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
+    useLocale();
     const [sections, setSections] = useState<Section[]>([]);
     const [active, setActive] = useState('');
     const nav = useRef<HTMLElement>(null);
@@ -47,7 +49,7 @@ export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
                 used.add(id);
                 heading.id = id;
                 heading.dataset.readingId = id;
-                return {id, label: heading.textContent?.trim() || '未命名章节', level: Number(heading.tagName.slice(1))};
+                return {id, label: heading.textContent?.trim() || tr("未命名章节"), level: Number(heading.tagName.slice(1))};
             });
             setSections(entries);
             if (initialHash && headings.some(heading => heading.id === initialHash)) {
@@ -93,11 +95,11 @@ export default function ReadingOutline({sourceKey}: {sourceKey: string}) {
         if (item.top < bounds.top || item.bottom > bounds.bottom)
             container.scrollTop += item.top - bounds.top - 20;
     }, [active]);
-    return <nav ref={nav} className="markdown-navigation" aria-label="文章目录">
-        <strong className="outlineHeading">本文目录</strong>
+    return <nav ref={nav} className="markdown-navigation" aria-label={tr("文章目录")}>
+        <strong className="outlineHeading">{tr("本文目录")}</strong>
         {sections.length ? sections.map(section => <a key={section.id} href={`#${encodeURIComponent(section.id)}`}
             className={`title-anchor${active === section.id ? ' active' : ''}`}
             aria-current={active === section.id ? 'location' : undefined}
-            style={{paddingInlineStart: `${8 + (section.level - 1) * 12}px`}}>{section.label}</a>) : <span className="outlineEmpty">本文暂无小节</span>}
+            style={{paddingInlineStart: `${8 + (section.level - 1) * 12}px`}}>{section.label}</a>) : <span className="outlineEmpty">{tr("本文暂无小节")}</span>}
     </nav>;
 }

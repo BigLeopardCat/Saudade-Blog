@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import { Alert, Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 
 import { quotaBalanceText, quotaLevel, quotaPct, quotaUsedHint } from '../../utils/quota.ts'
@@ -24,6 +25,7 @@ interface UserCenterProps {
 }
 
 const UserCenterContent = ({open,onClose}: UserCenterProps) => {
+    useLocale();
     const {
         isDark, navigate, loggedIn, admin,
         uid, counts, tab, profile,
@@ -47,7 +49,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
     } = useUserCenterModel({open, onClose});
     const title = (
         <div className="ucTitle">
-            <span className="ucTitleText">个人中心</span>
+            <span className="ucTitleText">{tr("个人中心")}</span>
             {admin && (
                 <Button
                     size="small"
@@ -57,8 +59,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                         navigate('/dashboard')
                     }}
                 >
-                    后台管理
-                </Button>
+                    {tr("后台管理")}</Button>
             )}
         </div>
     )
@@ -78,10 +79,9 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                         />
                     </div>
                     <div className="ucAvatarAccount">UID：{uid ?? '—'}</div>
-                    <div className="ucAvatarAccount">账号：{profile?.username || ''}（账号不可修改）</div>
+                    <div className="ucAvatarAccount">{tr("账号：")}{profile?.username || ''}{tr("（账号不可修改）")}</div>
                     <label className="ucUploadBtn">
-                        更换头像
-                        <input
+                        {tr("更换头像")}<input
                             type="file"
                             accept="image/*"
                             onChange={(e) => {
@@ -89,7 +89,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                 e.target.value = ''
                                 if (!f) return
                                 if (!f.type.startsWith('image/')) {
-                                    message.error('请选择图片文件')
+                                    message.error(tr("请选择图片文件"))
                                     return
                                 }
                                 handlePickFile(f)
@@ -104,10 +104,9 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                     className="ucNickBanner"
                     type="warning"
                     showIcon
-                    message="你的昵称和其他用户重复了"
+                    message={tr("你的昵称和其他用户重复了")}
                     description={
-                        <>为避免重名，系统已把它临时改成「{profile?.nickname || ''}」。
-                            请在下面改成别的昵称，改完这条提示就消失。</>
+                        <>{tr("为避免重名，系统已把它临时改成「")}{profile?.nickname || ''}{tr("」。 请在下面改成别的昵称，改完这条提示就消失。")}</>
                     }
                 />
             )}
@@ -117,55 +116,51 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                     className="ucMuteBanner"
                     type="warning"
                     showIcon
-                    message="你暂时不能发布评论与留言"
+                    message={tr("你暂时不能发布评论与留言")}
                     description={
-                        <>你的账号被临时禁言{profile?.mutedUntil ? `（${profile.mutedUntil}）` : ''}，
-                            期间发出的评论与留言会被拒；其余一切照常——仍可登录、浏览文章、与泠月喵对话。
-                            如有疑问请联系博主。</>
+                        <>{tr("你的账号被临时禁言")}{profile?.mutedUntil ? `（${profile.mutedUntil}）` : ''}{tr("， 期间发出的评论与留言会被拒；其余一切照常——仍可登录、浏览文章、与泠月喵对话。 如有疑问请联系博主。")}</>
                     }
                 />
             )}
 
             <div className="ucField">
-                <span className="ucLabel">昵称</span>
+                <span className="ucLabel">{tr("昵称")}</span>
                 <Input
                     value={nickname}
                     maxLength={20}
                     showCount
-                    placeholder="展示用昵称（留言、说说、信箱里显示这个）"
+                    placeholder={tr("展示用昵称（留言、说说、信箱里显示这个）")}
                     onChange={(e) => setNickname(e.target.value)}
                 />
                 <Button className="ucPrimaryBtn" type="primary" loading={savingNick} onClick={saveNickname}>
-                    保存
-                </Button>
+                    {tr("保存")}</Button>
             </div>
 
             {open && (
                 <div className="ucField ucFieldStack">
-                    <span className="ucLabel">修改密码</span>
+                    <span className="ucLabel">{tr("修改密码")}</span>
                     <Input.Password
                         value={pwdOld}
-                        placeholder="原密码"
+                        placeholder={tr("原密码")}
                         autoComplete="current-password"
                         onChange={(e) => setPwdOld(e.target.value)}
                     />
                     <Input.Password
                         value={pwdNew}
-                        placeholder="新密码（至少 8 位）"
+                        placeholder={tr("新密码（至少 8 位）")}
                         autoComplete="new-password"
                         onChange={(e) => setPwdNew(e.target.value)}
                     />
                     <Input.Password
                         value={pwdNew2}
-                        placeholder="再输一次新密码"
+                        placeholder={tr("再输一次新密码")}
                         autoComplete="new-password"
                         onChange={(e) => setPwdNew2(e.target.value)}
                     />
                     <div className="ucFieldFoot">
-                        <span className="ucHint">改密码会让其他设备立刻下线（本机保持登录）</span>
+                        <span className="ucHint">{tr("改密码会让其他设备立刻下线（本机保持登录）")}</span>
                         <Button className="ucPrimaryBtn" type="primary" loading={savingPwd} onClick={savePassword}>
-                            修改密码
-                        </Button>
+                            {tr("修改密码")}</Button>
                     </div>
                 </div>
             )}
@@ -179,18 +174,16 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 dataSource={favorites || []}
                 locale={{
                     emptyText: favFailed && favorites === null
-                        ? <Empty description="收藏列表没读到（网络或登录状态问题），过一会儿再打开看看" />
-                        : <Empty description="还没有收藏的文章（文章页点「收藏」）" />,
+                        ? <Empty description={tr("收藏列表没读到（网络或登录状态问题），过一会儿再打开看看")} />
+                        : <Empty description={tr("还没有收藏的文章（文章页点「收藏」）")} />,
                 }}
                 renderItem={(item) => (
                     <List.Item
                         actions={[
                             <Button type="link" key="open" onClick={() => openArticle(item.noteId)}>
-                                阅读
-                            </Button>,
+                                {tr("阅读")}</Button>,
                             <Button type="link" danger key="del" onClick={() => dropFavorite(item.noteId)}>
-                                取消收藏
-                            </Button>,
+                                {tr("取消收藏")}</Button>,
                         ]}
                     >
                         <List.Item.Meta
@@ -199,7 +192,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                     {item.title}
                                 </a>
                             }
-                            description={`收藏于 ${fmtMinute(item.createdAt)}`}
+                            description={tr("收藏于 {0}", {"0": fmtMinute(item.createdAt)})}
                         />
                     </List.Item>
                 )}
@@ -210,22 +203,22 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
     const talksPane = (
         <div className="ucPane">
             <div className="ucPaneBar">
-                <span className="ucHint">这里只列河灯留言（说说在「说说」页）</span>
+                <span className="ucHint">{tr("这里只列河灯留言（说说在「说说」页）")}</span>
             </div>
             <List
                 loading={loadingTab && talks === null}
                 dataSource={boardTalks}
-                locale={{ emptyText: <Empty description="还没有留言记录" /> }}
+                locale={{ emptyText: <Empty description={tr("还没有留言记录")} /> }}
                 renderItem={(t) => {
-                    const st = TALK_STATUS[t.approved] || { text: '未知', color: 'default' }
+                    const st = TALK_STATUS[t.approved] || { text: tr("未知"), color: 'default' }
                     return (
                         <List.Item>
                             <List.Item.Meta
                                 title={
                                     <span className="ucItemTitle">
-                                        {t.cat && <span className="ucSeal" title="河灯留言的类型">{t.cat}</span>}
-                                        {t.content ? t.content.slice(0, 24) : '（无标题）'}
-                                        <Tag color={st.color}>{st.text}</Tag>
+                                        {t.cat && <span className="ucSeal" title={tr("河灯留言的类型")}>{t.cat}</span>}
+                                        {t.content ? t.content.slice(0, 24) : tr("（无标题）")}
+                                        <Tag color={st.color}>{tr(st.text)}</Tag>
                                     </span>
                                 }
                                 description={
@@ -233,7 +226,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                         <div className="ucBodyText">{t.content}</div>
                                         {t.approved === 2 && (
                                             <div className="ucReject">
-                                                驳回理由：{t.rejectReason || '未填写'}
+                                                {tr("驳回理由：")}{t.rejectReason || tr("未填写")}
                                             </div>
                                         )}
                                         <div className="ucBodyTime">{fmtMinute(t.createdAt)}</div>
@@ -255,12 +248,11 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
         <div className="ucNoticeDetail">
             <div className="ucNoticeDetailBar">
                 <Button size="small" onClick={() => setNoticeOpenId(null)}>
-                    返回公告和通知
-                </Button>
+                    {tr("返回公告和通知")}</Button>
             </div>
             <div className="ucNoticeDetailHead">
                 <Tag color={n.type === 'announcement' ? 'geekblue' : 'cyan'}>
-                    {n.type === 'announcement' ? '公告' : '通知'}
+                    {n.type === 'announcement' ? tr("公告") : tr("通知")}
                 </Tag>
                 <span className="ucNoticeWhen">{fmtMinute(n.createdAt)}</span>
             </div>
@@ -271,15 +263,13 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
             <div className="ucNoticeDetailFoot">
                 {n.link ? (
                     <Button className="ucGoBtn" onClick={() => openNotice(n)}>
-                        去看看
-                    </Button>
+                        {tr("去看看")}</Button>
                 ) : null}
                 {n.isRead ? (
-                    <span className="ucHint">已读</span>
+                    <span className="ucHint">{tr("已读")}</span>
                 ) : (
                     <Button type="primary" onClick={() => markNoticesRead([n.id])}>
-                        标记为已读
-                    </Button>
+                        {tr("标记为已读")}</Button>
                 )}
                 {removeNoticeButton(n.id)}
             </div>
@@ -292,16 +282,15 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
         <div className="ucPane">
             <div className="ucPaneBar">
                 <span className="ucHint">
-                    公告在发布时会给你留一条通知；留言审核出结果（通过/驳回）也会发一条，带「去看看」直达那盏灯。
-                </span>
+                    {tr("公告在发布时会给你留一条通知；留言审核出结果（通过/驳回）也会发一条，带「去看看」直达那盏灯。")}</span>
                 <Button size="small" disabled={!noticeUnread} onClick={() => markNoticesRead()}>
-                    全部已读{noticeUnread ? `（${noticeUnread}）` : ''}
+                    {tr("全部已读")}{noticeUnread ? `（${noticeUnread}）` : ''}
                 </Button>
             </div>
             <List
                 loading={loadingTab && notices === null}
                 dataSource={notices || []}
-                locale={{ emptyText: <Empty description="暂无公告和通知" /> }}
+                locale={{ emptyText: <Empty description={tr("暂无公告和通知")} /> }}
                 renderItem={(n) => (
                     <List.Item
                         className="ucNoticeRow"
@@ -318,8 +307,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                               void openNotice(n)
                                           }}
                                       >
-                                          去看看
-                                      </Button>,
+                                          {tr("去看看")}</Button>,
                                   ]
                                 : []),
                             ...(n.isRead
@@ -333,8 +321,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                               void markNoticesRead([n.id])
                                           }}
                                       >
-                                          标记已读
-                                      </Button>,
+                                          {tr("标记已读")}</Button>,
                                   ]),
                             <span key="delete">{removeNoticeButton(n.id)}</span>,
                         ]}
@@ -344,7 +331,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                 <span className="ucItemTitle">
                                     {!n.isRead && <Badge status="processing" />}
                                     <Tag color={n.type === 'announcement' ? 'geekblue' : 'cyan'}>
-                                        {n.type === 'announcement' ? '公告' : '通知'}
+                                        {n.type === 'announcement' ? tr("公告") : tr("通知")}
                                     </Tag>
                                     {n.title}
                                 </span>
@@ -374,13 +361,13 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 message.error(errMsg(res))
                 return
             }
-            message.success(res.data.data || '已提交对话额度重置申请')
+            message.success(res.data.data || tr("已提交对话额度重置申请"))
             setApplyOpen(false)
             setApplyReason('')
             const after = await getMyQuota()
             if (ok(after)) setQuota(after.data.data)
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setApplying(false)
         }
@@ -394,27 +381,25 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
         <div className="ucPane">
             <div className="ucPaneBar">
                 <span className="ucHint">
-                    每轮对话算 1 轮（含检索）；用完就答不了了。这里提交的重置申请要管理员批准，
-                    批准后会通过站内通知告诉你。
-                </span>
+                    {tr("每轮对话算 1 轮（含检索）；用完就答不了了。这里提交的重置申请要管理员批准， 批准后会通过站内通知告诉你。")}</span>
                 <Button
                     size="small"
                     disabled={quota === null || !!quota?.pendingRequest}
                     onClick={() => setApplyOpen(true)}
                 >
-                    {quota?.pendingRequest ? '已提交申请' : '申请重置'}
+                    {quota?.pendingRequest ? tr("已提交申请") : tr("申请重置")}
                 </Button>
             </div>
             {quota === null ? (
-                <Empty description={loadingTab ? '读取中…' : '额度读不出来'} />
+                <Empty description={loadingTab ? tr("读取中…") : tr("额度读不出来")} />
             ) : (
                 <div className="ucQuota">
                     <div className="ucQuotaHead">
                         <span className="ucQuotaNums">
-                            {quotaBalanceText(quota.remaining, quota.limit)}
+                            {tr(quotaBalanceText(quota.remaining, quota.limit))}
                         </span>
                         <span className="ucQuotaHint">
-                            {quota.unlimited ? '管理员账号不限额' : quotaUsedHint(quota.used, quota.limit)}
+                            {quota.unlimited ? tr("管理员账号不限额") : tr(quotaUsedHint(quota.used, quota.limit))}
                         </span>
                     </div>
                     {!quota.unlimited && (
@@ -428,14 +413,14 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                     <div className="ucQuotaReq">
                         {quota.pendingRequest ? (
                             <>
-                                <div className="ucQuotaReqTitle">已提交重置申请，等管理员处理</div>
+                                <div className="ucQuotaReqTitle">{tr("已提交重置申请，等管理员处理")}</div>
                                 <div className="ucBodyText">
-                                    理由：{quota.pendingRequest.reason || '（没填）'}
+                                    {tr("理由：")}{quota.pendingRequest.reason || tr("（没填）")}
                                 </div>
                                 <div className="ucBodyTime">{fmtMinute(quota.pendingRequest.createdAt)}</div>
                             </>
                         ) : (
-                            <div className="ucQuotaHint">没有待处理的申请</div>
+                            <div className="ucQuotaHint">{tr("没有待处理的申请")}</div>
                         )}
                     </div>
                 </div>
@@ -451,7 +436,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
     const mailRow = (m: MessageItem, outgoing: boolean) => (
         <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}
             actions={[
-                <Button type="link" key="open" onClick={event => { event.stopPropagation(); void openMail(m, outgoing) }}>阅读</Button>,
+                <Button type="link" key="open" onClick={event => { event.stopPropagation(); void openMail(m, outgoing) }}>{tr("阅读")}</Button>,
                 <span key="delete">{removeMailButton(m.id, outgoing)}</span>,
             ]}>
             {peerAvatar(m)}
@@ -459,11 +444,11 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 <div className="ucMailHead">
                     <span className="ucMailPeer">
                         {!outgoing && !m.isRead && <Badge status="processing" />}
-                        {outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}
+                        {outgoing ? tr("发给 {0}", {"0": m.peerName}) : tr("来自 {0}", {"0": m.peerName})}
                     </span>
                     <span className="ucMailWhen">{fmtMinute(m.createdAt)}</span>
                 </div>
-                <div className={`ucMailSubject${m.title ? '' : ' isNone'}`}>{m.title || '（无标题）'}</div>
+                <div className={`ucMailSubject${m.title ? '' : ' isNone'}`}>{m.title || tr("（无标题）")}</div>
                 <div className="ucMailSnippet">{snippet(m.content)}</div>
             </div>
         </List.Item>
@@ -473,17 +458,17 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
         <div className="ucMailDetail">
             <div className="ucMailDetailBar">
                 <Button size="small" onClick={() => setOpened(null)}>
-                    返回{outgoing ? '发件箱' : '收件箱'}
+                    {tr("返回")}{outgoing ? tr("发件箱") : tr("收件箱")}
                 </Button>
             </div>
             <div className="ucMailDetailHead">
                 {peerAvatar(m)}
                 <div>
-                    <div className="ucMailPeer">{outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}</div>
+                    <div className="ucMailPeer">{outgoing ? tr("发给 {0}", {"0": m.peerName}) : tr("来自 {0}", {"0": m.peerName})}</div>
                     <div className="ucMailWhen">{fmtMinute(m.createdAt)}</div>
                 </div>
             </div>
-            <div className={`ucMailDetailTitle${m.title ? '' : ' isNone'}`}>{m.title || '（无标题）'}</div>
+            <div className={`ucMailDetailTitle${m.title ? '' : ' isNone'}`}>{m.title || tr("（无标题）")}</div>
             <div className="ucMailDetailBody">{m.content}</div>
             <div className="ucNoticeDetailFoot">{removeMailButton(m.id, outgoing)}</div>
         </div>
@@ -491,16 +476,16 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
 
     const composePane = (
         <div className="ucField ucFieldStack ucCompose">
-            <span className="ucLabel">写站内信</span>
+            <span className="ucLabel">{tr("写站内信")}</span>
             <Input
                 value={to}
-                placeholder="收件人账号或 UID"
+                placeholder={tr("收件人账号或 UID")}
                 onChange={(e) => setTo(e.target.value)}
             />
             <Input
                 value={mailTitle}
                 maxLength={60}
-                placeholder="信件标题（选填，例如：关于那篇架构文档）"
+                placeholder={tr("信件标题（选填，例如：关于那篇架构文档）")}
                 onChange={(e) => setMailTitle(e.target.value)}
             />
             <div className="counter-room">
@@ -509,23 +494,21 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                     rows={3}
                     maxLength={500}
                     showCount
-                    placeholder="正文（最多 500 字）"
+                    placeholder={tr("正文（最多 500 字）")}
                     onChange={(e) => setBody(e.target.value)}
                 />
             </div>
             <div className="ucFieldFoot">
                 <span className="ucHint">
                     {editingDraftId != null
-                        ? '正在编辑草稿：发送后这条草稿会自动删除'
-                        : '本站不提供用户名录，收件人请填对方的账号或 UID'}
+                        ? tr("正在编辑草稿：发送后这条草稿会自动删除")
+                        : tr("本站不提供用户名录，收件人请填对方的账号或 UID")}
                 </span>
                 <span className="ucComposeBtns">
                     <Button loading={savingDraft} disabled={sending} onClick={doSaveDraft}>
-                        存草稿
-                    </Button>
+                        {tr("存草稿")}</Button>
                     <Button className="ucSendBtn ucPrimaryBtn" type="primary" loading={sending} onClick={doSend}>
-                        发送
-                    </Button>
+                        {tr("发送")}</Button>
                 </span>
             </div>
         </div>
@@ -545,21 +528,20 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 items={[
                     {
                         key: 'in',
-                        label: `收件箱${inboxUnread ? `（未读 ${inboxUnread}）` : ''}`,
+                        label: inboxUnread ? tr("收件箱（未读 {count}）", {count: inboxUnread}) : tr("收件箱"),
                         children: (
                             <>
                                 <div className="ucPaneBar">
                                     <span className="ucHint">
-                                        {mailbox?.unread ? `未读 ${mailbox.unread} 封` : '没有未读'}
+                                        {mailbox?.unread ? tr("未读 {0} 封", {"0": mailbox.unread}) : tr("没有未读")}
                                     </span>
                                     <Button size="small" disabled={!mailbox?.unread} onClick={markMailRead}>
-                                        全部已读
-                                    </Button>
+                                        {tr("全部已读")}</Button>
                                 </div>
                                 <List
                                     loading={loadingTab && mailbox === null}
                                     dataSource={mailbox?.inbox || []}
-                                    locale={{ emptyText: <Empty description="收件箱是空的" /> }}
+                                    locale={{ emptyText: <Empty description={tr("收件箱是空的")} /> }}
                                     renderItem={(m) => mailRow(m, false)}
                                 />
                             </>
@@ -567,52 +549,49 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                     },
                     {
                         key: 'out',
-                        label: '发件箱',
+                        label: tr("发件箱"),
                         children: (
                             <List
                                 loading={loadingTab && mailbox === null}
                                 dataSource={mailbox?.outbox || []}
-                                locale={{ emptyText: <Empty description="还没发过站内信" /> }}
+                                locale={{ emptyText: <Empty description={tr("还没发过站内信")} /> }}
                                 renderItem={(m) => mailRow(m, true)}
                             />
                         ),
                     },
                     {
                         key: 'drafts',
-                        label: `草稿箱${drafts?.length ? `（${drafts.length}）` : ''}`,
+                        label: drafts?.length ? tr("草稿箱（{count}）", {count: drafts.length}) : tr("草稿箱"),
                         children: (
                             <>
                                 <div className="ucPaneBar">
-                                    <span className="ucHint">草稿只有你自己看得到；发送后会自动删除</span>
+                                    <span className="ucHint">{tr("草稿只有你自己看得到；发送后会自动删除")}</span>
                                     <Button size="small" onClick={newMail}>
-                                        写新信
-                                    </Button>
+                                        {tr("写新信")}</Button>
                                 </div>
                                 <List
                                     loading={loadingTab && drafts === null}
                                     dataSource={drafts || []}
-                                    locale={{ emptyText: <Empty description="没有草稿" /> }}
+                                    locale={{ emptyText: <Empty description={tr("没有草稿")} /> }}
                                     renderItem={(d) => (
                                         <List.Item
                                             className="ucDraftRow"
                                             actions={[
                                                 <Button type="link" key="edit" onClick={() => continueDraft(d)}>
-                                                    继续写
-                                                </Button>,
+                                                    {tr("继续写")}</Button>,
                                                 <Button type="link" danger key="del" onClick={() => dropDraft(d.id)}>
-                                                    删除
-                                                </Button>,
+                                                    {tr("删除")}</Button>,
                                             ]}
                                         >
                                             <div className="ucMailRowBox">
                                                 <div className="ucMailHead">
                                                     <span className="ucMailPeer">
-                                                        {d.toUsername ? `发给 ${d.toUsername}` : '（还没填收件人）'}
+                                                        {d.toUsername ? tr("发给 {0}", {"0": d.toUsername}) : tr("（还没填收件人）")}
                                                     </span>
                                                     <span className="ucMailWhen">{fmtMinute(d.updatedAt)}</span>
                                                 </div>
                                                 <div className={`ucMailSubject${d.title ? '' : ' isNone'}`}>
-                                                    {d.title || '（无标题）'}
+                                                    {d.title || tr("（无标题）")}
                                                 </div>
                                                 <div className="ucMailSnippet">{snippet(d.content)}</div>
                                             </div>
@@ -622,7 +601,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                             </>
                         ),
                     },
-                    { key: 'compose', label: '写站内信', children: composePane },
+                    { key: 'compose', label: tr("写站内信"), children: composePane },
                 ]}
             />
         </div>
@@ -649,29 +628,28 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 forceRender
             >
                 {!loggedIn ? (
-                    <Empty description="请先登录" />
+                    <Empty description={tr("请先登录")} />
                 ) : (
                     <Tabs
                         activeKey={tab}
                         onChange={onTabChange}
                         items={[
-                            { key: 'settings', label: '用户设置', children: settingsPane },
+                            { key: 'settings', label: tr("用户设置"), children: settingsPane },
                             {
                                 key: 'favorites',
-                                label: `收藏的文章${favorites ? `（${favorites.length}）` : ''}`,
+                                label: favorites ? tr("收藏的文章（{count}）", {count: favorites.length}) : tr("收藏的文章"),
                                 children: favoritesPane,
                             },
                             {
                                 key: 'talks',
-                                label: '留言记录',
+                                label: tr("留言记录"),
                                 children: talksPane,
                             },
                             {
                                 key: 'notices',
                                 label: (
                                     <Badge count={unreadOf(counts, 'notifications')} size="small" offset={[8, -2]}>
-                                        公告和通知
-                                    </Badge>
+                                        {tr("公告和通知")}</Badge>
                                 ),
                                 children: noticesPane,
                             },
@@ -679,12 +657,11 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                                 key: 'mailbox',
                                 label: (
                                     <Badge count={unreadOf(counts, 'messages')} size="small" offset={[8, -2]}>
-                                        站内信箱
-                                    </Badge>
+                                        {tr("站内信箱")}</Badge>
                                 ),
                                 children: mailboxPane,
                             },
-                            { key: 'quota', label: '对话额度', children: quotaPane },
+                            { key: 'quota', label: tr("对话额度"), children: quotaPane },
                         ]}
                     />
                 )}
@@ -692,9 +669,9 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
 
             <Modal
                 open={applyOpen}
-                title="申请重置对话额度"
-                okText="提交申请"
-                cancelText="再想想"
+                title={tr("申请重置对话额度")}
+                okText={tr("提交申请")}
+                cancelText={tr("再想想")}
                 confirmLoading={applying}
                 onOk={doApplyQuota}
                 onCancel={() => setApplyOpen(false)}
@@ -703,20 +680,19 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
                 width={520}
             >
                 <div className="ucField ucFieldStack">
-                    <span className="ucLabel">申请理由（选填）</span>
+                    <span className="ucLabel">{tr("申请理由（选填）")}</span>
                     <div className="counter-room">
                         <Input.TextArea
                             value={applyReason}
                             rows={3}
                             maxLength={500}
                             showCount
-                            placeholder="例如：想接着问那篇架构文档的问题"
+                            placeholder={tr("例如：想接着问那篇架构文档的问题")}
                             onChange={(e) => setApplyReason(e.target.value)}
                         />
                     </div>
                     <span className="ucHint">
-                        管理员批准后额度恢复到上限，你立刻可以继续问；驳回的话额度不变，还能再申请。
-                    </span>
+                        {tr("管理员批准后额度恢复到上限，你立刻可以继续问；驳回的话额度不变，还能再申请。")}</span>
                 </div>
             </Modal>
 
@@ -739,6 +715,7 @@ const UserCenterContent = ({open,onClose}: UserCenterProps) => {
 }
 
 export default function UserCenter(props: UserCenterProps) {
+    useLocale();
     const claims = getTokenClaims(useAuthToken())
     // Account changes remount private views and forms without placing credentials in React keys.
     const scope = claims ? `${claims.sub}:${claims.role}` : 'anonymous'

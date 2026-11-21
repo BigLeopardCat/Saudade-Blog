@@ -16,6 +16,8 @@ let route = 'A', account = 'account-one', categories = [], currentHost
 const enqueue = (kind, args) => { const request = {kind, args, ...deferred()}; requests.push(request); return request.promise }
 const jsx = (type, props, key) => ({type, props: props || {}, key})
 globalThis.__routeTest = {
+    useLocale: () => 'zh-CN',
+    t: (key, values = {}) => key.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match),
     jsx, motion: new Proxy({}, {get: (_, key) => key}), dayjs: () => ({format: () => '2026-10-23'}),
     useState: initial => currentHost.state(initial), useRef: initial => currentHost.ref(initial),
     useEffect: (fn, deps) => currentHost.effect(fn, deps), useParams: () => ({id: route}),

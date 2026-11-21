@@ -7,6 +7,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { useState } from 'react'
 import store from '../../../src/store'
 import Head from '../../../src/frontHome/Head'
+import LocaleBoundary from '../../../src/i18n/LocaleBoundary'
 
 function PublicShell() {
   const location = useLocation()
@@ -17,4 +18,4 @@ function PublicShell() {
     <main aria-label="首页内容" style={{ minHeight: '300vh', background: 'var(--washi-theme-bg)' }}>首页内容</main>
   </div>
 }
-createRoot(document.getElementById('root')!).render(<Provider store={store}><MemoryRouter><PublicShell /></MemoryRouter></Provider>)
+createRoot(document.getElementById('root')!).render(<LocaleBoundary><Provider store={store}><MemoryRouter><PublicShell /></MemoryRouter></Provider></LocaleBoundary>)

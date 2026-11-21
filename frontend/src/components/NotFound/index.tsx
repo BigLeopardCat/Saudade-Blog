@@ -1,3 +1,5 @@
+import LanguageSwitcher from '../LanguageSwitcher';
+import {t as tr, useLocale} from '../../i18n';
 import SeoHelmet from '../SeoHelmet'
 import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import {Link} from 'react-router-dom'
@@ -25,6 +27,7 @@ const bumps = [
 ]
 
 const NotFound = () => {
+    useLocale();
     useAutoThemeSwitch()
     const isDark = useIsDarkMode()
     const [run, setRun] = useState(0)
@@ -65,7 +68,7 @@ const NotFound = () => {
     }
 
     return <main className={`mascot-error${isDark ? ' frontDark' : ''}`} aria-labelledby="mascot-error-title">
-        <SeoHelmet title="页面不存在" noindex />
+        <SeoHelmet title={tr("页面不存在")} noindex /><LanguageSwitcher standalone />
         <div className="mascot-error__scene" data-ready={ready} data-reduced={reduced}
              data-expression={expression} aria-hidden="true">
             <div className="mascot-error__shadow" />
@@ -90,12 +93,12 @@ const NotFound = () => {
         </div>
         <div className="mascot-error__copy">
             <p className="mascot-error__eyebrow">404 · PAGE NOT FOUND</p>
-            <h1 id="mascot-error-title">呜…页面不见了</h1>
-            <p>找遍了这里，也没找到你要的那一页。<br />陪泠月喵回首页看看吧。</p>
+            <h1 id="mascot-error-title">{tr("呜…页面不见了")}</h1>
+            <p>{tr("找遍了这里，也没找到你要的那一页。")}<br />{tr("陪泠月喵回首页看看吧。")}</p>
             <div className="mascot-error__actions">
-                <Link to="/" className="mascot-error__home">带她回首页</Link>
+                <Link to="/" className="mascot-error__home">{tr("带她回首页")}</Link>
                 {!reduced && <button type="button" disabled={!ready || expression !== 'cry'}
-                    onClick={() => setRun(value => value + 1)}>再看一次</button>}
+                    onClick={() => setRun(value => value + 1)}>{tr("再看一次")}</button>}
             </div>
         </div>
     </main>

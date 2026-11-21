@@ -1,3 +1,4 @@
+import {t as tr} from '../../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {message} from "antd";
 import { useNavigate } from 'react-router-dom'
@@ -99,7 +100,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                     message.error(errMsg(res, '登录状态已失效，请重新登录'))
                 }
             })
-            .catch(() => message.error('网络异常，请稍后再试'))
+            .catch(() => message.error(tr("网络异常，请稍后再试")))
     }, [open, loggedIn])
 
     // 关窗清掉表单敏感字段（密码输入不该留在内存里等下次打开）
@@ -155,7 +156,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                     else message.error(errMsg(res))
                 }
             } catch {
-                message.error('网络异常，请稍后再试')
+                message.error(tr("网络异常，请稍后再试"))
             } finally {
                 setLoadingTab(false)
             }
@@ -181,7 +182,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             if (ok(res)) setDrafts(res.data.data || [])
             else message.error(errMsg(res))
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setLoadingTab(false)
         }
@@ -230,14 +231,14 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                 setProfile((p) => (p ? { ...p, avatar: url } : p))
                 setCropOpen(false)
                 setCropFile(null)
-                message.success('头像已更新')
+                message.success(tr("头像已更新"))
                 // 头部/留言等处的头像数据源在别处（redux 站点信息），派个事件让它知道要刷新
                 window.dispatchEvent(new CustomEvent('profile-change'))
             } else {
                 message.error(errMsg(res, '头像上传失败'))
             }
         } catch {
-            message.error('头像上传失败，请稍后再试')
+            message.error(tr("头像上传失败，请稍后再试"))
         } finally {
             setUploading(false)
         }
@@ -246,11 +247,11 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
     const saveNickname = async () => {
         const v = nickname.trim()
         if (!v) {
-            message.error('昵称不能为空')
+            message.error(tr("昵称不能为空"))
             return
         }
         if (v === (profile?.nickname || '')) {
-            message.info('昵称没有变化')
+            message.info(tr("昵称没有变化"))
             return
         }
         setSavingNick(true)
@@ -259,13 +260,13 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             if (ok(res)) {
                 setProfile(res.data.data)
                 setNickname(res.data.data?.nickname || v)
-                message.success('昵称已保存')
+                message.success(tr("昵称已保存"))
                 window.dispatchEvent(new CustomEvent('profile-change'))
             } else {
                 message.error(errMsg(res, '保存失败'))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setSavingNick(false)
         }
@@ -273,15 +274,15 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
 
     const savePassword = async () => {
         if (!pwdOld) {
-            message.error('请输入原密码')
+            message.error(tr("请输入原密码"))
             return
         }
         if (pwdNew.length < 8) {
-            message.error('新密码至少 8 位')
+            message.error(tr("新密码至少 8 位"))
             return
         }
         if (pwdNew !== pwdNew2) {
-            message.error('两次输入的新密码不一致')
+            message.error(tr("两次输入的新密码不一致"))
             return
         }
         setSavingPwd(true)
@@ -290,7 +291,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             if (ok(res)) {
                 const fresh = res.data.data?.token
                 if (fresh) localStorage.setItem('tokenKey', fresh)
-                message.success('密码已修改，其他设备上的登录状态已全部失效')
+                message.success(tr("密码已修改，其他设备上的登录状态已全部失效"))
                 setPwdOld('')
                 setPwdNew('')
                 setPwdNew2('')
@@ -298,7 +299,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                 message.error(errMsg(res, '修改失败'))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setSavingPwd(false)
         }
@@ -312,12 +313,12 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             if (ok(res)) {
                 // 写入成功 ⇒ 交给共享状态（列表当场摘掉那一行 + 详情页那颗★同时变）
                 if (!await applyLocalFavorite(res.data.data)) return
-                message.success('已取消收藏')
+                message.success(tr("已取消收藏"))
             } else {
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         }
     }
 
@@ -359,7 +360,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         }
     }
 
@@ -375,18 +376,18 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
 
     const doSend = async () => {
         if (!to.trim()) {
-            message.error('请填写收件人账号或 UID')
+            message.error(tr("请填写收件人账号或 UID"))
             return
         }
         if (!body.trim()) {
-            message.error('内容不能为空')
+            message.error(tr("内容不能为空"))
             return
         }
         setSending(true)
         try {
             const res = await sendMessage(to.trim(), mailTitle.trim(), body.trim())
             if (ok(res)) {
-                message.success('已发送')
+                message.success(tr("已发送"))
                 setMailTitle('')
                 setBody('')
                 // 发件箱立刻追一条（回包就是那条消息，不必重拉整个信箱）
@@ -408,7 +409,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                 message.error(errMsg(res, '发送失败'))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setSending(false)
         }
@@ -432,7 +433,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
 
     const doSaveDraft = async () => {
         if (!to.trim() && !mailTitle.trim() && !body.trim()) {
-            message.error('草稿是空的，先写点什么再存')
+            message.error(tr("草稿是空的，先写点什么再存"))
             return
         }
         setSavingDraft(true)
@@ -446,14 +447,14 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             })
             if (ok(res)) {
                 setEditingDraftId(res.data.data?.id ?? null)
-                message.success('草稿已保存')
+                message.success(tr("草稿已保存"))
                 // 草稿箱可能与写信页同时开着，存完立刻对齐（也把新草稿拉进列表）
                 loadDrafts()
             } else {
                 message.error(errMsg(res, '保存失败'))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         } finally {
             setSavingDraft(false)
         }
@@ -484,12 +485,12 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
             if (ok(res)) {
                 setDrafts((list) => (list || []).filter((d) => d.id !== id))
                 if (editingDraftId === id) setEditingDraftId(null)
-                message.success('草稿已删除')
+                message.success(tr("草稿已删除"))
             } else {
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         }
     }
 
@@ -503,7 +504,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            message.error(tr("网络异常，请稍后再试"))
         }
     }
 

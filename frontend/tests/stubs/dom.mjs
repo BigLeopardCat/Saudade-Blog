@@ -93,7 +93,10 @@ class Element {
   }
   removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
-  setAttribute(k, v) { this._attrs[k] = v; }
+  setAttribute(k, v) {
+    this._attrs[k] = String(v);
+    if (['title', 'alt', 'placeholder'].includes(k)) this[k] = String(v);
+  }
   getAttribute(k) { return this._attrs[k] ?? null; }
   addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
   removeEventListener(t, fn) { const a = this._listeners[t]; if (a) this._listeners[t] = a.filter(f => f !== fn); }
@@ -212,6 +215,9 @@ const document = {
 
 /** 装上 DOM 全局。返回 `{ document, Element }`，调用方一般用不到返回值。 */
 export function installDom() {
+  // Chinese fixtures are explicit; host OS and Node language must not change assertions.
+  Object.defineProperty(globalThis, 'navigator', {configurable: true,
+    value: {language: 'zh-CN', languages: ['zh-CN']}});
   // Layout and resize delivery are checked in Playwright; this harness wires events only.
   globalThis.matchMedia = media => ({media, matches: false, onchange: null,
     addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}});

@@ -131,7 +131,7 @@ assert(msgs[1].dataset.mid && msgs[1].dataset.finished === '1', 'agent 气泡已
 assert(!msgs[1].querySelector('.msg-text').classList.contains('msg-streaming'), '流式 class 已移除');
 assert(msgs[1].querySelector('.msg-text').textContent.includes('喵呜～测试回复'), '回复文本已渲染');
 assert(!!msgs[1].querySelector('.agent-process-body'), '过程行已渲染（🧭 计划帧）');
-assert(sendBtn.title === '发送' && !sendBtn.classList.contains('stop-mode'), '发送按钮已复位');
+assert(sendBtn.title === '发送消息' && sendBtn.getAttribute('aria-label') === '发送消息' && !sendBtn.classList.contains('stop-mode'), '发送按钮已复位', sendBtn.title);
 assert(input.disabled === false, '输入框已恢复');
 const histKeys = [...store.keys()].filter((k) => k.startsWith('chat_history_'));
 assert(histKeys.length > 0, '本地缓存已写入（键按会话分桶）', [...store.keys()]);

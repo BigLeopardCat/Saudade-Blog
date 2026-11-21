@@ -267,8 +267,8 @@ console.log('\n⑦ 三列锁死：两侧轨道等宽 ⇒ 中区结构性居中�
     ok(/<span className="readAuthorName">\{who\.name\}<\/span>/.test(tsx),
         '作者名包在 `.readAuthorName` 里（截断要有个元素可挂）');
     // 两个时间都是**本文数据**：发布时间用 createTime、更新时间用 updateTime
-    ok(/发布于 \{dayjs\(article\?\.createTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx)
-       && /更新于 \{dayjs\(article\?\.updateTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx),
+    ok(/\{tr\("发布于"\)\} \{dayjs\(article\?\.createTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx)
+       && /\{tr\("更新于"\)\} \{dayjs\(article\?\.updateTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx),
         '左区两个时间取自 createTime / updateTime（不是同一个值抄两遍）');
     // 右区那簇是**直接子项**（它自己占第三条轨道）—— 嵌进中区就跑进标题那一列了
     ok(/<div className="readStats">/.test(tsx) && /readInfo[\s\S]{0,60}readStats/.test(tsx) === false,

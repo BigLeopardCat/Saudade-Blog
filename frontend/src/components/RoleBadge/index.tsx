@@ -1,3 +1,4 @@
+import {t, useLocale} from '../../i18n';
 import React, { useId } from 'react'
 import { ROLE_LABEL } from '../../utils/auth'
 
@@ -92,10 +93,12 @@ const Sparkle: React.FC<{ cx: number; cy: number; r: number }> = ({ cx, cy, r })
 )
 
 export const RoleBadge: React.FC<RoleBadgeProps> = ({ role, size = 26, className, style }) => {
+    useLocale()
     const rawId = useId()
     const gid = `rb-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}-${role || 'x'}`
     const spec = (role && SPECS[role]) || FALLBACK
-    const label = (role && ROLE_LABEL[role]) || role || '—'
+    const label = role && Object.prototype.hasOwnProperty.call(ROLE_LABEL, role)
+        ? t(ROLE_LABEL[role]) : role || '—'
 
     const text = [spec.lead, spaced(label), spec.tail].filter(Boolean).join('  ')
     // 高度是唯一的尺寸输入，其余按 26px 基准等比缩放（换 size 不必改任何常驻样式）

@@ -1,4 +1,18 @@
 /* Static scenery, bounded water layer, and compositor-only lantern transforms. */
+.rz-language-control {
+  position: absolute; top: 28px; right: calc(5vw + 115px); z-index: 5;
+  button { color: #d7dcda; background: #081723bb; border: 1px solid #ba916570; border-radius: 8px; }
+}
+html[lang='en'] .rz-root.rz-cinematic .rz-ui {
+  .rz-masthead { letter-spacing: .035em; small { letter-spacing: .025em; max-width: 26ch; } }
+  .rz-title {
+    h1 { font-size: clamp(26px, 3.5vw, 54px); letter-spacing: .025em; max-width: 18ch; line-height: 1.2; }
+    p { letter-spacing: .025em; max-width: 34ch; }
+    .rz-chapter { letter-spacing: .08em; }
+  }
+  .rz-home-btn { letter-spacing: .03em; }
+}
+
 .rz-root.rz-cinematic {
   --rz-paper: #ece4d1;
   --rz-ink: #242e2f;
