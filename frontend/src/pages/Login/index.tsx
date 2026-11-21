@@ -182,9 +182,10 @@ const Login: React.FC = () => {
 
     return (
         <>
-            <SeoHelmet title={tr("登录")} url="/login" noindex /><LanguageSwitcher standalone />
+            <SeoHelmet title={tr("登录")} url="/login" noindex />
             {contextHolder}
             <div className={isDark ? 'login-page frontDark' : 'login-page'}>
+                <LanguageSwitcher standalone />
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
