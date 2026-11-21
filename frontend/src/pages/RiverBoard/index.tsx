@@ -1,3 +1,5 @@
+import LanguageSwitcher from '../../components/LanguageSwitcher';
+import {t as tr, useLocale} from '../../i18n';
 import SeoHelmet from '../../components/SeoHelmet';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./index.scss";
@@ -104,6 +106,7 @@ interface LanternMeta {
 /* 组件 */
 
 export default function RiverBoard() {
+    useLocale();
     const navigate = useNavigate();
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const layerRef = useRef<HTMLDivElement | null>(null);
@@ -923,7 +926,7 @@ export default function RiverBoard() {
                     }
                     role="button"
                     tabIndex={0}
-                    aria-label={`阅读${ln.author || "无名"}的河灯：${ln.msg.slice(0, 20)}`}
+                    aria-label={tr("阅读{0}的河灯：{1}", {"0": ln.author || "无名", "1": ln.msg.slice(0, 20)})}
                     onMouseEnter={() => {
                         nodesRef.current.get(ln.id)?.classList.add("rz-open");
                         const h = nodesRef.current.get(ln.id);
@@ -967,7 +970,7 @@ export default function RiverBoard() {
                             <div className="rz-msg">{ln.msg}</div>
                             {(ln.author || ln.time) && (
                                 <div className="rz-who">
-                                    {ln.author || "无名"} · {ln.time || ""}
+                                    {ln.author || tr("无名")} · {ln.time || ""}
                                 </div>
                             )}
                         </div>
@@ -980,36 +983,36 @@ export default function RiverBoard() {
 
     return (
         <>
-            <SeoHelmet title="留言板" url="/guestbook" />
+            <SeoHelmet title={tr("留言板")} url="/guestbook" /><div className="rz-language-control"><LanguageSwitcher /></div>
             <div className="rz-root rz-cinematic" data-scene-paused={!!modal || wishOpen || albumOpen || noticeOpen}>
             <img className="rz-landscape" src={riverImage} alt="" aria-hidden loading="eager" decoding="async" />
             <div className="rz-fog rz-fog-far" aria-hidden /><div className="rz-fog rz-fog-near" aria-hidden />
             <div className="rz-scene-shade" aria-hidden />
             <canvas ref={canvasRef} className="rz-canvas" aria-hidden />
-            <div ref={layerRef} className="rz-lanterns" role="group" aria-label="河面上的留言，选择一盏灯阅读">
+            <div ref={layerRef} className="rz-lanterns" role="group" aria-label={tr("河面上的留言，选择一盏灯阅读")}>
                 {lanternNodes}
             </div>
             <div className="rz-ui">
-                <div className="rz-masthead"><span className="rz-brand-seal">灯</span><span>河灯寄语<small>一水明灯 · 千里同心</small></span></div>
-                <button className="rz-home-btn" type="button" onClick={() => navigate("/")}>返回博客</button>
-                <header className="rz-title"><span className="rz-chapter">夜渡 · 一方留白</span><h1>此心为灯<span>照见远方</span></h1><p>把未说的话，托付给一盏灯。<br />山河会记得，星月会听见。</p><span className="rz-title-rule" /></header>
+                <div className="rz-masthead"><span className="rz-brand-seal">{tr("灯")}</span><span>{tr("河灯寄语")}<small>{tr("一水明灯 · 千里同心")}</small></span></div>
+                <button className="rz-home-btn" type="button" onClick={() => navigate("/")}>{tr("返回博客")}</button>
+                <header className="rz-title"><span className="rz-chapter">{tr("夜渡 · 一方留白")}</span><h1>{tr("此心为灯")}<span>{tr("照见远方")}</span></h1><p>{tr("把未说的话，托付给一盏灯。")}<br />{tr("山河会记得，星月会听见。")}</p><span className="rz-title-rule" /></header>
                 <div className="rz-bottom-bar">
-                    <div className="rz-invitation"><span className="rz-live-dot" />一盏灯，一段人间<small role="status">{boardStatus === "loading" ? "正在打捞留言 · 示意河灯" : boardStatus === "error" ? <>留言加载失败 · 当前为示意河灯 <button type="button" onClick={() => setBoardReload(n => n + 1)}>重试</button></> : lanterns.length ? "轻触河灯，读一段心事" : "河上尚无人留灯，愿你是第一位"}</small></div>
-                    <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}>灯影集</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>点一盏河灯</button></div>
+                    <div className="rz-invitation"><span className="rz-live-dot" />{tr("一盏灯，一段人间")}<small role="status">{boardStatus === "loading" ? tr("正在打捞留言 · 示意河灯") : boardStatus === "error" ? <>{tr("留言加载失败 · 当前为示意河灯")} <button type="button" onClick={() => setBoardReload(n => n + 1)}>{tr("重试")}</button></> : lanterns.length ? tr("轻触河灯，读一段心事") : tr("河上尚无人留灯，愿你是第一位")}</small></div>
+                    <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}>{tr("灯影集")}</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>{tr("点一盏河灯")}</button></div>
                 </div>
             </div>
             {wishOpen && (
-                <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label="点一盏河灯">
+                <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label={tr("点一盏河灯")}>
                     <div
                         className="rz-modal-box rz-wish-box"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <button type="button" className="rz-fold" aria-label="关闭放灯窗口" disabled={wishBusy} onClick={closeWishFlow}>暂搁</button>
-                        {!wishDone && <p className="rz-journey" aria-label={`放灯进度：第${wishStep + 1}步，共三步`}>{["一 · 择灯", "二 · 钤印", "三 · 寄语"].map((text, step) => <span key={text} aria-current={wishStep === step ? "step" : undefined}>{text}</span>)}</p>}
+                        <button type="button" className="rz-fold" aria-label={tr("关闭放灯窗口")} disabled={wishBusy} onClick={closeWishFlow}>{tr("暂搁")}</button>
+                        {!wishDone && <p className="rz-journey" aria-label={tr("放灯进度：第{0}步，共三步", {"0": wishStep + 1})}>{[tr("一 · 择灯"), tr("二 · 钤印"), tr("三 · 寄语")].map((text, step) => <span key={text} aria-current={wishStep === step ? "step" : undefined}>{text}</span>)}</p>}
                         {wishStep === 0 && (
                             <div className="rz-wish-step">
-                                <h3 className="rz-wish-title">点一盏河灯</h3>
-                                <p className="rz-wish-sub">先挑一盏喜欢的灯</p>
+                                <h3 className="rz-wish-title">{tr("点一盏河灯")}</h3>
+                                <p className="rz-wish-sub">{tr("先挑一盏喜欢的灯")}</p>
                                 <div className="rz-lamp-grid">
                                     {[0, 1, 2].map((lv) => (
                                         <button
@@ -1020,24 +1023,22 @@ export default function RiverBoard() {
                                             onClick={() => setWishV(lv)}
                                         >
                                             <LanternArt variant={lv} />
-                                            <span>{LAMP_NAMES[lv]}</span>
+                                            <span>{tr(LAMP_NAMES[lv])}</span>
                                         </button>
                                     ))}
                                 </div>
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-ghost" onClick={closeWishFlow}>
-                                        再想想
-                                    </button>
+                                        {tr("再想想")}</button>
                                     <button type="button" className="rz-wish-primary" onClick={() => setWishStep(1)}>
-                                        下一程
-                                    </button>
+                                        {tr("下一程")}</button>
                                 </div>
                             </div>
                         )}
                         {wishStep === 1 && (
                             <div className="rz-wish-step">
-                                <h3 className="rz-wish-title">选一枚印章</h3>
-                                <p className="rz-wish-sub">为这盏灯盖一枚心印</p>
+                                <h3 className="rz-wish-title">{tr("选一枚印章")}</h3>
+                                <p className="rz-wish-sub">{tr("为这盏灯盖一枚心印")}</p>
                                 <div className="rz-cat-grid">
                                     {CATS.map((c) => (
                                         <button
@@ -1050,33 +1051,31 @@ export default function RiverBoard() {
                                             <span className="rz-seal rz-cat-seal">{c}</span>
                                             <span className="rz-cat-name">
                                                 <b>
-                                                    {c} · {CAT_INFO[c].name}
+                                                    {c} · {tr(CAT_INFO[c].name)}
                                                 </b>
-                                                <i>{CAT_INFO[c].desc.replace("，", "，\n")}</i>
+                                                <i>{tr(CAT_INFO[c].desc).replace("，", "，\n")}</i>
                                             </span>
                                         </button>
                                     ))}
                                 </div>
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-ghost" onClick={() => setWishStep(0)}>
-                                        上一步
-                                    </button>
+                                        {tr("上一步")}</button>
                                     <button type="button" className="rz-wish-primary" onClick={() => setWishStep(2)}>
-                                        下一程
-                                    </button>
+                                        {tr("下一程")}</button>
                                 </div>
                             </div>
                         )}
                         {wishStep === 2 && !wishDone && (
                             <div className="rz-wish-step">
-                                <h3 className="rz-wish-title">以言载灯</h3>
-                                <p className="rz-wish-sub">点亮的是灯，留下的是心</p>
+                                <h3 className="rz-wish-title">{tr("以言载灯")}</h3>
+                                <p className="rz-wish-sub">{tr("点亮的是灯，留下的是心")}</p>
                                 <textarea
                                     className="rz-wish-input"
-                                    aria-label="想寄出的心愿"
+                                    aria-label={tr("想寄出的心愿")}
                                     value={wishText}
                                     onChange={(e) => setWishText(e.target.value.slice(0, 200))}
-                                    placeholder="此刻想说的话…"
+                                    placeholder={tr("此刻想说的话…")}
                                     rows={4}
                                     maxLength={200}
                                 />
@@ -1085,32 +1084,30 @@ export default function RiverBoard() {
                                 <div className="rz-wish-author-row">
                                     <input
                                         className="rz-wish-author"
-                                        aria-label="留名"
+                                        aria-label={tr("留名")}
                                         value={wishAuthor}
                                         onChange={(e) => setWishAuthor(e.target.value.slice(0, 20))}
-                                        placeholder="留名（默认当前账号昵称）"
+                                        placeholder={tr("留名（默认当前账号昵称）")}
                                         maxLength={20}
                                     />
                                     <button
                                         type="button"
                                         className={"rz-wish-anon" + (wishAuthor.trim() === "" ? " on" : "")}
                                         onClick={() => setWishAuthor("")}
-                                        title="匿名放灯：清空留名，归入无名"
+                                        title={tr("匿名放灯：清空留名，归入无名")}
                                     >
-                                        匿名
-                                    </button>
+                                        {tr("匿名")}</button>
                                 </div>
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-ghost" disabled={wishBusy} onClick={() => setWishStep(1)}>
-                                        上一步
-                                    </button>
+                                        {tr("上一步")}</button>
                                     <button
                                         type="button"
                                         className="rz-wish-primary"
                                         disabled={!wishText.trim() || wishBusy}
                                         onClick={dropLantern}
                                     >
-                                        {wishBusy ? "放下中…" : "放下河灯"}
+                                        {wishBusy ? tr("放下中…") : tr("放下河灯")}
                                     </button>
                                 </div>
                             </div>
@@ -1118,12 +1115,10 @@ export default function RiverBoard() {
                         {wishDone && (
                             <div className="rz-wish-step rz-wish-done">
                                 <div className="rz-wish-done-glow" />
-                                <h3 className="rz-wish-title">灯已入河</h3>
+                                <h3 className="rz-wish-title">{tr("灯已入河")}</h3>
                                 {wishPending ? (
                                     <p className="rz-wish-sub">
-                                        灯入待审，通过后即在河面公开点亮。
-                                        可到灯影集「我的河灯」查看状态或收回
-                                    </p>
+                                        {tr("灯入待审，通过后即在河面公开点亮。 可到灯影集「我的河灯」查看状态或收回")}</p>
                                 ) : (
                                     <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
                                 )}
@@ -1156,8 +1151,7 @@ export default function RiverBoard() {
                                             requestAnimationFrame(() => openWish(again)); // 气泡 + 弹窗详情
                                         }}
                                     >
-                                        再看一眼
-                                    </button>
+                                        {tr("再看一眼")}</button>
                                 </div>
                             </div>
                         )}
@@ -1165,43 +1159,40 @@ export default function RiverBoard() {
                 </div>
             )}
             {noticeOpen && (
-                <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="请先登录">
+                <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label={tr("请先登录")}>
                     <div className="rz-modal-box rz-notice-box" onClick={(e) => e.stopPropagation()}>
-                        <span className="rz-paper-heading" aria-hidden>渡口小笺</span>
-                        <h3 className="rz-notice-title">请先登录</h3>
+                        <span className="rz-paper-heading" aria-hidden>{tr("渡口小笺")}</span>
+                        <h3 className="rz-notice-title">{tr("请先登录")}</h3>
                         <div className="rz-notice-body">
-                            <p>请先登录后再发布留言。</p>
+                            <p>{tr("请先登录后再发布留言。")}</p>
                         </div>
                         <div className="rz-notice-foot">
                             <button type="button" className="rz-wish-primary" onClick={() => setNoticeOpen(false)}>
-                                暂不登录
-                            </button>
+                                {tr("暂不登录")}</button>
                             <button type="button" className="rz-wish-primary" onClick={() => navigate("/login")}>
-                                去登录
-                            </button>
+                                {tr("去登录")}</button>
                         </div>
                     </div>
                 </div>
             )}
             {albumOpen && (
-                <div className="rz-modal rz-album-modal" onClick={() => setAlbumOpen(false)} role="dialog" aria-modal="true" aria-label="灯影集">
+                <div className="rz-modal rz-album-modal" onClick={() => setAlbumOpen(false)} role="dialog" aria-modal="true" aria-label={tr("灯影集")}>
                     <div className="rz-album-box" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" className="rz-fold" aria-label="关闭灯影集" onClick={() => setAlbumOpen(false)}>合卷</button>
+                        <button type="button" className="rz-fold" aria-label={tr("关闭灯影集")} onClick={() => setAlbumOpen(false)}>{tr("合卷")}</button>
                         <button
                             className={"rz-album-find" + (albumSearch ? " on" : "")}
                             type="button"
                             onClick={() => setAlbumSearch((s) => !s)}
                         >
-                            寻灯
-                        </button>
-                        <h3 className="rz-album-title">灯影集</h3>
+                            {tr("寻灯")}</button>
+                        <h3 className="rz-album-title">{tr("灯影集")}</h3>
                         {albumSearch && (
                             <div className="rz-album-search">
                                 <input
                                     value={albumQuery}
                                     onChange={(e) => setAlbumQuery(e.target.value)}
-                                    placeholder="循心愿、留名或心印寻灯…"
-                                    aria-label="在灯影集中寻灯"
+                                    placeholder={tr("循心愿、留名或心印寻灯…")}
+                                    aria-label={tr("在灯影集中寻灯")}
                                 />
                             </div>
                         )}
@@ -1217,7 +1208,7 @@ export default function RiverBoard() {
                                     }
                                 }}
                             >
-                                时序{albumTabs === "time" && (albumTimeAsc ? "↑" : "↓")}
+                                {tr("时序")}{albumTabs === "time" && (albumTimeAsc ? "↑" : "↓")}
                             </button>
                             <button
                                 type="button"
@@ -1232,11 +1223,9 @@ export default function RiverBoard() {
                                     }
                                 }}
                             >
-                                我的河灯
-                            </button>
+                                {tr("我的河灯")}</button>
                             <button type="button" className={albumTabs === "cat" ? "sel" : ""} onClick={() => setAlbumTabs("cat")}>
-                                类型
-                            </button>
+                                {tr("类型")}</button>
                         </div>
                         {albumTabs === "cat" && (
                             <div className="rz-album-catf">
@@ -1262,17 +1251,17 @@ export default function RiverBoard() {
                                     <span className="rz-seal rz-album-seal">{it.cat}</span>
                                     <span className="rz-album-msg">{it.msg}</span>
                                     <span className="rz-album-meta">
-                                        {it.author || "无名"} · {it.time}
+                                        {it.author || tr("无名")} · {it.time}
                                         {albumTabs === "mine" && it.approved === 0 && (
-                                            <i className="rz-minetag rz-wait" title="等待审核，通过后才在河面公开点亮">待审</i>
+                                            <i className="rz-minetag rz-wait" title={tr("等待审核，通过后才在河面公开点亮")}>{tr("待审")}</i>
                                         )}
                                         {albumTabs === "mine" && it.approved === 2 && (
-                                            <i className="rz-minetag rz-no" title="审核未通过，仅在「我的河灯」可见">未通过</i>
+                                            <i className="rz-minetag rz-no" title={tr("审核未通过，仅在「我的河灯」可见")}>{tr("未通过")}</i>
                                         )}
                                     </span>
                                     {albumTabs === "mine" && it.approved === 2 && (
                                         <span className="rz-album-reason">
-                                            驳回理由：{it.reason || "未填写"}
+                                            {tr("驳回理由：")}{it.reason || tr("未填写")}
                                         </span>
                                     )}
                                 </button>
@@ -1280,8 +1269,8 @@ export default function RiverBoard() {
                             {albumSorted.length === 0 && (
                                 <p className="rz-album-empty">
                                     {albumTabs === "mine" && !localStorage.getItem("tokenKey")
-                                        ? "登录后可在「我的河灯」查看与收回所放河灯"
-                                        : "卷中暂无留言"}
+                                        ? tr("登录后可在「我的河灯」查看与收回所放河灯")
+                                        : tr("卷中暂无留言")}
                                 </p>
                             )}
                         </div>
@@ -1290,31 +1279,31 @@ export default function RiverBoard() {
             )}
             <div className="rz-veg" />
             {modal && (
-                <div className="rz-modal" onClick={dismissModal} role="dialog" aria-modal="true" aria-label="心愿细读">
+                <div className="rz-modal" onClick={dismissModal} role="dialog" aria-modal="true" aria-label={tr("心愿细读")}>
                     <div className="rz-modal-box" onClick={(e) => e.stopPropagation()}>
                         <div className="rz-scroll">
                             <div className="rz-msg">{modal.msg}</div>
                             {(modal.author || modal.time) && (
                                 <div className="rz-who">
-                                    {modal.author || "无名"} · {modal.time || ""}
+                                    {modal.author || tr("无名")} · {modal.time || ""}
                                 </div>
                             )}
                             {modal.approved === 2 && (
                                 <div className="rz-reject">
-                                    <span className="rz-reject-label">驳回理由</span>
-                                    {modal.reason || "未填写"}
+                                    <span className="rz-reject-label">{tr("驳回理由")}</span>
+                                    {modal.reason || tr("未填写")}
                                 </div>
                             )}
                             {modal.mine && modal.talkKey && (
                                 <div className="rz-mine-row">
                                     {modal.approved === 0 && (
-                                        <span className="rz-minetag rz-wait">待审</span>
+                                        <span className="rz-minetag rz-wait">{tr("待审")}</span>
                                     )}
                                     {modal.approved === 2 && (
-                                        <span className="rz-minetag rz-no">未通过</span>
+                                        <span className="rz-minetag rz-no">{tr("未通过")}</span>
                                     )}
                                     {modal.approved !== 0 && modal.approved !== 2 && (
-                                        <span className="rz-minetag rz-ok">已点亮</span>
+                                        <span className="rz-minetag rz-ok">{tr("已点亮")}</span>
                                     )}
                                     <button
                                         type="button"
@@ -1323,17 +1312,17 @@ export default function RiverBoard() {
                                         onClick={reclaimLantern}
                                         title={
                                             reclaimArm
-                                                ? "再点一次确认：河灯将从灯影集与河面移去，不可恢复"
-                                                : "收回这盏河灯（删除这条留言）"
+                                                ? tr("再点一次确认：河灯将从灯影集与河面移去，不可恢复")
+                                                : tr("收回这盏河灯（删除这条留言）")
                                         }
                                     >
-                                        {reclaimBusy ? "收回中…" : reclaimArm ? "确认收回？" : "收回河灯"}
+                                        {reclaimBusy ? tr("收回中…") : reclaimArm ? tr("确认收回？") : tr("收回河灯")}
                                     </button>
                                     {reclaimErr && <span className="rz-reclaim-err">{reclaimErr}</span>}
                                 </div>
                             )}
                             <button className="rz-modal-close" type="button" onClick={closeModal}>
-                                <span>关闭</span>
+                                <span>{tr("关闭")}</span>
                             </button>
                         </div>
                         <span className="rz-seal">{modal.cat}</span>
@@ -1342,7 +1331,7 @@ export default function RiverBoard() {
             )}
             {!ready && <div className="rz-boot">
                 <div className="rz-boot-glow" />
-                <p>河灯将明 · 稍候</p>
+                <p>{tr("河灯将明 · 稍候")}</p>
             </div>}
             </div>
             <Suspense fallback={null}><Live2dAgent /></Suspense>

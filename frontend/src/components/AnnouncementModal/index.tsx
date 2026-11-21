@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import { Modal } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { useIsDarkMode } from '../../theme'
@@ -20,6 +21,7 @@ const fmtCnTime = (s: string) => {
 
 // Only acknowledgment marks an announcement read; closing it just dismisses this page session.
 const AnnouncementModal = () => {
+    useLocale();
 
     const isDark = useIsDarkMode()
     const [pending, setPending] = useState<PendingAnnouncement | null>(null)
@@ -103,7 +105,7 @@ const AnnouncementModal = () => {
             }}
         >
 
-            <div className="washiScroll" tabIndex={0} aria-label="公告内容">
+            <div className="washiScroll" tabIndex={0} aria-label={tr("公告内容")}>
 
                 <div className="washiText" style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>
                     <StickerText text={pending?.content || ''} />
@@ -126,8 +128,7 @@ const AnnouncementModal = () => {
                         fontSize: 15,
                     }}
                 >
-                    我知道了
-                </button>
+                    {tr("我知道了")}</button>
             </div>
         </Modal>
     )

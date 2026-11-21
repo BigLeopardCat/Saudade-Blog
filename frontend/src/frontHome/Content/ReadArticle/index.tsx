@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import './index.sass'
 import {useEffect, useState, useRef} from "react";
 import {useParams} from "react-router-dom";
@@ -95,13 +96,14 @@ const ArticleNotFound = ({id}: {id: string}) => (
     <div role="status" style={{minHeight:'70vh',display:'flex',flexDirection:'column',
         justifyContent:'center',alignItems:'center',gap:16,padding:24,textAlign:'center',overflowWrap:'anywhere'}}>
         <p>404</p>
-        <h1 style={{fontSize:28}}>文章不存在或链接有误</h1>
-        <p>未找到 <code>/article/{id}</code>，文章可能已删除或下架，请检查链接。</p>
-        <a href="/">← 返回首页</a>
+        <h1 style={{fontSize:28}}>{tr("文章不存在或链接有误")}</h1>
+        <p>{tr("未找到")} <code>/article/{id}</code>{tr("，文章可能已删除或下架，请检查链接。")}</p>
+        <a href="/">{tr("← 返回首页")}</a>
     </div>
 )
 
 const ArticleResource = ({id}: {id: string}) => {
+    useLocale();
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const scope = useRef(createRequestScope()).current
@@ -207,7 +209,7 @@ const ArticleResource = ({id}: {id: string}) => {
                 message.error(errMsg(res))
             }
         } catch {
-            if (token.current()) message.error('网络异常，请稍后再试')
+            if (token.current()) message.error(tr("网络异常，请稍后再试"))
         } finally {
             if (token.current()) { likeLock.current = false; setLikeBusy(false) }
         }
@@ -233,7 +235,7 @@ const ArticleResource = ({id}: {id: string}) => {
     const toggleFavorite = async () => {
         if (!id || favoriteLock.current) return
         if (!getToken()) {
-            message.warning('登录后才能收藏')
+            message.warning(tr("登录后才能收藏"))
             return
         }
         const accountToken = getToken()
@@ -246,12 +248,12 @@ const ArticleResource = ({id}: {id: string}) => {
             if (ok(res)) {
                 // Favorites are shared with the personal center, not duplicated locally.
                 if (!await applyLocalFavorite(res.data.data)) return
-                message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
+                message.success(faved ? tr("已取消收藏") : tr("已收藏（可在「设置 → 收藏的文章」里查看）"))
             } else {
                 message.error(errMsg(res))
             }
         } catch {
-            if (token.current() && getToken() === accountToken) message.error('网络异常，请稍后再试')
+            if (token.current() && getToken() === accountToken) message.error(tr("网络异常，请稍后再试"))
         } finally {
             if (token.current()) { favoriteLock.current = false; setFavBusy(false) }
         }
@@ -311,26 +313,26 @@ const ArticleResource = ({id}: {id: string}) => {
 
     return (
         <div className='readContainer'>
-            <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" noindex={notFound} />
+            <SeoHelmet title={notFound ? tr("文章不存在") : (article ? article.noteTitle : tr("文章加载中"))} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" noindex={notFound} />
             {notFound ? (
                 <ArticleNotFound id={id} />
             ) : loadError && !article ? (
                 <div role="alert" style={{padding: '25vh 24px', textAlign: 'center'}}>
-                    <p>文章加载失败，请稍后重试</p>
-                    <button type="button" onClick={() => loadArticle()}>重新加载</button>
+                    <p>{tr("文章加载失败，请稍后重试")}</p>
+                    <button type="button" onClick={() => loadArticle()}>{tr("重新加载")}</button>
                 </div>
             ) : isLoading ? (
-                <div className="readPending" role="status" aria-label="正在加载文章">
+                <div className="readPending" role="status" aria-label={tr("正在加载文章")}>
                     <img className="readPendingArt" src={articleLoading} alt="" aria-hidden="true"/>
                 </div>
             ) : (
                 <>
-                    {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
+                    {loadError && <p role="alert">{tr("文章同步失败，当前显示上次加载的内容。")}<button type="button" onClick={() => loadArticle({silent: true})}>{tr("重试")}</button></p>}
                     <div className="readCover">
                         <div className="readCoverMedia" style={{aspectRatio: DETAIL_ASPECT}}>
                             <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
                             {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
-                                alt="文章封面" loading="eager" pending={<img className="readCoverLoading" src="/loading.svg" alt="" aria-hidden="true" width={40} height={40}/>}
+                                alt={tr("文章封面")} loading="eager" pending={<img className="readCoverLoading" src="/loading.svg" alt="" aria-hidden="true" width={40} height={40}/>}
                                 style={coverCropStyle(cropFromRow(article))}/>}
                         </div>
                         <motion.div className="readInfoFrame"
@@ -345,8 +347,8 @@ const ArticleResource = ({id}: {id: string}) => {
                                         <span className="readAuthorName">{who.name}</span>
                                     </Flex>
                                     <div className="readTimes">
-                                        <span>发布于 {dayjs(article?.createTime).format("YYYY-MM-DD")}</span>
-                                        <span>更新于 {dayjs(article?.updateTime).format("YYYY-MM-DD")}</span>
+                                        <span>{tr("发布于")} {dayjs(article?.createTime).format("YYYY-MM-DD")}</span>
+                                        <span>{tr("更新于")} {dayjs(article?.updateTime).format("YYYY-MM-DD")}</span>
                                     </div>
                                 </div>
                                 <div className="readMain">
@@ -357,16 +359,16 @@ const ArticleResource = ({id}: {id: string}) => {
                                         type="button"
                                         className={`readStat readFavBtn${faved ? ' isFaved' : ''}`}
                                         disabled={favBusy}
-                                        title={faved ? '取消收藏' : '收藏'}
+                                        title={faved ? tr("取消收藏") : tr("收藏")}
                                         onClick={toggleFavorite}
                                     >
                                         {faved
                                             ? <StarIcon size={14} />
                                             : <StarOutlineIcon size={14} />}
-                                        <span className="readFavLabel">{faved ? '已收藏' : '收藏'}</span>
+                                        <span className="readFavLabel">{faved ? tr("已收藏") : tr("收藏")}</span>
                                     </button>
                                     {views !== null && (
-                                        <span className="readStat readViews" title="累计阅读量">
+                                        <span className="readStat readViews" title={tr("累计阅读量")}>
                                             <EyeIcon size={14} />
                                             <span className="readViewsNum">{views}</span>
                                         </span>
@@ -376,14 +378,14 @@ const ArticleResource = ({id}: {id: string}) => {
                                         className={`readStat readLikeBtn${liked ? ' isLiked' : ''}`}
                                         disabled={likeBusy}
                                         aria-pressed={liked}
-                                        title={liked ? '取消点赞' : '点赞'}
+                                        title={liked ? tr("取消点赞") : tr("点赞")}
                                         onClick={toggleLike}
                                     >
                                         {liked ? <HeartIcon size={14} /> : <HeartOutlineIcon size={14} />}
                                         {likes !== null && <span className="readLikeNum">{likes}</span>}
                                     </button>
                                     {comments !== null && (
-                                        <span className="readStat readComments" title="讨论数">
+                                        <span className="readStat readComments" title={tr("讨论数")}>
                                             <CommentIcon size={14} />
                                             <span className="readCommentNum">{comments}</span>
                                         </span>
@@ -407,7 +409,7 @@ const ArticleResource = ({id}: {id: string}) => {
                         </motion.div>
                     </div>
                     <div className='readDescription'>
-                        <span className="readDescriptionLabel">内容概述:</span>
+                        <span className="readDescriptionLabel">{tr("内容概述:")}</span>
                         <p>{article?.description}</p>
                     </div>
                     <div className='readContent markdown-body'>
@@ -438,11 +440,12 @@ const ArticleResource = ({id}: {id: string}) => {
 // React Router reuses the route element on parameter changes. A keyed resource
 // isolates state immediately, including A → B → A before the first A settles.
 const ReadArticle = () => {
+    useLocale();
     const {id = ''} = useParams()
     // Reject the complete route parameter; never silently parse a valid numeric prefix.
     if (!/^[0-9]+$/.test(id) || Number(id) < 1 || Number(id) > 2_147_483_647) {
         return <div className="readContainer">
-            <SeoHelmet title="文章不存在" url={`/article/${id}`} noindex />
+            <SeoHelmet title={tr("文章不存在")} url={`/article/${id}`} noindex />
             <ArticleNotFound id={id} />
         </div>
     }

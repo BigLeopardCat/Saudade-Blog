@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import {Avatar, ConfigProvider, Modal, theme as antTheme} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
@@ -6,6 +7,7 @@ import {debounce} from 'lodash';
 import {useAutoHideHeader} from './useAutoHideHeader';
 import ScenePicker from "../../components/ScenePicker";
 import SceneIcon from "../../components/SceneIcon";
+import LanguageSwitcher from '../../components/LanguageSwitcher';
 
 import TopMao from "../../components/TopMao";
 import {fetchCategories} from "../../store/components/categories.tsx";
@@ -31,6 +33,7 @@ interface HeadProps {
 }
 
 const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
+    useLocale();
     const [showStatus, setShowStatus] = useState(false);
     const [phoneBarShow, setPhoneBarShow] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
@@ -186,7 +189,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         <span className="avatarDotWrap" style={{width: size, height: size}}>
             {node}
             {isLogin === 1 && unreadTotal > 0 && (
-                <span className="avatarDot" aria-label={`有 ${unreadTotal} 条未读`} />
+                <span className="avatarDot" aria-label={tr("有 {0} 条未读", {"0": unreadTotal})} />
             )}
         </span>
     )
@@ -197,65 +200,57 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
     return (
         <>
-            <button type="button" className="navigationReveal" aria-label="显示导航栏" tabIndex={navigation.hidden ? 0 : -1} data-active={navigation.hidden} onPointerEnter={navigation.onEdgeEnter} onPointerLeave={navigation.onEdgeLeave} onFocus={navigation.reveal}/>
+            <button type="button" className="navigationReveal" aria-label={tr("显示导航栏")} tabIndex={navigation.hidden ? 0 : -1} data-active={navigation.hidden} onPointerEnter={navigation.onEdgeEnter} onPointerLeave={navigation.onEdgeLeave} onFocus={navigation.reveal}/>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
             <div id="public-navigation-drawer" aria-hidden={!phoneBarShow} className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
-                    {phoneBarShow && <button type="button" className="sceneTool drawerClose" aria-label="关闭导航菜单" onClick={closePhoneBar}><SceneIcon name="close"/></button>}
+                    {phoneBarShow && <button type="button" className="sceneTool drawerClose" aria-label={tr("关闭导航菜单")} onClick={closePhoneBar}><SceneIcon name="close"/></button>}
                     <div className="barLogo" onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={100} />, 100)}
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>设置</div>
-                                <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
+                                <div className="theme-btn" onClick={openUserCenter}>{tr("设置")}</div>
+                                <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>{tr("退出")}</div>
                                 </>
                             ) : (
-                                <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("login"); }}>登录</div>
+                                <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("login"); }}>{tr("登录")}</div>
                             )}
                         </div>
                     </div>
-                    <input className="mSearchInput" type="search" placeholder="搜索..." onClick={() => { closePhoneBar(); showModal(); }} readOnly />
+                    <input className="mSearchInput" type="search" placeholder={tr("搜索...")} onClick={() => { closePhoneBar(); showModal(); }} readOnly />
                     <div className="barContent">
                         <ul className='oneBar'>
-                            <li onClick={() => { closePhoneBar(); navigate('/'); }}><SceneIcon name="home"/>首页
-                            </li>
-                            <li onClick={() => { closePhoneBar(); navigate('times'); }}><SceneIcon name="archive"/>归档
-                            </li>
+                            <li onClick={() => { closePhoneBar(); navigate('/'); }}><SceneIcon name="home"/>{tr("首页")}</li>
+                            <li onClick={() => { closePhoneBar(); navigate('times'); }}><SceneIcon name="archive"/>{tr("归档")}</li>
                             <li onClick={() => setShowMobileCategory(!showMobileCategory)}>
-                                <div style={{height: 30}}><SceneIcon name="category"/>分类</div>
+                                <div style={{height: 30}}><SceneIcon name="category"/>{tr("分类")}</div>
                             </li>
                             {showMobileCategory && <ul className='twoBar'>
                                 {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                     <li key={item.categoryKey} onClick={() => { closePhoneBar(); navigate(`category/${item.pathName}`); }} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
                                 ))}
                             </ul>}
-                            <li onClick={() => { closePhoneBar(); navigate('talk'); }}><SceneIcon name="message"/>说说
-                            </li>
-                            <li onClick={() => { closePhoneBar(); navigate('guestbook'); }}><SceneIcon name="book"/>留言板
-                            </li>
-                            <li onClick={() => { closePhoneBar(); navigate('about'); }}><SceneIcon name="leaf"/>关于我
-                            </li>
+                            <li onClick={() => { closePhoneBar(); navigate('talk'); }}><SceneIcon name="message"/>{tr("说说")}</li>
+                            <li onClick={() => { closePhoneBar(); navigate('guestbook'); }}><SceneIcon name="book"/>{tr("留言板")}</li>
+                            <li onClick={() => { closePhoneBar(); navigate('about'); }}><SceneIcon name="leaf"/>{tr("关于我")}</li>
                         </ul>
                     </div>
                 </div>
             </div>
             <div ref={navigation.bar} data-hidden={navigation.hidden} onPointerEnter={navigation.onPointerEnter} onPointerLeave={navigation.onPointerLeave} onFocusCapture={navigation.onFocusCapture} onBlurCapture={navigation.onBlurCapture} className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
-                    <button type="button" aria-label="打开导航菜单" aria-expanded={phoneBarShow} aria-controls="public-navigation-drawer" className="sceneTool" onClick={() => setPhoneBarShow(value => !value)}><SceneIcon name={phoneBarShow ? 'close' : 'menu'}/></button>
+                    <button type="button" aria-label={tr("打开导航菜单")} aria-expanded={phoneBarShow} aria-controls="public-navigation-drawer" className="sceneTool" onClick={() => setPhoneBarShow(value => !value)}><SceneIcon name={phoneBarShow ? 'close' : 'menu'}/></button>
                 </div>
                 <div className="webTitle" onClick={()=>navigate('/')}>
                     <h2><span className="firstTitle">{blogTitle}</span>Blog</h2>
                 </div>
                 <div className="headBar">
                     <ul>
-                        <li onClick={() => navigate('/')}><SceneIcon name="home"/>首页
-                        </li>
-                        <li onClick={() => navigate('times')}><SceneIcon name="archive"/>归档
-                        </li>
-                        <li style={{position: 'relative'}} className='Category'><SceneIcon name="category"/>分类
-                            <div className='CategoryList'>
+                        <li onClick={() => navigate('/')}><SceneIcon name="home"/>{tr("首页")}</li>
+                        <li onClick={() => navigate('times')}><SceneIcon name="archive"/>{tr("归档")}</li>
+                        <li style={{position: 'relative'}} className='Category'><SceneIcon name="category"/>{tr("分类")}<div className='CategoryList'>
                                 <i className="iconfont icon-Rrl_s_045" style={{
                                     fontSize: 40,
                                     position: 'absolute',
@@ -270,16 +265,17 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                 </ul>
                             </div>
                         </li>
-                        <li onClick={()=>navigate('talk')}><SceneIcon name="message"/>说说</li>
-                        <li onClick={()=>navigate('guestbook')}><SceneIcon name="book"/>留言板</li>
-                        <li onClick={()=>navigate('about')}><SceneIcon name="leaf"/>关于我</li>
+                        <li onClick={()=>navigate('talk')}><SceneIcon name="message"/>{tr("说说")}</li>
+                        <li onClick={()=>navigate('guestbook')}><SceneIcon name="book"/>{tr("留言板")}</li>
+                        <li onClick={()=>navigate('about')}><SceneIcon name="leaf"/>{tr("关于我")}</li>
                     </ul>
                 </div>
 
                 <div className="homeRight">
-                    <button type="button" className="sceneTool" aria-label="搜索" title="搜索" onClick={showModal}><SceneIcon name="search"/></button>
+                    <LanguageSwitcher />
+                    <button type="button" className="sceneTool" aria-label={tr("搜索")} title={tr("搜索")} onClick={showModal}><SceneIcon name="search"/></button>
                     <ScenePicker dark={isDark} onOpenChange={setSceneOpen}/>
-                    <button type="button" className="sceneTool homeSwitch" aria-label={isDark ? "切换日间模式" : "切换夜间模式"} title={isDark ? "切换日间模式" : "切换夜间模式"} aria-pressed={isDark} onClick={handleModeSwitch}><SceneIcon name={isDark ? "sun" : "moon"}/></button>
+                    <button type="button" className="sceneTool homeSwitch" aria-label={isDark ? tr("切换日间模式") : tr("切换夜间模式")} title={isDark ? tr("切换日间模式") : tr("切换夜间模式")} aria-pressed={isDark} onClick={handleModeSwitch}><SceneIcon name={isDark ? "sun" : "moon"}/></button>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}
                         onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={40} />, 40)}
@@ -290,11 +286,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                         }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>设置</div>
-                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
+                                <div className="theme-btn" onClick={openUserCenter}>{tr("设置")}</div>
+                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>{tr("退出")}</div>
                                 </>
                             ) : (
-                                <div className="theme-btn" onClick={() => navigate("login")}>登录</div>
+                                <div className="theme-btn" onClick={() => navigate("login")}>{tr("登录")}</div>
                             )}
                         </div>
                     </div>

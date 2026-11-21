@@ -8,7 +8,7 @@ The backend uses **Rust / Axum / SeaORM / PostgreSQL**; the frontend uses **Reac
 
 [Live site](https://saudade.site/) · [Technical guide](docs/en/README.md) · [Engineering cases](docs/en/engineering-cases.md) · [Releases](https://github.com/BigLeopardCat/Saudade-Blog/releases)
 
-The current UI, tutorials, and most articles are in Chinese. English documentation is available below; this does not imply that the product already has an English UI. The live site reflects its deployed version, and administration requires an authorized account.
+Public pages and chat controls support English and Chinese, with a persistent language switch and synchronization across tabs. Articles and user content retain their original language; administration has not been fully translated. The live site reflects its deployed version, and administration requires an authorized account.
 
 ## Capabilities
 

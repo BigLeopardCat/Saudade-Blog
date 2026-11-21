@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Input, Modal, message } from 'antd'
@@ -25,6 +26,7 @@ const MAX_COMMENT_CHARS = 300
 
 /** 仅将 renderBlogMarkdown 清洗后的 HTML 写入评论正文。 */
 const CommentBody = ({ content }: { content: string }) => {
+    useLocale();
     const html = useMemo(() => renderBlogMarkdown(content), [content])
     return (
         <div
@@ -51,6 +53,7 @@ interface CommentSectionProps {
 }
 
 const CommentSection = ({ noteId }: CommentSectionProps) => {
+    useLocale();
     const [items, setItems] = useState<CommentItem[] | null>(null)
     const [failed, setFailed] = useState(false)
     /** 每次进入页面默认按热度排序，不跨页面持久化。 */
@@ -175,18 +178,18 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         const { approved, id } = res.data.data
         await load()
         flashComment(id)
-        if (approved === 1) message.success('评论已发布')
-        else if (approved === 0) message.info('评论已提交，通过人工复核后才会公开显示')
-        else message.warning('评论未通过审核，不会公开展示')
+        if (approved === 1) message.success(tr("评论已发布"))
+        else if (approved === 0) message.info(tr("评论已提交，通过人工复核后才会公开显示"))
+        else message.warning(tr("评论未通过审核，不会公开展示"))
         return true
     }
 
     const submit = async () => {
         const text = content.trim()
-        if (!loggedIn) { message.warning('请先登录后再参与讨论'); return }
-        if (!text) { message.warning('评论不能为空'); return }
+        if (!loggedIn) { message.warning(tr("请先登录后再参与讨论")); return }
+        if (!text) { message.warning(tr("评论不能为空")); return }
         if (content.length > MAX_COMMENT_CHARS) {
-            message.warning(`评论过长（最多 ${MAX_COMMENT_CHARS} 字）`)
+            message.warning(tr("评论过长（最多 {0} 字）", {"0": MAX_COMMENT_CHARS}))
             return
         }
         setBusy(true)
@@ -195,7 +198,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             if (await postComment(text, null)) setContent('')
         } catch (e) {
             console.error('发表评论失败', e)
-            message.error('发表失败，请稍后再试')
+            message.error(tr("发表失败，请稍后再试"))
         } finally {
             setBusy(false)
         }
@@ -221,10 +224,10 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         const parentId = openFor
         if (parentId === null) return
         const text = replyContent.trim()
-        if (!loggedIn) { message.warning('请先登录后再参与讨论'); return }
-        if (!text) { message.warning('回复不能为空'); return }
+        if (!loggedIn) { message.warning(tr("请先登录后再参与讨论")); return }
+        if (!text) { message.warning(tr("回复不能为空")); return }
         if (replyContent.length > MAX_COMMENT_CHARS) {
-            message.warning(`回复过长（最多 ${MAX_COMMENT_CHARS} 字）`)
+            message.warning(tr("回复过长（最多 {0} 字）", {"0": MAX_COMMENT_CHARS}))
             return
         }
         setReplyBusy(true)
@@ -232,7 +235,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             if (await postComment(text, parentId)) closeReply()
         } catch (e) {
             console.error('发表回复失败', e)
-            message.error('回复失败，请稍后再试')
+            message.error(tr("回复失败，请稍后再试"))
         } finally {
             setReplyBusy(false)
         }
@@ -244,12 +247,12 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         try {
             const res = await deleteMyComment(pendingDelete.id)
             if (!ok(res)) { message.error(errMsg(res)); return }
-            message.success('评论已删除')
+            message.success(tr("评论已删除"))
             setPendingDelete(null)
             await load()
         } catch (e) {
             console.error('删除评论失败', e)
-            message.error('删除失败，请稍后再试')
+            message.error(tr("删除失败，请稍后再试"))
         } finally {
             setDeleting(false)
         }
@@ -287,7 +290,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         } catch (e) {
             console.error('评论投票失败', e)
             applyVote(c.id, before)
-            message.error('操作失败，请稍后再试')
+            message.error(tr("操作失败，请稍后再试"))
         } finally {
             setVotingIds((s) => {
                 const n = new Set(s)
@@ -318,12 +321,12 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 </div>
                 {isReply && (
                     <div className="commentReplyTo">
-                        回复 @{c.replyToNickname || '已注销用户'}
+                        {tr("回复 @")}{c.replyToNickname || tr("已注销用户")}
                     </div>
                 )}
                 <CommentBody content={c.content} />
                 <div className="commentActions">
-                    <button type="button" onClick={() => openReply(c)}>回复</button>
+                    <button type="button" onClick={() => openReply(c)}>{tr("回复")}</button>
                     {([1, -1] as const).map((dir) => {
                         const on = c.myVote === dir
                         const n = dir === 1 ? c.up : c.down
@@ -333,7 +336,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                                 type="button"
                                 className={`commentVote${on ? ' isOn' : ''}`}
                                 aria-pressed={on}
-                                aria-label={dir === 1 ? '赞' : '踩'}
+                                aria-label={dir === 1 ? tr("赞") : tr("踩")}
                                 disabled={votingIds.has(c.id)}
                                 onClick={() => void vote(c, dir)}
                             >
@@ -344,21 +347,20 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                     })}
                     {c.mine && (
                         <button type="button" className="isDanger" onClick={() => setPendingDelete(c)}>
-                            删除
-                        </button>
+                            {tr("删除")}</button>
                     )}
                 </div>
                 {openFor === c.id && (
                     <div className="commentComposer isInline">
                         <div className="commentReplyBar">
-                            <span>正在回复 @{c.nickname}</span>
-                            <button type="button" onClick={closeReply}>取消</button>
+                            <span>{tr("正在回复 @")}{c.nickname}</span>
+                            <button type="button" onClick={closeReply}>{tr("取消")}</button>
                         </div>
                         <Input.TextArea
                             ref={replyTaRef}
                             value={replyContent}
                             onChange={(e) => setReplyContent(e.target.value)}
-                            placeholder={`回复 @${c.nickname}…`}
+                            placeholder={tr("回复 @{0}…", {"0": c.nickname})}
                             autoSize={{ minRows: 2, maxRows: 6 }}
                             maxLength={MAX_COMMENT_CHARS}
                             showCount
@@ -375,7 +377,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                                 disabled={replyBusy || !replyContent.trim()}
                                 onClick={submitReply}
                             >
-                                {replyBusy ? '发送中…' : '回复'}
+                                {replyBusy ? tr("发送中…") : tr("回复")}
                             </button>
                         </div>
                     </div>
@@ -387,13 +389,12 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     return (
         <div className="commentSection" id="comments">
             <h3 className="commentTitle">
-                讨论区
-                {items && <span className="commentCount">{items.length} 条</span>}
+                {tr("讨论区")}{items && <span className="commentCount">{tr("{count} 条评论", {count: items.length})}</span>}
             </h3>
 
             {tops.length > 1 && (
-                <div className="commentSort" role="group" aria-label="讨论区排序">
-                    {([['hot', '最热'], ['new', '最新']] as const).map(([v, label]) => (
+                <div className="commentSort" role="group" aria-label={tr("讨论区排序")}>
+                    {([['hot', tr("最热")], ['new', tr("最新")]] as const).map(([v, label]) => (
                         <button
                             key={v}
                             type="button"
@@ -409,15 +410,14 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
 
             {!loggedIn ? (
                 <p className="commentLoginTip">
-                    <a href="/login">登录</a> 后即可参与讨论
-                </p>
+                    <a href="/login">{tr("登录")}</a> {tr("后即可参与讨论")}</p>
             ) : (
                 <div className="commentComposer">
                     <Input.TextArea
                         ref={taRef}
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
-                        placeholder="说点什么吧…（支持 markdown 与站内表情）"
+                        placeholder={tr("说点什么吧…（支持 markdown 与站内表情）")}
                         autoSize={{ minRows: 3, maxRows: 8 }}
                         maxLength={MAX_COMMENT_CHARS}
                         showCount
@@ -432,7 +432,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                                 aria-controls="comment-preview"
                                 onClick={() => setPreview((v) => !v)}
                             >
-                                {preview ? '收起预览' : '预览'}
+                                {preview ? tr("收起预览") : tr("预览")}
                             </button>
                         </div>
                         <button
@@ -441,18 +441,17 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                             disabled={busy || !content.trim()}
                             onClick={submit}
                         >
-                            {busy ? '发送中…' : '发表评论'}
+                            {busy ? tr("发送中…") : tr("发表评论")}
                         </button>
                     </div>
                     {preview && (
                         <div className="commentPreview" id="comment-preview">
-                            <div className="commentPreviewLabel">预览 · 发出去之后就是这个样子</div>
+                            <div className="commentPreviewLabel">{tr("预览 · 发出去之后就是这个样子")}</div>
                             {content.trim() ? (
                                 <CommentBody content={content} />
                             ) : (
                                 <p className="commentPreviewEmpty">
-                                    还没有内容。上面写什么，这里就显示成什么样。
-                                </p>
+                                    {tr("还没有内容。上面写什么，这里就显示成什么样。")}</p>
                             )}
                         </div>
                     )}
@@ -460,13 +459,13 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             )}
 
             {items === null ? (
-                <p className="commentEmpty">{failed ? '讨论区读取失败' : '正在读取讨论…'}</p>
+                <p className="commentEmpty">{failed ? tr("讨论区读取失败") : tr("正在读取讨论…")}</p>
             ) : failed ? (
                 <p className="commentEmpty">
-                    讨论区读取失败，<button type="button" className="commentRetry" onClick={() => void load()}>点此重试</button>
+                    {tr("讨论区读取失败，")}<button type="button" className="commentRetry" onClick={() => void load()}>{tr("点此重试")}</button>
                 </p>
             ) : tops.length === 0 ? (
-                <p className="commentEmpty">还没有人讨论，来说第一句吧</p>
+                <p className="commentEmpty">{tr("还没有人讨论，来说第一句吧")}</p>
             ) : (
                 <div className="commentList">
                     {tops.map((t) => (
@@ -480,16 +479,16 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
 
             <Modal
                 open={!!pendingDelete}
-                title="删除这条评论？"
-                okText="删除评论"
-                cancelText="再想想"
+                title={tr("删除这条评论？")}
+                okText={tr("删除评论")}
+                cancelText={tr("再想想")}
                 okButtonProps={{ danger: true, loading: deleting }}
                 cancelButtonProps={{ disabled: deleting }}
                 onOk={doDelete}
                 onCancel={() => { if (!deleting) setPendingDelete(null) }}
                 destroyOnClose
             >
-                <p>删除后这条评论不再公开显示（它下面的回复也会一起隐藏）。</p>
+                <p>{tr("删除后这条评论不再公开显示（它下面的回复也会一起隐藏）。")}</p>
             </Modal>
         </div>
     )

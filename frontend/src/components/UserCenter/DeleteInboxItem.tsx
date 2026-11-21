@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import { DeleteOutlined } from '@ant-design/icons'
 import { Button, message, Popconfirm } from 'antd'
 import { useRef, useState } from 'react'
@@ -13,6 +14,7 @@ export default function DeleteInboxItem({ item, onRemoved }: {
     item: Item
     onRemoved: (counts: UnreadSummary) => void
 }) {
+    useLocale();
     const [busy, setBusy] = useState(false)
     const inFlight = useRef(false)
     const remove = async () => {
@@ -29,23 +31,22 @@ export default function DeleteInboxItem({ item, onRemoved }: {
             }
             onRemoved(res.data.data)
             notifyUnreadChanged()
-            message.success('已从你的列表删除')
+            message.success(tr("已从你的列表删除"))
         } catch {
-            message.error('删除失败，请稍后再试')
+            message.error(tr("删除失败，请稍后再试"))
         } finally {
             inFlight.current = false
             setBusy(false)
         }
     }
     return <span className="personalDelete" onClick={event => event.stopPropagation()}>
-        <Popconfirm title="从你的列表删除？"
-            description={item.kind === 'notification' ? '只移除本人的记录。' : '对方的信件会保留。'}
-            okText="删除" cancelText="取消" okButtonProps={{ danger: true }}
+        <Popconfirm title={tr("从你的列表删除？")}
+            description={item.kind === 'notification' ? tr("只移除本人的记录。") : tr("对方的信件会保留。")}
+            okText={tr("删除")} cancelText={tr("取消")} okButtonProps={{ danger: true }}
             onConfirm={remove} zIndex={Z.modal + 10}
             getPopupContainer={trigger => trigger.parentElement ?? document.body}>
             <Button type="text" danger size="small" loading={busy} icon={<DeleteOutlined />}>
-                删除
-            </Button>
+                {tr("删除")}</Button>
         </Popconfirm>
     </span>
 }

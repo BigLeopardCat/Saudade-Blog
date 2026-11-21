@@ -1,9 +1,11 @@
+import {t, subscribeLocale} from '../../../i18n'
 /** Shared image and Mermaid viewer; imported together with its styles. */
 import "./zoomOverlay.sass"
 
 type ZoomPoint = { id: number; x: number; y: number }
 
 let overlay: HTMLDivElement | null = null
+let stopLocale: (() => void) | null = null
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null
 let resizeHandler: (() => void) | null = null
 let previousOverflow = {root:"",body:""}
@@ -39,6 +41,7 @@ const naturalSize = (el: Element): [number, number] => {
 }
 
 export const closeZoomOverlay = (): void => {
+  stopLocale?.(); stopLocale = null
   if (closeTimer) {
     clearTimeout(closeTimer)
     closeTimer = null
@@ -97,7 +100,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   overlay.className = "md-zoom-overlay"
   overlay.setAttribute("role", "dialog")
   overlay.setAttribute("aria-modal", "true")
-  overlay.setAttribute("aria-label", "图片放大视图")
+  overlay.setAttribute("aria-label", t("图片放大视图"))
   previousOverflow = {root:document.documentElement.style.overflow,body:document.body.style.overflow}
   previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const stage = document.createElement("div")
@@ -111,10 +114,10 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   closeBtn.className = "md-zoom-close"
   closeBtn.type = "button"
   closeBtn.textContent = "✕"
-  closeBtn.setAttribute("aria-label", "关闭放大视图")
+  closeBtn.setAttribute("aria-label", t("关闭放大视图"))
   const tip = document.createElement("div")
   tip.className = "md-zoom-tip"
-  tip.textContent = "滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc"
+  tip.textContent = t("滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc")
   overlay.appendChild(tip)
   setTimeout(() => {
     tip.style.transition = "opacity 0.4s"
@@ -170,10 +173,15 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   fitView()
   resizeHandler = fitView
   window.addEventListener("resize", resizeHandler)
-  tip.textContent =
-    readableScale() > fitScale() + 1e-6
+  const refreshLanguage = () => {
+    overlay?.setAttribute('aria-label', t('图片放大视图'))
+    closeBtn.setAttribute('aria-label', t('关闭放大视图'))
+    tip.textContent = t(readableScale() > fitScale() + 1e-6
       ? '双指缩放 · 拖拽移动 · 双击切换「整图 / 细节」 · 单击空白关闭'
-      : '滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc'
+      : '滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc')
+  }
+  stopLocale = subscribeLocale(refreshLanguage)
+  refreshLanguage()
 
   // 滚轮缩放(以光标为中心)
   const onWheel = (e: WheelEvent): void => {

@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../../i18n';
 import SweepLoading from '../../../components/SweepLoading'
 import './index.sass'
 import { useEffect, useRef, useState } from "react";
@@ -15,6 +16,7 @@ import {createRequestScope} from "../../../utils/requestScope";
 import AssetImage from "../../../components/AssetImage";
 import SeoHelmet from "../../../components/SeoHelmet";
 const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: string}) => {
+    useLocale();
     const [articleList, setArticleList] = useState<NoteType[]>([]);
     const [loading, setLoading] = useState(!!categoryTitle);
     const [failed, setFailed] = useState(false);
@@ -50,13 +52,13 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
 
     return (
         <div className="CategoriesContainer">
-            <SeoHelmet title={categoryTitle ? `分类-${categoryTitle}` : '分类'} url={`/category/${id}`} />
-            <h2>分类{categoryTitle ? `-${categoryTitle}` : ''}</h2>
-            {!categoryTitle ? <p role="status">分类不存在或分类目录尚未加载，请稍后重试。</p>
-                : loading ? <p role="status">正在加载文章…</p>
-                : failed ? <p role="alert">文章列表加载失败，<button type="button" onClick={loadArticles}>重试</button></p>
-                : <h3>共有{articleList.length}篇文章</h3>}
-            {categoryTitle && !loading && !failed && articleList.length === 0 && <p>这个分类还没有公开文章。</p>}
+            <SeoHelmet title={categoryTitle ? tr("分类-{0}", {"0": categoryTitle}) : tr("分类")} url={`/category/${id}`} />
+            <h2>{tr("分类")}{categoryTitle ? `-${categoryTitle}` : ''}</h2>
+            {!categoryTitle ? <p role="status">{tr("分类不存在或分类目录尚未加载，请稍后重试。")}</p>
+                : loading ? <p role="status">{tr("正在加载文章…")}</p>
+                : failed ? <p role="alert">{tr("文章列表加载失败，")}<button type="button" onClick={loadArticles}>{tr("重试")}</button></p>
+                : <h3>{tr("共 {count} 篇文章", {count: articleList.length})}</h3>}
+            {categoryTitle && !loading && !failed && articleList.length === 0 && <p>{tr("这个分类还没有公开文章。")}</p>}
             <ul className='ArticleList'>
                 {articleList.map((item: NoteType,index) =>
                     <motion.div
@@ -76,8 +78,8 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
                                     className="iconfont icon-tuding" style={{fontSize: 23,color:'var(--washi-pink-deep)'}}></i></span>}
                             </div>
                             <p>{item.description}</p>
-                            <div className='articleFooter'><span style={{fontSize:13,color:'var(--font-p-color)'}} className='post-date'><i className="iconfont icon-naozhong icon" style={{fontSize: 22, display: 'inline',verticalAlign: 'sub'}}></i>发布于 {dayjs(item.updateTime).format('YYYY-MM-DD')}</span>
-                                <span style={{color:'var(--washi-pink-deep)',float:'right'}}>阅读全文→</span>
+                            <div className='articleFooter'><span style={{fontSize:13,color:'var(--font-p-color)'}} className='post-date'><i className="iconfont icon-naozhong icon" style={{fontSize: 22, display: 'inline',verticalAlign: 'sub'}}></i>{tr("发布于")} {dayjs(item.updateTime).format('YYYY-MM-DD')}</span>
+                                <span style={{color:'var(--washi-pink-deep)',float:'right'}}>{tr("阅读全文→")}</span>
                             </div>
                         </div>
                     </li>
@@ -88,6 +90,7 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
 }
 
 const Categories = () => {
+    useLocale();
     const {id = ''} = useParams();
     const categories = useSelector((state: {categories: categoryList}) => state.categories.categories);
     const title = categories.find(item => item.pathName === id)?.categoryTitle;

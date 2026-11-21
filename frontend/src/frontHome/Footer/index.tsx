@@ -1,3 +1,4 @@
+import {t as tr, useLocale} from '../../i18n';
 import './index.sass'
 import beianIcon from '../../assets/备案图标.png'
 import cfLogo from '../../assets/Cloudflare_Logo.svg'
@@ -9,6 +10,7 @@ import {useSelector} from "react-redux";
 const mpsCode = (s: string): string => (s.match(/\d{5,}/) || [''])[0]
 
 const Footer = () => {
+    useLocale();
     const signature = useSelector((state:{user:{talk: string}}) => state.user.talk)
     const blogIcp = useSelector((state:{user:{blogIcp: string}}) => state.user.blogIcp)
     const blogPublicIcp = useSelector((state:{user:{blogPublicIcp: string}}) => state.user.blogPublicIcp)
@@ -26,8 +28,7 @@ const Footer = () => {
                 {' · '}<span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span>
             </p>
             <p className="footNote">
-                Based on <a className="link" href="https://github.com/LinMoQC/Memory-Blog" target="_blank" rel="noreferrer">Memory-Blog</a> by 林陌青川 (LinMo)
-                {' · '}Maintained by Sora Saudade
+                Based on <a className="link" href="https://github.com/LinMoQC/Memory-Blog" target="_blank" rel="noreferrer">Memory-Blog</a> {tr("by 林陌青川 (LinMo)")}{' · '}Maintained by Sora Saudade
             </p>
             {signature && <em className="footPoem"><p>{signature}</p></em>}
             {(blogIcp || blogPublicIcp) && (
@@ -46,8 +47,8 @@ const Footer = () => {
                 </p>
             )}
             <p className="footLogos">
-                <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title="阿里云百炼">
-                    <img className="footLogoAli" src={bailianLogo} alt="阿里云百炼" />
+                <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title={tr("阿里云百炼")}>
+                    <img className="footLogoAli" src={bailianLogo} alt={tr("阿里云百炼")} />
                 </a>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
                     <img className="footLogoTx" src={txLogo} alt="Tencent Cloud" />

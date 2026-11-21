@@ -1,3 +1,5 @@
+import LanguageSwitcher from '../../components/LanguageSwitcher';
+import {t as tr, useLocale} from '../../i18n';
 import './index.sass';
 import { Avatar, ConfigProvider, message, Modal, theme as antdTheme } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
@@ -35,6 +37,7 @@ const LIGHT_MODAL_THEME = {
 };
 
 const Login: React.FC = () => {
+    useLocale();
     const [account, setAccount] = useState<string>('');
     const [password, setPassword] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -117,7 +120,7 @@ const Login: React.FC = () => {
             // @ts-ignore
             const result = await dispatch(fetchToken(data));
             if (result.status === 200) {
-                messageApi.success('登录成功');
+                messageApi.success(tr("登录成功"));
                 // 令牌此刻已写入 localStorage（store 的 setToken 顺便派发 auth-change，
                 // 头部据此把登录态从 0 翻到 1——头部是常驻组件，不重挂载，不靠刷新）
                 const token = getToken();
@@ -126,10 +129,10 @@ const Login: React.FC = () => {
                 // result.message 的类型退化成 {}（store 的返回类型没写细），运行时是后端的中文串
                 messageApi.error(typeof result.message === 'string' && result.message
                     ? result.message
-                    : '登录失败，账号或密码错误！');
+                    : tr("登录失败，账号或密码错误！"));
             }
         } catch {
-            messageApi.error('登录失败，账号或密码错误！');
+            messageApi.error(tr("登录失败，账号或密码错误！"));
         } finally {
             setIsLoading(false);
         }
@@ -139,7 +142,7 @@ const Login: React.FC = () => {
         e.preventDefault();
         if (!isLoading) {
             const target = e.target as HTMLInputElement;
-            messageApi.warning(`请填写${target.name === 'account' ? '用户名' : '密码'}`);
+            messageApi.warning(tr("请填写{0}", {"0": tr(target.name === 'account' ? '用户名' : '密码')}));
         }
     };
 
@@ -148,7 +151,7 @@ const Login: React.FC = () => {
         // 回车也会走这条路，而按钮的 disabled 拦不住隐式提交（输入框仍可编辑）
         if (resetLoading) return;
         if (resetPassword !== resetPasswordAgain) {
-            messageApi.error('两次输入的新密码不一致');
+            messageApi.error(tr("两次输入的新密码不一致"));
             return;
         }
         setResetLoading(true);
@@ -165,13 +168,13 @@ const Login: React.FC = () => {
             const result = await response.json();
             // 本仓的失败契约是 HTTP 200 + code 500，只看 response.ok 会把失败当成功
             if (response.ok && result.code === 200) {
-                messageApi.success('密码修改成功，请使用新密码登录');
+                messageApi.success(tr("密码修改成功，请使用新密码登录"));
                 closeNotice();
             } else {
-                messageApi.error(result.message || '恢复失败，请检查恢复码');
+                messageApi.error(result.message || tr("恢复失败，请检查恢复码"));
             }
         } catch {
-            messageApi.error('恢复服务暂不可用，请稍后再试');
+            messageApi.error(tr("恢复服务暂不可用，请稍后再试"));
         } finally {
             setResetLoading(false);
         }
@@ -179,25 +182,25 @@ const Login: React.FC = () => {
 
     return (
         <>
-            <SeoHelmet title="登录" url="/login" noindex />
+            <SeoHelmet title={tr("登录")} url="/login" noindex /><LanguageSwitcher standalone />
             {contextHolder}
             <div className={isDark ? 'login-page frontDark' : 'login-page'}>
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
-                        <Avatar className="login-avatar" src={avatar} size={84} alt="访客头像" />
+                        <Avatar className="login-avatar" src={avatar} size={84} alt={tr("访客头像")} />
                     </header>
 
                     <form onSubmit={handleSubmit}>
                         <div className="field">
-                            <label htmlFor="account">账号</label>
+                            <label htmlFor="account">{tr("账号")}</label>
                             <input
                                 id="account"
                                 type="text"
                                 name="account"
                                 value={account}
                                 required
-                                placeholder="用户名"
+                                placeholder={tr("用户名")}
                                 onChange={handleChange}
                                 onInput={handleInput}
                                 onInvalid={handleInvalid}
@@ -208,14 +211,14 @@ const Login: React.FC = () => {
                         </div>
 
                         <div className="field field-pwd">
-                            <label htmlFor="password">密码</label>
+                            <label htmlFor="password">{tr("密码")}</label>
                             <input
                                 id="password"
                                 type={showPwd ? 'text' : 'password'}
                                 name="password"
                                 value={password}
                                 required
-                                placeholder="密码"
+                                placeholder={tr("密码")}
                                 onChange={handleChange}
                                 onInput={handleInput}
                                 onInvalid={handleInvalid}
@@ -226,8 +229,8 @@ const Login: React.FC = () => {
                                 type="button"
                                 className="pwd-toggle"
                                 onClick={() => setShowPwd(v => !v)}
-                                aria-label={showPwd ? '隐藏密码' : '显示密码'}
-                                title={showPwd ? '隐藏密码' : '显示密码'}
+                                aria-label={showPwd ? tr("隐藏密码") : tr("显示密码")}
+                                title={showPwd ? tr("隐藏密码") : tr("显示密码")}
                                 tabIndex={-1}
                             >
                                 {showPwd ? <EyeInvisibleOutlined /> : <EyeOutlined />}
@@ -235,15 +238,14 @@ const Login: React.FC = () => {
                         </div>
 
                         <button type="submit" className="login-submit" disabled={isLoading}>
-                            {isLoading ? '登录中…' : '登 录'}
+                            {isLoading ? tr("登录中…") : tr("登 录")}
                         </button>
 
                         <div className="login-links">
                             <button type="button" onClick={() => { setResetUsername(account); setNotice('forgot'); }}>
-                                忘记密码？
-                            </button>
+                                {tr("忘记密码？")}</button>
                             <span className="sep">·</span>
-                            <button type="button" onClick={() => setNotice('register')}>注册账号</button>
+                            <button type="button" onClick={() => setNotice('register')}>{tr("注册账号")}</button>
                         </div>
                     </form>
 
@@ -252,50 +254,48 @@ const Login: React.FC = () => {
                             href="/"
                             onClick={(e) => { e.preventDefault(); navigate('/'); }}
                         >
-                            返回首页
-                        </a>
+                            {tr("返回首页")}</a>
                     </div>
                 </div>
 
                 <ConfigProvider theme={isDark ? DARK_MODAL_THEME : LIGHT_MODAL_THEME}>
                     <Modal
                         open={notice === 'register'}
-                        title="注册账号"
+                        title={tr("注册账号")}
                         centered
                         onCancel={closeNotice}
                         footer={(
                             <div className="login-modal-foot is-center">
                                 <button type="button" className="login-modal-primary" onClick={closeNotice}>
-                                    知道了
-                                </button>
+                                    {tr("知道了")}</button>
                             </div>
                         )}
                     >
                         <div className="login-modal-body">
-                            <p>本站<b>不开放自助注册</b>，账号由博主（管理员）在后台开设。</p>
+                            <p>{tr("本站")}<b>{tr("不开放自助注册")}</b>{tr("，账号由博主（管理员）在后台开设。")}</p>
                             <ul>
-                                <li>浏览文章、首页等阅读功能<b>无需登录</b>；</li>
-                                <li>留言、说说、河灯留言等<b>发布功能需要登录</b>后才能使用；</li>
-                                <li>账号信息仅用于登录、身份识别和账号安全维护，不会出售、出租或用于与本站服务无关的用途。</li>
+                                <li>{tr("浏览文章、首页等阅读功能")}<b>{tr("无需登录")}</b>；</li>
+                                <li>{tr("留言、说说、河灯留言等")}<b>{tr("发布功能需要登录")}</b>{tr("后才能使用；")}</li>
+                                <li>{tr("账号信息仅用于登录、身份识别和账号安全维护，不会出售、出租或用于与本站服务无关的用途。")}</li>
                             </ul>
                         </div>
                     </Modal>
 
                     <Modal
                         open={notice === 'forgot'}
-                        title="重置密码"
+                        title={tr("重置密码")}
                         centered
                         onCancel={closeNotice}
                         footer={null}
                     >
                         <form className="login-reset-form" onSubmit={handleResetPassword}>
-                            <p>请向博主索取一次性恢复码（15 分钟内有效、只能用一次）。</p>
+                            <p>{tr("请向博主索取一次性恢复码（15 分钟内有效、只能用一次）。")}</p>
                             <input
                                 required
                                 value={resetUsername}
                                 onChange={e => setResetUsername(e.target.value)}
-                                placeholder="用户名"
-                                aria-label="用户名"
+                                placeholder={tr("用户名")}
+                                aria-label={tr("用户名")}
                                 autoComplete="username"
                                 disabled={resetLoading}
                             />
@@ -303,8 +303,8 @@ const Login: React.FC = () => {
                                 required
                                 value={resetCode}
                                 onChange={e => setResetCode(e.target.value)}
-                                placeholder="一次性恢复码"
-                                aria-label="一次性恢复码"
+                                placeholder={tr("一次性恢复码")}
+                                aria-label={tr("一次性恢复码")}
                                 autoComplete="one-time-code"
                                 disabled={resetLoading}
                             />
@@ -314,8 +314,8 @@ const Login: React.FC = () => {
                                 type="password"
                                 value={resetPassword}
                                 onChange={e => setResetPassword(e.target.value)}
-                                placeholder="新密码（至少 8 位）"
-                                aria-label="新密码"
+                                placeholder={tr("新密码（至少 8 位）")}
+                                aria-label={tr("新密码")}
                                 autoComplete="new-password"
                                 disabled={resetLoading}
                             />
@@ -325,13 +325,13 @@ const Login: React.FC = () => {
                                 type="password"
                                 value={resetPasswordAgain}
                                 onChange={e => setResetPasswordAgain(e.target.value)}
-                                placeholder="再次输入新密码"
-                                aria-label="再次输入新密码"
+                                placeholder={tr("再次输入新密码")}
+                                aria-label={tr("再次输入新密码")}
                                 autoComplete="new-password"
                                 disabled={resetLoading}
                             />
                             <button type="submit" className="login-modal-primary" disabled={resetLoading}>
-                                {resetLoading ? '修改中…' : '确认修改密码'}
+                                {resetLoading ? tr("修改中…") : tr("确认修改密码")}
                             </button>
                         </form>
                     </Modal>

@@ -1,3 +1,4 @@
+import {t, useLocale} from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Modal, Slider } from 'antd'
 import {
@@ -35,6 +36,7 @@ interface AvatarCropModalProps {
 }
 
 const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploading, dark, zIndex }: AvatarCropModalProps) => {
+    useLocale();
     const [crop, setCrop] = useState<CoverCrop>(DEFAULT_CROP)
     const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
     /** 图片本身读不出来（加载失败/尺寸为 0/画布烘焙失败）——此时舞台没有可用内容 */
@@ -175,7 +177,7 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
         <Modal
             open={open}
             onCancel={onCancel}
-            title="裁剪头像"
+            title={t("裁剪头像")}
             width={520}
             centered
             zIndex={zIndex}
@@ -198,7 +200,7 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                             ref={imgRef}
                             className="acImg"
                             src={url}
-                            alt="待裁剪的头像"
+                            alt={t("待裁剪的头像")}
                             draggable={false}
                             style={coverCropStyle(crop)}
                             onLoad={(e) => {
@@ -206,21 +208,21 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                                 if (el.naturalWidth > 0 && el.naturalHeight > 0) {
                                     setNatural({ w: el.naturalWidth, h: el.naturalHeight })
                                 } else {
-                                    setLoadErr('这张图读不出尺寸，请换一张')
+                                    setLoadErr("这张图读不出尺寸，请换一张")
                                 }
                             }}
-                            onError={() => setLoadErr('图片加载失败，请换一张')}
+                            onError={() => setLoadErr("图片加载失败，请换一张")}
                         />
                     )}
                     <span className="acCircle" aria-hidden />
                 </div>
 
                 {loadErr ? (
-                    <p className="acErr">{loadErr}</p>
+                    <p className="acErr">{t(loadErr)}</p>
                 ) : (
                     <>
                         <div className="acZoom">
-                            <span>缩放</span>
+                            <span>{t("缩放")}</span>
                             <Slider
                                 min={MIN_ZOOM}
                                 max={MAX_ZOOM}
@@ -230,28 +232,25 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                                 onChange={(z) => setCrop((c) => ({ ...c, z: clampZoom(z) }))}
                             />
                         </div>
-                        <p className="acTip">圆内就是最终头像。拖动图片调整位置，滚轮或滑块缩放</p>
+                        <p className="acTip">{t("圆内就是最终头像。拖动图片调整位置，滚轮或滑块缩放")}</p>
                     </>
                 )}
 
                 <div className="acActions">
                     <label className="acRepick">
-                        换一张
-                        <input type="file" accept="image/*" onChange={handlePickChange} />
+                        {t("换一张")}<input type="file" accept="image/*" onChange={handlePickChange} />
                     </label>
-                    {pickErr && <span className="acPickErr">{pickErr}</span>}
+                    {pickErr && <span className="acPickErr">{t(pickErr)}</span>}
                     <div className="acActionsRight">
                         <Button onClick={onCancel} disabled={uploading}>
-                            取消
-                        </Button>
+                            {t("取消")}</Button>
                         <Button
                             type="primary"
                             onClick={handleConfirm}
                             loading={uploading || baking}
                             disabled={!natural || !!loadErr}
                         >
-                            确定
-                        </Button>
+                            {t("确定")}</Button>
                     </div>
                 </div>
             </div>
