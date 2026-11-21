@@ -1,7 +1,7 @@
 import {test, expect, type Locator} from '@playwright/test'
 
 async function expectReadable(button: Locator) {
-  const contrast = await button.evaluate(element => {
+  await expect.poll(() => button.evaluate(element => {
     const style = getComputedStyle(element)
     const rgb = (color: string) => color.match(/[\d.]+/g)!.map(Number)
     const foreground = rgb(style.color), background = rgb(style.backgroundColor)
@@ -14,8 +14,7 @@ async function expectReadable(button: Locator) {
     }, 0)
     const a = luminance(foreground), b = luminance(composite)
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
-  })
-  expect(contrast, 'Language text must remain readable against its button').toBeGreaterThanOrEqual(4.5)
+  }), {message: 'Language text must remain readable against its button'}).toBeGreaterThanOrEqual(4.5)
 }
 
 for (const scenario of [
@@ -43,6 +42,13 @@ for (const scenario of [
     await page.getByRole('button', {name: 'Switch to English'}).click()
     await expect(control(scenario.english)).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
+    if (scenario.path !== '/guestbook') {
+      await page.evaluate(() => {
+        localStorage.setItem('isDarkMode', 'false')
+        window.dispatchEvent(new CustomEvent('darkmode-change', {detail: false}))
+      })
+      await expect(page.locator('.frontDark')).toHaveCount(0)
+    }
     await expectReadable(page.getByTestId('language-switch'))
     await page.screenshot({path: test.info().outputPath('pinned-standalone-english.png')})
     if (scenario.path !== '/guestbook') {
