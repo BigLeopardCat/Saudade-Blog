@@ -416,6 +416,7 @@ export const english: Record<string, string> = {
     "杂鱼": "Limited member",
     "文章列表加载失败，请重试": "Could not load articles. Please try again.",
     "文章加载失败，请重试": "Could not load articles. Please try again.",
+    "更多文章加载失败，请重试": "Could not load more articles. Please try again.",
     "登录状态已失效，请重新登录": "Your session has expired. Please sign in again.",
     "保存失败": "Could not save",
     "修改失败": "Could not update",

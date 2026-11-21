@@ -1120,7 +1120,7 @@ export default function RiverBoard() {
                                     <p className="rz-wish-sub">
                                         {tr("灯入待审，通过后即在河面公开点亮。 可到灯影集「我的河灯」查看状态或收回")}</p>
                                 ) : (
-                                    <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
+                                    <p className="rz-wish-sub">{tr(CAT_INFO[wishCat].desc)}</p>
                                 )}
                                 <div className="rz-wish-foot">
                                     <button
