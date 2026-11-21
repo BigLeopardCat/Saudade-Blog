@@ -4,6 +4,7 @@ import SectionHeading from '../../../components/SectionHeading'
 import ArticleCard from '../../../components/ArticleCard'
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react'
 import {Modal} from 'antd'
+import {Z} from '../../../zIndex'
 import AnnouncementCard, {announcementTime} from '../../../components/AnnouncementCard'
 import StickerText from '../../../components/StickerText'
 import type {AnnouncementItem} from '../../../apis/AnnouncementMethods'
@@ -192,10 +193,15 @@ export default function FeaturedArticles({items, announcements = EMPTY, categori
                 })}
             </div>
         </div>}
-        <Modal open={opened !== null} onCancel={() => setOpened(null)} title={opened?.title} footer={null} width={640}
-            rootClassName={dark ? 'washiModal washiDark' : 'washiModal'}>
-            {opened && <><time className="pinnedAnnouncementTime">{announcementTime(opened.createdAt)}</time>
-                <div className="pinnedAnnouncementText"><StickerText text={opened.content}/></div></>}
+        <Modal open={opened !== null} onCancel={() => setOpened(null)}
+            title={<span className="pinnedAnnouncementTitle">{opened?.title}</span>} footer={null} width={640}
+            centered zIndex={Z.modal}
+            styles={{content: {padding: 0}, header: {padding: '26px 48px 12px', marginBottom: 0}, body: {padding: 0}}}
+            rootClassName={dark ? 'washiModal pinnedAnnouncementModal washiDark' : 'washiModal pinnedAnnouncementModal'}>
+            {opened && <div className="pinnedAnnouncementBody" role="region" tabIndex={0} aria-label={tr("公告内容")}>
+                <time className="pinnedAnnouncementTime">{announcementTime(opened.createdAt)}</time>
+                <div className="pinnedAnnouncementText"><StickerText text={opened.content}/></div>
+            </div>}
         </Modal>
     </section>
 }

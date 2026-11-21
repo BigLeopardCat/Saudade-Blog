@@ -98,3 +98,22 @@
   font-size: 17px
   font-weight: 600
   color: var(--scene-accent)
+
+.pinnedAnnouncementTitle
+  display: block
+  color: var(--washi-ink, #4a3550)
+  font-size: 19px
+  font-weight: 700
+  line-height: 1.5
+  text-align: center
+  overflow-wrap: anywhere
+.pinnedAnnouncementBody
+  box-sizing: border-box
+  max-height: min(58dvh, 560px)
+  padding: 0 24px 24px
+  overflow-y: auto
+  scrollbar-gutter: stable
+  overscroll-behavior: contain
+  color: var(--washi-ink, #4a3550)
+  .pinnedAnnouncementTime
+    color: var(--washi-ink-2, #7c6584)
