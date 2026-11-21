@@ -64,8 +64,8 @@ jobs:
           cover-display.spec.ts gallery.spec.ts image-generation.spec.ts
           admin-tags.spec.ts admin-categories.spec.ts announcement.spec.ts reading-controls.spec.ts
           --grep 'gallery navigation state opens|real editor reviews body|accept title/body and publish in place|cover picker reads gallery|portrait covers retain|gallery opens details|image generation requires request|tag editing targets|category create failure|failed business save keeps|labels remain clickable'
-      - name: Verify public language switching
-        run: npx --no-install playwright test public-locale.spec.ts standalone-locale.spec.ts
+      - name: Verify public language and return layouts
+        run: npx --no-install playwright test public-locale.spec.ts standalone-locale.spec.ts public-return-layout.spec.ts
       - name: Preserve public language previews
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

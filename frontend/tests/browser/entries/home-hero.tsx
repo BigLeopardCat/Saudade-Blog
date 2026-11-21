@@ -1,3 +1,4 @@
+import '../../../src/components/AnnouncementModal/index.sass'
 import '../../../src/index.css'
 import '../../../src/frontHome/main.css'
 import '../../../src/App.sass'
