@@ -93,7 +93,10 @@ class Element {
   }
   removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
-  setAttribute(k, v) { this._attrs[k] = v; }
+  setAttribute(k, v) {
+    this._attrs[k] = String(v);
+    if (['title', 'alt', 'placeholder'].includes(k)) this[k] = String(v);
+  }
   getAttribute(k) { return this._attrs[k] ?? null; }
   addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
   removeEventListener(t, fn) { const a = this._listeners[t]; if (a) this._listeners[t] = a.filter(f => f !== fn); }

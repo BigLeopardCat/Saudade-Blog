@@ -41,7 +41,7 @@ for (const width of [1440, 390]) {
     await page.reload()
     await expect(page.getByRole('button', {name: 'Search', exact: true})).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
-    await page.screenshot({path: test.info().outputPath(`public-english-${width}.png`)})
+    await page.screenshot({path: test.info().outputPath(`pinned-public-english-${width}.png`)})
   })
 }
 

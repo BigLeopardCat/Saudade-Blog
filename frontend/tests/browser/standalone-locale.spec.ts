@@ -25,6 +25,6 @@ for (const scenario of [
     await page.getByRole('button', {name: 'Switch to English'}).click()
     await expect(control(scenario.english)).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391)
-    await page.screenshot({path: test.info().outputPath('standalone-english.png')})
+    await page.screenshot({path: test.info().outputPath('pinned-standalone-english.png')})
   })
 }
