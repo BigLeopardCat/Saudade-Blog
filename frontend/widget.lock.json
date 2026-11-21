@@ -2,11 +2,11 @@
   "//": "看板娘源码位于 Agent 仓库（MIT）；更新组件时同步 sha 与 trees，构建由 fetch-widget.mjs 拉取。",
   "//repo": "Fork 可用 WIDGET_REPO 覆盖源仓地址。",
   "repo": "https://github.com/BigLeopardCat/saudade-blog-agent.git",
-  "sha": "474e3f69548c80f1be5eb9d7a8a3095e79869f17",
+  "sha": "c82b579def70de23a6412c0c59d67b7e1305b745",
   "base": "frontend/public",
   "//trees": "构建逐项验证检出提交与子树哈希。",
   "trees": {
-    "frontend/public/live2d-widgets": "81197360f2d770263776db3eb4a31d6fefc1376d",
+    "frontend/public/live2d-widgets": "386a95faf4c0bcbed092cf4502c526a646f28f07",
     "frontend/public/live2d_model": "556f5ea9c844018ebf8b1a4ea847694aebfca794"
   }
 }
