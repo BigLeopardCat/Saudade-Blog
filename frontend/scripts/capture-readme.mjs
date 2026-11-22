@@ -32,7 +32,11 @@ try {
         }).map(image => image.decode().catch(() => {})));
       });
       const announcement = page.getByRole('button', {name: locale === 'en' ? 'Got it' : '我知道了', exact: true});
-      if (await announcement.isVisible()) await announcement.click();
+      await announcement.waitFor({state: 'visible', timeout: 15000}).catch(() => {});
+      if (await announcement.isVisible()) {
+        await announcement.click();
+        await expect(page.getByRole('dialog')).toBeHidden();
+      }
       const screenshot = async (name, region = page) => {
         await region.screenshot({path: path.join(output, name), type: 'jpeg', quality: 84,
           animations: 'disabled', scale: 'css'});
@@ -44,6 +48,9 @@ try {
       await expect(page.locator('#waifu-chat')).toBeVisible();
       await expect(page.locator('#waifu-chat')).toHaveClass(/active/);
       await expect(page.locator('#chat-empty')).toBeVisible();
+      await expect(page.locator('#waifu-chat')).toHaveAttribute('data-ui-ready', '1');
+      // Take the final expanded geometry after focus/resize and window transitions.
+      await page.waitForTimeout(750);
       await screenshot(`lingyue-chat-${locale}.jpg`, page.locator('#waifu-chat'));
     } finally {await context.close();}
   }
