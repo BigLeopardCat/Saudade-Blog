@@ -7,6 +7,11 @@ on:
       - 'frontend/tests/browser/**'
       - '.github/workflows/wiki-screenshots.yml'
   workflow_dispatch:
+    inputs:
+      public_readme:
+        description: Capture the public demo for README previews (no login or model calls)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -82,5 +87,19 @@ jobs:
         with:
           name: wiki-screenshots
           path: ${{ runner.temp }}/wiki-screenshots
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Capture public README previews
+        if: github.event_name == 'workflow_dispatch' && inputs.public_readme
+        env:
+          README_SCREENSHOT_DIR: ${{ runner.temp }}/readme-screenshots
+        run: node scripts/capture-readme.mjs
+      - name: Preserve public README previews
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.public_readme
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: readme-screenshots
+          path: ${{ runner.temp }}/readme-screenshots
           retention-days: 7
           if-no-files-found: error
