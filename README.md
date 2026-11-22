@@ -21,6 +21,22 @@ The backend uses **Rust / Axum / SeaORM / PostgreSQL**; the frontend uses **Reac
 
 Public pages and chat controls support English and Chinese, with a persistent language switch and synchronization across tabs. Articles and user content retain their original language; administration has not been fully translated. The live site reflects its deployed version, and administration requires an authorized account.
 
+## Interface preview
+
+### Blog homepage
+
+![Saudade Blog homepage with navigation, article browsing and the Lingyue mascot](docs/assets/readme/blog-home-en.jpg)
+
+Browse articles, categories and tags, search the site, and open Lingyue from the mascot toolbar in the lower left.
+
+### Lingyue chat
+
+![Lingyue chat with conversation controls, suggested prompts and the message composer](docs/assets/readme/lingyue-chat-en.jpg)
+
+Use suggested prompts to explore the blog, find articles or read together, or enter your own question. Authorized users can also collaborate on writing and prepare content management operations; writes requiring approval show a review step first.
+
+Actual screenshots of the public interface at [saudade.site](https://saudade.site/). Interface controls support English and Chinese; article content retains its original language. See the [tutorials (中文)](docs/wiki/Home.md) for more workflows.
+
 ## Capabilities
 
 | Area | Behavior |
