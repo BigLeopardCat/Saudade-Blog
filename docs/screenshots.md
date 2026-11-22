@@ -1,7 +1,20 @@
 # 教程截图维护
 
-源码为 `docs/wiki/*.md`，图片为 `docs/wiki/assets/`。文件名按操作命名，教程在对应步骤展示，
-并提供说明。图片使用合成账号、示例域名和占位图，不代表真实站点配置、付费输出或生产执行证据。
+教程源码为 `docs/wiki/*.md`，教程图片为 `docs/wiki/assets/`。文件名按操作命名，教程在对应步骤展示，
+并提供说明。教程图片使用合成账号、示例域名和占位图，不代表真实站点配置、付费输出或生产执行证据。
+
+## README 实际界面预览
+
+两个语言版本的 README 使用 `docs/assets/readme/` 下的实际公开界面截图：
+
+| 文件 | 内容 |
+| --- | --- |
+| `blog-home-zh-CN.jpg`、`blog-home-en.jpg` | 博客首页、文章入口与看板娘 |
+| `lingyue-chat-zh-CN.jpg`、`lingyue-chat-en.jpg` | 展开的看板娘对话框与快捷提问 |
+
+图片来自 `https://saudade.site/` 的全新匿名浏览器上下文，未登录、未发送消息，也不代表模型回答或管理操作的执行结果。中英文分别截图，文章内容保留原文；截图中的角色及美术沿用其原有资源许可。
+
+在 GitHub Actions 的 **Wiki screenshots** 手动运行中勾选 `public_readme`，获取 `readme-screenshots` 产物。`frontend/scripts/capture-readme.mjs` 只允许 GET、HEAD、OPTIONS 请求，不提交登录、对话或其他写操作；只在独立开发环境或托管 CI 中运行。产物的 `capture.json` 记录截图时间、地址、语言和视口。检查图片完整性后按稳定文件名更新，勿提交账号状态或浏览器存储。JPEG 在截图时压缩，中英文 README 引用各自的本地图，不依赖临时 CI 地址。
 
 ## 当前图片与插入位置
 
