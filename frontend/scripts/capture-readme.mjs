@@ -1,6 +1,8 @@
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium, expect} from '@playwright/test';
+import {chromium, expect as baseExpect} from '@playwright/test';
+
+const expect = baseExpect.configure({timeout: 90000});
 
 const output = process.env.README_SCREENSHOT_DIR;
 if (!output) throw new Error('Set README_SCREENSHOT_DIR to an explicit output directory');
@@ -21,6 +23,7 @@ try {
       await page.goto('https://saudade.site/', {waitUntil: 'domcontentloaded', timeout: 90000});
       await expect(page.locator('html')).toHaveAttribute('lang', locale);
       await expect(page.locator('#waifu-tool-hitokoto')).toBeAttached();
+      await expect(page.locator('#home-articles .allArticles:not(.allArticlesMeasure) .article').first()).toBeVisible();
       await page.evaluate(async () => {
         await document.fonts.ready;
         await Promise.all(Array.from(document.images).filter(image => {
@@ -30,8 +33,8 @@ try {
       });
       const announcement = page.getByRole('button', {name: locale === 'en' ? 'Got it' : '我知道了', exact: true});
       if (await announcement.isVisible()) await announcement.click();
-      const screenshot = async name => {
-        await page.screenshot({path: path.join(output, name), type: 'jpeg', quality: 84,
+      const screenshot = async (name, region = page) => {
+        await region.screenshot({path: path.join(output, name), type: 'jpeg', quality: 84,
           animations: 'disabled', scale: 'css'});
         captures.push({file: name, url: page.url(), locale, viewport: page.viewportSize()});
       };
@@ -41,7 +44,7 @@ try {
       await expect(page.locator('#waifu-chat')).toBeVisible();
       await expect(page.locator('#waifu-chat')).toHaveClass(/active/);
       await expect(page.locator('#chat-empty')).toBeVisible();
-      await screenshot(`lingyue-chat-${locale}.jpg`);
+      await screenshot(`lingyue-chat-${locale}.jpg`, page.locator('#waifu-chat'));
     } finally {await context.close();}
   }
   await writeFile(path.join(output, 'capture.json'), JSON.stringify({
