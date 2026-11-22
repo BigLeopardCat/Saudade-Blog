@@ -1,12 +1,23 @@
+<div align="center">
+
 # Saudade Blog
 
-[English](README.md) · 简体中文
+[English](README.md) · **简体中文**
+
+[![构建与检查](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml)
+[![最新发行版](https://img.shields.io/github/v/release/BigLeopardCat/Saudade-Blog?label=release&color=2563EB)](https://github.com/BigLeopardCat/Saudade-Blog/releases/latest)
+[![Rust 1.92+](https://img.shields.io/badge/Rust-1.92%2B-CE422B?style=flat&logo=rust&logoColor=white)](Cargo.toml)
+[![代码许可: GPL-2.0-or-later](https://img.shields.io/badge/code-GPL--2.0%2B-64748B?style=flat)](LICENSE)
+
+[![在线演示](https://img.shields.io/badge/-%E5%9C%A8%E7%BA%BF%E6%BC%94%E7%A4%BA-7C3AED?style=for-the-badge)](https://saudade.site/)
+[![项目文档](https://img.shields.io/badge/-%E9%A1%B9%E7%9B%AE%E6%96%87%E6%A1%A3-4F46E5?style=for-the-badge)](docs/README.md)
+[![工程案例](https://img.shields.io/badge/-%E5%B7%A5%E7%A8%8B%E6%A1%88%E4%BE%8B-475569?style=for-the-badge)](docs/engineering-cases.md)
+
+</div>
 
 可独立部署的个人博客与内容管理应用，覆盖写作发布、阅读检索、图库和站内互动；可选接入 Agent 协作与 AI 生图。
 
 后端使用 **Rust / Axum / SeaORM / PostgreSQL**，前端使用 **React / TypeScript / Vite**。业务数据、权限和事务由博客管理，模型执行由独立的 [Saudade Blog Agent](https://github.com/BigLeopardCat/saudade-blog-agent) 提供。
-
-[在线博客](https://saudade.site/) · [使用指南](docs/user-guide.md) · [部署](deploy/docker/README.md) · [架构](docs/architecture.md) · [版本发布](https://github.com/BigLeopardCat/Saudade-Blog/releases)
 
 在线站点展示实际部署；后台管理和协作编辑需要管理员身份。
 
@@ -62,7 +73,9 @@ npm run dev
 
 ## 文档
 
-[使用指南](docs/user-guide.md) · [Wiki 教程](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [文档索引](docs/README.md) · [配置](docs/configuration.md) · [代码导读](docs/code-reading.md) · [排障](docs/troubleshooting.md)
+- **使用与配置：** [使用指南](docs/user-guide.md) · [Wiki 教程](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [配置](docs/configuration.md)
+- **开发与排障：** [文档索引](docs/README.md) · [代码导读](docs/code-reading.md) · [排障](docs/troubleshooting.md)
+- **英文与案例：** [English guide](docs/en/README.md) · [中文工程案例](docs/engineering-cases.md) · [English cases](docs/en/engineering-cases.md)
 
 界面、接口、配置与运维说明随源码维护；Wiki 按写作、图库、安装与恢复组织教程，
 [源稿](docs/wiki/Home.md)随 PR 评审。截图使用合成数据，不包含真实账号、私信与密钥。
@@ -71,6 +84,4 @@ npm run dev
 
 提交采用 `type(scope): 中文说明`，完整检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。后续方向见 [ROADMAP.md](ROADMAP.md)，用户可见变化见 [CHANGELOG.md](CHANGELOG.md)，安全问题见 [SECURITY.md](SECURITY.md)。
 
-博客代码按 [GPL-2.0](LICENSE) 分发，来源与第三方声明见 [THIRD-PARTY.md](THIRD-PARTY.md)。Agent 聊天组件代码使用 MIT，角色及美术资源另有许可，见 [Agent 资源许可](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md)。
-
-英文技术入口见 [English guide](docs/en/README.md)，工程案例见[中文案例](docs/engineering-cases.md)与[English cases](docs/en/engineering-cases.md)。
+博客代码按 [GPL-2.0-or-later](LICENSE) 分发，来源与第三方声明见 [THIRD-PARTY.md](THIRD-PARTY.md)。Agent 聊天组件代码使用 MIT，角色及美术资源另有许可，见 [Agent 资源许可](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md)。

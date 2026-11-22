@@ -1,12 +1,23 @@
+<div align="center">
+
 # Saudade Blog
 
-English · [简体中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md)
+
+[![Build and checks](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml)
+[![Latest release](https://img.shields.io/github/v/release/BigLeopardCat/Saudade-Blog?label=release&color=2563EB)](https://github.com/BigLeopardCat/Saudade-Blog/releases/latest)
+[![Rust 1.92+](https://img.shields.io/badge/Rust-1.92%2B-CE422B?style=flat&logo=rust&logoColor=white)](Cargo.toml)
+[![Code license: GPL-2.0-or-later](https://img.shields.io/badge/code-GPL--2.0%2B-64748B?style=flat)](LICENSE)
+
+[![Live demo](https://img.shields.io/badge/-Live_demo-7C3AED?style=for-the-badge)](https://saudade.site/)
+[![Documentation](https://img.shields.io/badge/-Documentation-4F46E5?style=for-the-badge)](docs/en/README.md)
+[![Engineering cases](https://img.shields.io/badge/-Engineering_cases-475569?style=for-the-badge)](docs/en/engineering-cases.md)
+
+</div>
 
 A self-hosted blog and content management application with article publishing, categories and tags, a media gallery, reader interactions, and optional agent-assisted workflows.
 
 The backend uses **Rust / Axum / SeaORM / PostgreSQL**; the frontend uses **React / TypeScript / Vite**. The blog owns business data, authentication, permissions, and transactions. The separate [Saudade Blog Agent](https://github.com/BigLeopardCat/saudade-blog-agent) supplies model execution and the Lingyue chat widget.
-
-[Live site](https://saudade.site/) · [Technical guide](docs/en/README.md) · [Engineering cases](docs/en/engineering-cases.md) · [Releases](https://github.com/BigLeopardCat/Saudade-Blog/releases)
 
 Public pages and chat controls support English and Chinese, with a persistent language switch and synchronization across tabs. Articles and user content retain their original language; administration has not been fully translated. The live site reflects its deployed version, and administration requires an authorized account.
 
@@ -64,10 +75,12 @@ Widget source lives in the Agent repository. This host pins the source commit an
 
 ## Documentation and contribution
 
-[English guide](docs/en/README.md) · [中文文档](docs/README.md) · [User guide (中文)](docs/user-guide.md) · [Wiki (中文)](https://github.com/BigLeopardCat/Saudade-Blog/wiki) · [Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
+- **Guides:** [English](docs/en/README.md) · [中文](docs/README.md) · [Wiki tutorials (中文)](https://github.com/BigLeopardCat/Saudade-Blog/wiki)
+- **Engineering:** [Cases](docs/en/engineering-cases.md) · [User guide (中文)](docs/user-guide.md)
+- **Contribute:** [Contribution guide](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
 
 English core guides and Chinese operational/protocol references are linked by topic. Use documentation from your source revision or release. Both repositories use `main` as their primary branch. English contributions are welcome under the shared commit and verification rules.
 
 ## License
 
-Blog code is distributed under [GPL-2.0](LICENSE); see [third-party notices](THIRD-PARTY.md). Agent widget code is MIT licensed, while character/art assets have separate terms in the [Agent asset license](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md).
+Blog code is distributed under [GPL-2.0-or-later](LICENSE); see [third-party notices](THIRD-PARTY.md). Agent widget code is MIT licensed, while character/art assets have separate terms in the [Agent asset license](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md).
