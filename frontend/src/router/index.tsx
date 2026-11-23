@@ -16,6 +16,7 @@ const Notes = lazy(() => import("../pages/Dashboard/Notes"));
 const Comments = lazy(() => import("../pages/Dashboard/Talks"));
 const Albums = lazy(() => import("../pages/Dashboard/Albums"));
 const Users = lazy(() => import("../pages/Dashboard/Users"));
+const Support = lazy(() => import("../pages/Support"));
 const Analytics = lazy(() => import("../pages/Dashboard/Analytics"));
 const UserControl = lazy(() => import("../pages/Dashboard/UserControl"));
 const AllNotes = lazy(() => import("../pages/Dashboard/Notes/AllNotes/index"));
@@ -47,6 +48,10 @@ const router = createBrowserRouter([
             {
                 path: 'about',
                 element: routePage(<AboutMe />)
+            },
+            {
+                path: 'support',
+                element: routePage(<Support />)
             },
             {
                 path: "talk",
@@ -120,6 +125,10 @@ const router = createBrowserRouter([
             {
                 path: 'users',
                 element: routePage(<Users />)
+            },
+            {
+                path: 'support',
+                element: routePage(<Support staff />)
             },
             {
                 // 旧「留言管理」地址 → 用户管理页（评论管理 Tab 内）

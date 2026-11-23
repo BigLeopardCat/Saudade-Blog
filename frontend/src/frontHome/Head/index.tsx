@@ -2,7 +2,7 @@ import {t as tr, useLocale} from '../../i18n';
 import {Avatar, ConfigProvider, Modal, theme as antTheme} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
-import {useLocation, useNavigate} from "react-router-dom";
+import {Link, useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import {useAutoHideHeader} from './useAutoHideHeader';
 import ScenePicker from "../../components/ScenePicker";
@@ -235,6 +235,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             <li onClick={() => { closePhoneBar(); navigate('talk'); }}><SceneIcon name="message"/>{tr("说说")}</li>
                             <li onClick={() => { closePhoneBar(); navigate('guestbook'); }}><SceneIcon name="book"/>{tr("留言板")}</li>
                             <li onClick={() => { closePhoneBar(); navigate('about'); }}><SceneIcon name="leaf"/>{tr("关于我")}</li>
+                            <li><Link to="/support" onClick={closePhoneBar}>{tr("客服中心")}</Link></li>
                         </ul>
                     </div>
                 </div>
@@ -284,6 +285,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             flexDirection: 'column',
                             gap: '5px'
                         }}>
+                            <Link className="theme-btn" to="/support">{tr("客服中心")}</Link>
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={openUserCenter}>{tr("设置")}</div>

@@ -6,6 +6,7 @@ import txLogo from '../../assets/Tencent_Cloud_logo.svg'
 import bailianLogo from '../../assets/Bailian_Logo.svg'
 import live2dLogo from '../../assets/Live2D_Cubism_Logo.png'
 import {useSelector} from "react-redux";
+import {Link} from "react-router-dom";
 
 const mpsCode = (s: string): string => (s.match(/\d{5,}/) || [''])[0]
 
@@ -20,6 +21,7 @@ const Footer = () => {
     const code = mpsCode(blogPublicIcp)
     return <>
         <footer className='footerContainer'>
+            <p className="footNote"><Link className="link" to="/support">{tr("客服中心")}</Link></p>
             {copyright && (
                 <p className="footLine">&copy; {new Date().getFullYear()} {copyright}</p>
             )}
