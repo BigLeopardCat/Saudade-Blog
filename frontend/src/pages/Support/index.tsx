@@ -53,7 +53,7 @@ function Thread({token, base, id, back}: {token: string; base: string; id: numbe
     const [revision, refresh] = useState(0);
     const [before, setBefore] = useState<number | null>(null);
     const [reply, setReply] = useState('');
-    const result = useRead<Detail>(base + '/' + id + (before ? '?before=' + before : ''), token, revision);
+    const result = useRead<Detail>(base + '/' + id + (before ? '?before=' + before : ''), token, revision, before === null);
     const write = useWrite(token);
     const record = result?.data?.case;
     const latest = () => {setBefore(null); refresh(r => r+1);};
@@ -70,6 +70,12 @@ function Thread({token, base, id, back}: {token: string; base: string; id: numbe
             <ol className="support-events">{result.data.events.items.map(event => <li key={event.id}>
                 <div><strong>{t(event.sender === 'staff' ? '站点客服' : '用户')}</strong> · {t(actions[event.action])} <time dateTime={event.createdAt}>{date(event.createdAt, locale)}</time></div>
                 {event.body && <p>{event.body}</p>}</li>)}</ol>
+            {!before && result.data.guidance && <aside className="support-guidance" aria-label={t('首次咨询参考')}>
+                <strong>{t('Lunima 客服助手')}</strong>
+                {result.data.guidance.topic ? <><p>{t(result.data.guidance.topic.answer)}</p>
+                    {result.data.guidance.topic.href !== '/support' && <Link to={result.data.guidance.topic.href}>{t('前往相关页面')}</Link>}</>
+                    : <p>{t('未匹配到公开解答，已转人工跟进。')}</p>}
+            </aside>}
             {!before && <><div className="support-actions">
                 {record.status !== 'resolved' && record.kind === 'question' && <button disabled={write.busy} onClick={() => void submit('escalate')}>{t(actions.escalate)}</button>}
                 <button disabled={write.busy} onClick={() => void submit(record.status === 'resolved' ? 'reopen' : 'resolve')}>{t(record.status === 'resolved' ? actions.reopen : actions.resolve)}</button>

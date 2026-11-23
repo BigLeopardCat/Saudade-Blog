@@ -39,6 +39,12 @@ pub(super) struct Page<T> {
 pub(super) struct Details {
     case: Case,
     events: Page<Event>,
+    guidance: Option<Guidance>,
+}
+
+#[derive(Serialize)]
+struct Guidance {
+    topic: Option<&'static super::Topic>,
 }
 
 fn page<T>(mut items: Vec<T>, id: impl Fn(&T) -> i32) -> Page<T> {
@@ -115,8 +121,28 @@ pub(super) async fn detail(
     .await?;
     let mut events = page(rows, |row| row.id);
     events.items.reverse();
+    let suggestion = tx
+        .query_one(sql(
+            "SELECT topic_id FROM support_guidance WHERE case_id=$1",
+            vec![id.into()],
+        ))
+        .await?;
+    let guidance = if let Some(row) = suggestion {
+        let topic_id: Option<String> = row.try_get("", "topic_id")?;
+        Some(Guidance {
+            topic: super::TOPICS
+                .iter()
+                .find(|t| Some(t.id) == topic_id.as_deref()),
+        })
+    } else {
+        None
+    };
     tx.commit().await?;
-    Ok(Details { case, events })
+    Ok(Details {
+        case,
+        events,
+        guidance,
+    })
 }
 
 #[derive(FromQueryResult)]

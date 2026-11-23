@@ -29,3 +29,31 @@ CREATE TABLE IF NOT EXISTS support_event (
 
 CREATE INDEX IF NOT EXISTS support_event_case_id_idx ON support_event(case_id, id DESC);
 CREATE INDEX IF NOT EXISTS support_event_actor_id_idx ON support_event(actor_id);
+
+CREATE TABLE IF NOT EXISTS support_guidance (
+    case_id integer PRIMARY KEY REFERENCES support_case(id) ON DELETE CASCADE,
+    topic_id text CHECK (topic_id ~ '^[a-z][a-z0-9-]{0,63}$')
+);
+
+CREATE OR REPLACE VIEW support_assistant_queue WITH (security_barrier = true) AS
+SELECT c.id AS case_id, c.owner_id, c.subject, e.body
+FROM support_case c
+JOIN support_event e ON e.case_id = c.id AND e.action = 'open_question'
+WHERE c.kind = 'question' AND c.version = 1 AND c.status = 'waiting_staff'
+  AND NOT EXISTS (SELECT 1 FROM support_guidance g WHERE g.case_id = c.id);
+
+-- The worker can record one suggested topic on an untouched question. A human taking
+-- the case wins the same row lock as a normal reply, escalation or resolution.
+CREATE OR REPLACE FUNCTION support_record_guidance(target integer, topic text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+    PERFORM 1 FROM public.support_case
+    WHERE id = target AND kind = 'question' AND version = 1 AND status = 'waiting_staff'
+    FOR UPDATE;
+    IF FOUND THEN
+        INSERT INTO public.support_guidance (case_id, topic_id) VALUES (target, topic)
+        ON CONFLICT (case_id) DO NOTHING;
+    END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION support_record_guidance(integer, text) FROM PUBLIC;

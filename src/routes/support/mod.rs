@@ -155,13 +155,27 @@ struct Topic {
     question: &'static str,
     answer: &'static str,
     href: &'static str,
+    keywords: &'static [&'static str],
 }
-async fn topics() -> Json<ApiResponse<[Topic; 3]>> {
-    Json(ApiResponse::success([
-        Topic { id:"find-article", question:"怎样找到以前读过的文章？", answer:"进入归档按时间浏览，记得标题或关键词时也可以使用顶部的搜索。", href:"/times" },
-        Topic { id:"guestbook", question:"留言和私下联系客服有什么区别？", answer:"留言板用于公开交流。涉及账号或需要站方跟进的问题，请在客服中心提交私有咨询。", href:"/guestbook" },
-        Topic { id:"follow-ticket", question:"提交的问题在哪里看回复？", answer:"用提交时的账号登录客服中心，从「我的咨询与工单」打开原记录。你可以继续补充，或把需要跟进的咨询转为工单。", href:"/support" },
-    ]))
+const TOPICS: &[Topic] = &[
+    Topic {
+        id: "find-article", question: "怎样找到以前读过的文章？",
+        answer: "进入归档按时间浏览，记得标题或关键词时也可以使用顶部的搜索。", href: "/times",
+        keywords: &["文章", "以前", "归档", "搜索", "找回", "archive", "article", "search"],
+    },
+    Topic {
+        id: "guestbook", question: "留言和私下联系客服有什么区别？",
+        answer: "留言板用于公开交流。涉及账号或需要站方跟进的问题，请在客服中心提交私有咨询。", href: "/guestbook",
+        keywords: &["留言", "私下", "公开", "私密", "guestbook", "private", "public"],
+    },
+    Topic {
+        id: "follow-ticket", question: "提交的问题在哪里看回复？",
+        answer: "用提交时的账号登录客服中心，从「我的咨询与工单」打开原记录。你可以继续补充，或把需要跟进的咨询转为工单。", href: "/support",
+        keywords: &["工单", "进度", "看回复", "查询", "ticket", "status", "replies"],
+    },
+];
+async fn topics() -> Json<ApiResponse<&'static [Topic]>> {
+    Json(ApiResponse::success(TOPICS))
 }
 
 async fn list(

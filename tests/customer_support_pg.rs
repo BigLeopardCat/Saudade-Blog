@@ -104,6 +104,18 @@ async fn consultation_escalation_staff_handoff_and_private_retries() {
     let desk = format!("{staff_cases}/{id}");
     let writes = format!("{mine}/events");
     let staff_writes = format!("{desk}/events");
+    let write_guidance = |topic: &str| {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT public.support_record_guidance($1,$2)",
+            [(id as i32).into(), topic.to_owned().into()],
+        )
+    };
+    db.execute(write_guidance("find-article")).await.unwrap();
+    db.execute(write_guidance("guestbook")).await.unwrap();
+    let (_, guided) = call(&app, "GET", &mine, Some(&owner), None).await;
+    assert_eq!(guided["data"]["guidance"]["topic"]["id"], "find-article");
+    assert_eq!(guided["data"]["case"]["version"], 1);
     assert_eq!(call(&app, "GET", &mine, Some(&other), None).await.0, 404);
     let (_, other_list) = call(&app, "GET", user_cases, Some(&other), None).await;
     assert!(other_list["data"]["items"].as_array().unwrap().is_empty());
@@ -224,12 +236,25 @@ async fn consultation_escalation_staff_handoff_and_private_retries() {
     let mut ticket = first;
     ticket["kind"] = json!("ticket");
     ticket["requestId"] = json!(Uuid::new_v4().to_string());
-    assert_eq!(
-        call(&app, "POST", user_cases, Some(&owner), Some(ticket))
-            .await
-            .1["data"]["kind"],
-        "ticket"
-    );
+    let (_, direct) = call(&app, "POST", user_cases, Some(&owner), Some(ticket)).await;
+    assert_eq!(direct["data"]["kind"], "ticket");
+    let direct_id = direct["data"]["id"].as_i64().unwrap() as i32;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT public.support_record_guidance($1,'guestbook')",
+        [direct_id.into()],
+    ))
+    .await
+    .unwrap();
+    let (_, handled) = call(
+        &app,
+        "GET",
+        &format!("{user_cases}/{direct_id}"),
+        Some(&owner),
+        None,
+    )
+    .await;
+    assert_eq!(handled["data"]["guidance"], Value::Null);
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE \"user\" SET role='user' WHERE id=$1",

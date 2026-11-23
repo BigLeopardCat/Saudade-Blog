@@ -23,7 +23,7 @@ test('guest help and authenticated consultation survive a lost create response',
       expect(req.postDataJSON()).toMatchObject({action:'escalate',version:1})
       promoted=true;return ok(item())
     }
-    if(path.endsWith('/32')) return ok({case:item(),events:{items:[{id:1,sender:'customer',action:'open_question',
+    if(path.endsWith('/32')) return ok({case:item(),guidance:{topic:{id:'find-article',answer:'打开归档找文章',href:'/times'}},events:{items:[{id:1,sender:'customer',action:'open_question',
       body:'我的私有提问',createdAt:'2026-11-23T08:00:00Z'}],nextBefore:null}})
     return route.fulfill({status:404})
   })
@@ -42,6 +42,7 @@ test('guest help and authenticated consultation survive a lost create response',
   await expect(page.getByRole('alert')).toBeVisible()
   await page.getByRole('button',{name:'提交',exact:true}).click()
   await expect(page.getByRole('heading',{name:'#32 无法打开归档'})).toBeVisible()
+  await expect(page.getByLabel('首次咨询参考').getByRole('link')).toHaveAttribute('href','/times')
   expect(requests).toHaveLength(2)
   expect(requests[0]).toBeTruthy()
   expect(requests[1]).toBe(requests[0])
