@@ -38,9 +38,16 @@ async fn call(
 }
 
 async fn account(db: &DatabaseConnection, role: &str) -> (i32, String) {
-    let row=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
-        "INSERT INTO \"user\" (username,nickname,password,role) VALUES ($1,'support fixture','x',$2) RETURNING id",
-        [format!("support-test-{}",Uuid::new_v4()).into(),role.into()])).await.unwrap().unwrap();
+    let name = format!("support-{}", Uuid::new_v4().simple());
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO \"user\" (username,nickname,password,role) VALUES ($1,$1,'x',$2) RETURNING id",
+            [name.into(), role.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
     let id: i32 = row.try_get("", "id").unwrap();
     (id, create_token(id, role, 0))
 }
