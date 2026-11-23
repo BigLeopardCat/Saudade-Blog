@@ -38,10 +38,10 @@ GRANT SELECT ON public.support_assistant_queue TO support_worker;
 GRANT EXECUTE ON FUNCTION public.support_record_guidance(integer, text) TO support_worker;
 ```
 
-在 Python 3.11+ 的专用虚拟环境中安装取得的 Lunima 0.1.1 平台 wheel 与 psycopg 3。为服务配置 `SUPPORT_WORKER_DATABASE_URL`（上述角色的 DSN）、`SUPPORT_RUNTIME_DB`（该服务独占、可持久写入的 SQLite 路径）和 `SUPPORT_BLOG_URL`（可达的博客后端，默认 `http://127.0.0.1:3000`）。
+在 Python 3.11+ 的专用虚拟环境中安装与服务器架构匹配的 Lunima 0.2.0 wheel 与 psycopg 3。`LUNIMA_WHEEL` 指向已取得的本地 wheel 文件。为服务配置 `SUPPORT_WORKER_DATABASE_URL`（上述角色的 DSN）、`SUPPORT_RUNTIME_DB`（该服务独占、可持久写入的 SQLite 路径）和 `SUPPORT_BLOG_URL`（可达的博客后端，默认 `http://127.0.0.1:3000`）。
 
 ```sh
-python -m pip install /path/to/lunima-0.1.1-py3-none-PLATFORM.whl 'psycopg[binary]>=3.2,<4'
+python -m pip install "$LUNIMA_WHEEL" 'psycopg[binary]>=3.2,<4'
 python tools/support-worker/worker.py
 ```
 
