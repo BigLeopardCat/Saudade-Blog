@@ -35,7 +35,8 @@ export default function SupportMode() {
         panel.dataset.supportMode = 'true';
         const close = () => setOpen(false);
         const closeOnEsc = (event: KeyboardEvent) => {
-            if (event.key === 'Escape' && visible) {
+            const focused = document.activeElement;
+            if (event.key === 'Escape' && visible && (focused === document.body || panel.contains(focused))) {
                 event.stopPropagation();
                 close();
                 panel?.querySelector<HTMLButtonElement>('[data-chat-host-action] button')?.focus();
@@ -43,11 +44,12 @@ export default function SupportMode() {
         };
         const button = panel.querySelector('#chat-close');
         button?.addEventListener('click', close);
-        panel.addEventListener('keydown', closeOnEsc, true);
+        document.addEventListener('keydown', closeOnEsc, true);
+        if (visible) panel.querySelector<HTMLElement>('#lingyue-support-mode')?.focus({preventScroll: true});
         return () => {
             delete panel.dataset.supportMode;
             button?.removeEventListener('click', close);
-            panel.removeEventListener('keydown', closeOnEsc, true);
+            document.removeEventListener('keydown', closeOnEsc, true);
         };
     }, [open, panel, visible]);
     if (!panel) return null;
@@ -62,7 +64,7 @@ export default function SupportMode() {
                 <path d={open ? 'M14 6l-6 6 6 6' : 'M20 5H4v12h4v4l5-4h7V5zM12 8v4m0 2v1'}/>
             </svg>
         </button>, rail)}
-        {open && visible && createPortal(<section id="lingyue-support-mode" aria-label={t('泠月喵客服')}>
+        {open && visible && createPortal(<section id="lingyue-support-mode" tabIndex={-1} aria-label={t('泠月喵客服')}>
             <header><strong>{t('泠月喵客服')}</strong><Link to="/support">{t('客服中心')}</Link></header>
             <p className="support-status">{t('需要时由站点客服接手，请勿发送密码或验证码。')}</p>
             {token ? <Desk key={token} token={token} staff={false} compact/> :
