@@ -26,25 +26,27 @@
 
 在已初始化的独立 PostgreSQL 中配置 `TEST_PG_URL` 与测试专用 `JWT_SECRET`，执行 `cargo test --locked --test customer_support_pg`。该测试使用实际路由和三个合成身份，覆盖咨询、并发重复提交、转工单、人工回复、状态冲突、关闭重开和私有记录隔离。
 
-## 启用 Lunima 首次咨询助手
+## 启用泠月喵客服
 
-助手从博客的公开帮助目录匹配首次咨询。唯一明确匹配会在原记录下显示答案和站内链接，其余咨询显示转人工提示。工单直接进入客服队列。人工开始处理后，迟到的自动结果会被数据库丢弃。详情页打开时每十秒从博客刷新进展。
+看板娘的「问题反馈」进入客服模式。Lunima 负责从公开帮助、公开文章搜索查找答案，信息不足时请求补充，敏感或超出范围的问题沿用原对话转后台工单。客服使用站内规则和公开数据，私有对话不会离开博客部署环境。后台接手、用户转人工或提交更新后，数据库拒绝旧轮次结果。
+
+已有站点按顺序执行 0040 与 [0041 客服会话迁移](../scripts/migration/pg/0041_lunima_support_turns.sql)，再发布应用。已有站点启用新进程时停止旧版首次咨询脚本。
 
 为助手单独创建一个仅可登录的 PostgreSQL 角色，例如 `support_worker`，通过站点现有的私有凭据管理方式配置登录。以表所有者授予以下权限。
 
 ```sql
 GRANT USAGE ON SCHEMA public TO support_worker;
-GRANT SELECT ON public.support_assistant_queue TO support_worker;
-GRANT EXECUTE ON FUNCTION public.support_record_guidance(integer, text) TO support_worker;
+GRANT SELECT ON public.support_pending_turn TO support_worker;
+GRANT EXECUTE ON FUNCTION public.support_publish_assistant(integer, integer, integer, text, boolean) TO support_worker;
 ```
 
 在 Python 3.11+ 的专用虚拟环境中安装与服务器架构匹配的 Lunima 0.2.0 wheel 与 psycopg 3。`LUNIMA_WHEEL` 指向已取得的本地 wheel 文件。为服务配置 `SUPPORT_WORKER_DATABASE_URL`（上述角色的 DSN）、`SUPPORT_RUNTIME_DB`（该服务独占、可持久写入的 SQLite 路径）和 `SUPPORT_BLOG_URL`（可达的博客后端，默认 `http://127.0.0.1:3000`）。
 
 ```sh
 python -m pip install "$LUNIMA_WHEEL" 'psycopg[binary]>=3.2,<4'
-python tools/support-worker/worker.py
+python tools/support-worker/agent_worker.py
 ```
 
-将上面的启动命令交给进程管理器，以一个服务实例运行。首次验收可添加 `--once` 处理一批待办。用普通测试账号分别发起「怎样找到以前读过的文章？」和一条目录里没有的问题，刷新详情后应分别看到归档帮助和人工跟进提示。可转工单并在管理员工作台继续回复。停止助手期间博客照常收件；重启后从未处理的首次咨询继续。SDK 的持久任务只包含帮助条目的匹配证据与业务编号，客服正文留在博客数据库。
+将 `agent_worker.py` 与安装好 wheel 的虚拟环境一并放入同一个固定发布目录，按 [systemd 模板](../deploy/systemd/saudade-support.service.template)配置。运行时数据库可设为 `/var/lib/saudade-support/runtime.sqlite`。同一运行时文件保持一个所有者进程。`SUPPORT_WORKERS` 默认 4，支持 1–16。从低值开始，按站内接口和数据库压测调整。首次验收可附加 `--once` 处理一批。停止助手期间博客仍可接收并人工处理工单，重启后从待处理轮次继续。
 
 用 `python -m unittest discover -s tools/support-worker -v` 可在临时 SQLite 上复验匹配、歧义转人工、私有正文和跨账号历史隔离，以及重启后复用同一任务。

@@ -1,0 +1,26 @@
+[Unit]
+Description=Lunima support for Saudade Blog
+After=network.target postgresql.service saudade-rust.service
+Wants=saudade-rust.service
+
+[Service]
+Type=simple
+User=saudade_support
+Group=saudade_support
+EnvironmentFile=/etc/saudade/support-runtime.env
+WorkingDirectory=/var/lib/saudade-support
+ExecStart=/srv/saudade-support/current/venv/bin/python -I /srv/saudade-support/current/agent_worker.py
+Restart=on-failure
+RestartSec=3
+StateDirectory=saudade-support
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+TasksMax=64
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

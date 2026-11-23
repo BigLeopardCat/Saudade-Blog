@@ -274,7 +274,11 @@ pub(super) async fn change(
     }
     let (kind, status) = match p.action.as_str() {
         "reply" if case.status != "resolved" => (
-            case.kind.as_str(),
+            if desk.staff() {
+                "ticket"
+            } else {
+                case.kind.as_str()
+            },
             if desk.staff() {
                 "waiting_user"
             } else {

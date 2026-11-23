@@ -1,0 +1,29 @@
+#waifu-chat [data-chat-host-panel] { display: none; }
+#waifu-chat[data-support-mode="true"]:not([data-window-mode="collapsed"]):not([data-window-mode="docked"])
+  > :is(.chat-messages, .chat-input-area, .waifu-conv-panel, .chat-new-msg-note) { visibility: hidden; }
+#waifu-chat[data-support-mode="true"] [data-chat-host-panel]:not(:empty) {
+    display: block;
+    position: absolute;
+    inset: var(--drag-h) 0 0 var(--drag-w);
+    z-index: 5;
+    min-width: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--chat-paper);
+    color: var(--chat-ink);
+    border-radius: 0 0 16px 0;
+}
+#lingyue-support-mode {
+    --support-paper: var(--chat-paper);
+    --support-ink: var(--chat-ink);
+    --support-line: var(--chat-line);
+    --support-accent: var(--chat-accent);
+    padding: .7rem .8rem;
+    font-size: .9rem;
+}
+#lingyue-support-mode > header { display: flex; justify-content: space-between; gap: .45rem; margin-bottom: .55rem; }
+#lingyue-support-mode a { color: var(--chat-accent); text-decoration: underline; }
+#lingyue-support-mode .support-panel { padding: .6rem; margin: 0; }
+#lingyue-support-mode .support-panel h2 { font-size: 1rem; margin-bottom: .4rem; }
+#lingyue-support-mode .support-events p { line-height: 1.65; }
+#lingyue-support-mode .support-status { color: var(--chat-muted); }

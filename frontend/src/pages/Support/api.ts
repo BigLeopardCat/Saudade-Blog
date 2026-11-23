@@ -7,7 +7,7 @@ export type CaseKind = 'question' | 'ticket';
 export type Status = 'waiting_staff' | 'waiting_user' | 'resolved';
 export type Action = 'reply' | 'escalate' | 'resolve' | 'reopen';
 export interface Ticket {id: number; ownerId: number; kind: CaseKind; subject: string; status: Status; version: number; updatedAt: string}
-export interface Entry {id: number; sender: 'customer' | 'staff'; action: Action | 'open_question' | 'open_ticket'; body: string; createdAt: string}
+export interface Entry {id: number; sender: 'customer' | 'staff' | 'assistant'; action: Action | 'open_question' | 'open_ticket'; body: string; createdAt: string}
 export interface Page<T> {items: T[]; nextBefore: number | null}
 export interface Detail {case: Ticket; events: Page<Entry>; guidance?: {topic: Topic | null} | null}
 export interface Topic {id: string; question: string; answer: string; href: string}
@@ -30,7 +30,7 @@ async function request<T>(path: string, token: string | null, init: RequestInit)
     return envelope.data as T;
 }
 
-export function useRead<T>(path: string, token: string | null, revision: number, poll = false) {
+export function useRead<T>(path: string, token: string | null, revision: number, pollMs = 0) {
     const [result, setResult] = useState<{path: string; revision: number; data?: T; error?: string}>();
     useEffect(() => {
         const abort = new AbortController();
@@ -42,14 +42,14 @@ export function useRead<T>(path: string, token: string | null, revision: number,
             } catch (error) {
                 if (!abort.signal.aborted) setResult({path, revision, error: error instanceof Error ? error.message : '客服服务暂时不可用'});
             }
-            if (poll && !abort.signal.aborted) schedule();
+            if (pollMs && !abort.signal.aborted) schedule();
         }
         function schedule() {
-            timer = setTimeout(() => { if (document.hidden) schedule(); else void load(); }, 10000);
+            timer = setTimeout(() => { if (document.hidden) schedule(); else void load(); }, pollMs);
         }
         void load();
         return () => {abort.abort(); clearTimeout(timer);};
-    }, [path, token, revision, poll]);
+    }, [path, token, revision, pollMs]);
     return result?.path === path && result.revision === revision ? result : undefined;
 }
 
