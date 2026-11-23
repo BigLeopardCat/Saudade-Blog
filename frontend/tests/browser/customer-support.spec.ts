@@ -7,7 +7,7 @@ test('switches the widget into support and returns to the existing chat', async 
     localStorage.setItem('saudade.locale', 'zh-CN')
     localStorage.setItem('tokenKey', 'h.' + btoa(JSON.stringify({sub:17,role:'user',exp:Date.now()/1000+600})) + '.s')
   })
-  await page.route('**/api/protected/support/cases**', async route => {
+  await page.route(new RegExp('/api/protected/support/cases(?:/|[?]|$)'), async route => {
     const request = route.request()
     const item = {id:65,ownerId:17,kind:'ticket',status:'waiting_staff',version:2,subject:'账号问题',updatedAt:'2026-11-23T09:00:00Z'}
     const data = request.method() === 'POST' ? item : new URL(request.url()).pathname.endsWith('/65') ?
