@@ -2,6 +2,35 @@ import {expect, test} from './sandbox'
 
 test.use({entry: 'support'})
 
+test('switches the widget into support and returns to the existing chat', async ({page, sandboxURL}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('saudade.locale', 'zh-CN')
+    localStorage.setItem('tokenKey', 'h.' + btoa(JSON.stringify({sub:17,role:'user',exp:Date.now()/1000+600})) + '.s')
+  })
+  await page.route('**/api/protected/support/cases**', async route => {
+    const request = route.request()
+    const item = {id:65,ownerId:17,kind:'ticket',status:'waiting_staff',version:2,subject:'账号问题',updatedAt:'2026-11-23T09:00:00Z'}
+    const data = request.method() === 'POST' ? item : new URL(request.url()).pathname.endsWith('/65') ?
+      {case:item,events:{items:[{id:2,sender:'assistant',action:'escalate',body:'已转人工。',createdAt:item.updatedAt}],nextBefore:null}} :
+      {items:[],nextBefore:null}
+    if (request.method() === 'POST') expect(request.postDataJSON()).toMatchObject({kind:'question',subject:'账号问题',body:'账号问题'})
+    await route.fulfill({json:{code:200,data}})
+  })
+  await page.goto(sandboxURL + '#widget')
+  await expect(page.getByText('原对话记录')).toBeVisible()
+  await page.getByRole('button',{name:'问题反馈'}).click()
+  const support = page.getByRole('region',{name:'泠月喵客服'})
+  await expect(support).toBeVisible()
+  await expect(page.getByText('原对话记录')).toBeHidden()
+  await support.getByRole('button',{name:'新建咨询或工单'}).click()
+  await support.getByLabel('问题描述').fill('账号问题')
+  await support.getByRole('button',{name:'提交',exact:true}).click()
+  await expect(support.getByText('已转人工。')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(support).toBeHidden()
+  await expect(page.getByText('原对话记录')).toBeVisible()
+})
+
 test('guest help and authenticated consultation survive a lost create response', async ({page, sandboxURL}) => {
   await page.addInitScript(() => {localStorage.setItem('saudade.locale','zh-CN')})
   const requests: string[] = []

@@ -64,6 +64,7 @@ export default function SupportMode() {
         </button>, rail)}
         {open && visible && createPortal(<section id="lingyue-support-mode" aria-label={t('泠月喵客服')}>
             <header><strong>{t('泠月喵客服')}</strong><Link to="/support">{t('客服中心')}</Link></header>
+            <p className="support-status">{t('需要时由站点客服接手，请勿发送密码或验证码。')}</p>
             {token ? <Desk key={token} token={token} staff={false} compact/> :
                 <p><Link to="/login?returnTo=support">{t('请先登录')}</Link></p>}
         </section>, outlet)}

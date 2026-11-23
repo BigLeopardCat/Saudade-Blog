@@ -33,6 +33,7 @@ export const english: Record<string, string> = {
     "返回对话": "Back to chat",
     "泠月喵客服": "Lingyue Support",
     "泠月喵正在查看；你也可以转人工。": "Lingyue is looking into this. You can also ask for staff.",
+    "需要时由站点客服接手，请勿发送密码或验证码。": "Site staff may follow up. Please keep passwords and verification codes private.",
     "未匹配到公开解答，已转人工跟进。": "No public answer matched. A staff member will follow up.",
     "回复内容": "Your reply",
     "发送回复": "Send reply",
