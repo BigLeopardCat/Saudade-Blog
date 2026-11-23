@@ -1,3 +1,6 @@
+BEGIN;
+SET LOCAL search_path TO public;
+
 CREATE TABLE IF NOT EXISTS support_case (
     id serial PRIMARY KEY,
     owner_id integer NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
@@ -57,3 +60,4 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION support_record_guidance(integer, text) FROM PUBLIC;
+COMMIT;
