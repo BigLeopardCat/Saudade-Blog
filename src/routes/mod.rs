@@ -26,6 +26,7 @@ mod page_links;
 pub mod graph;
 pub mod stats;
 pub mod profile;
+pub mod support;
 pub mod notice;
 pub mod todos;
 pub mod quota;
@@ -104,6 +105,7 @@ pub fn create_router(state: AppState) -> Router {
     let state_arc = std::sync::Arc::new(state);
 
     let public_routes = Router::new()
+        .merge(support::customer_routes())
         .route("/api/health/live", get(health::live))
         .route("/api/health/ready", get(health::ready))
         // Auth
@@ -259,6 +261,7 @@ pub fn create_router(state: AppState) -> Router {
         );
 
     let protected_routes = Router::new()
+        .merge(support::staff_routes())
         // Images
         .route("/api/protect/upload", upload::route())
         .route("/api/protect/image-generation/articles/{id}", get(image_generation::article_context))

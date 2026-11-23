@@ -1,0 +1,48 @@
+.support-center {
+    --support-paper: var(--washi-paper, #fffaf7);
+    --support-ink: var(--washi-ink, #403345);
+    --support-line: var(--washi-line, #d8c3cc);
+    --support-accent: var(--washi-pink-deep, #943867);
+    width: min(54rem, calc(100% - 2rem));
+    margin: clamp(3rem, 7vw, 6rem) auto;
+    color: var(--support-ink);
+    line-height: 1.6;
+}
+.support-center.support-admin { margin: 1.5rem auto; }
+.frontDark .support-center, .dark .support-center, .washiDark .support-center {
+    --support-paper: #292635; --support-ink: #f4e9ef; --support-line: #665968; --support-accent: #ffc2db;
+    color-scheme: dark;
+}
+.support-center h1 { font-size: clamp(1.8rem, 5vw, 2.65rem); margin: 0 0 1rem; }
+.support-panel {
+    padding: clamp(1.1rem, 3vw, 2rem); margin: 0 0 1.2rem;
+    background: var(--support-paper); border: 1px solid var(--support-line); border-radius: 1rem;
+    overflow-wrap: anywhere;
+}
+.support-panel h2 { margin: 0 0 1rem; font-size: 1.3rem; }
+.support-panel :is(button,input,textarea,select) {
+    font: inherit; color: inherit; background: var(--support-paper);
+    border: 1px solid var(--support-line); border-radius: .55rem; padding: .45rem .8rem;
+}
+.support-panel :is(input,textarea) { box-sizing: border-box; width: 100%; }
+.support-panel textarea { resize: vertical; }
+.support-panel :is(button,summary) { cursor: pointer; }
+.support-panel button:disabled { opacity: .55; cursor: default; }
+.support-panel :focus-visible { outline: 2px solid var(--support-accent); outline-offset: 2px; }
+.support-panel a { color: var(--support-accent); text-decoration: underline; }
+.support-panel .support-primary { background: var(--support-ink); color: var(--support-paper); }
+.support-actions { display: flex; flex-wrap: wrap; gap: .55rem; margin: .8rem 0; }
+.support-panel details { border-bottom: 1px solid var(--support-line); padding: .8rem 0; }
+.support-panel summary { font-weight: 600; }
+.support-form { display: grid; gap: .85rem; }
+.support-form label { display: grid; gap: .3rem; }
+.support-form > button { justify-self: start; }
+.support-list, .support-events { padding: 0; list-style: none; }
+.support-list li > button { display: grid; text-align: start; width: 100%; gap: .2rem; }
+.support-list li + li { margin-top: .55rem; }
+.support-list span, .support-events time { font-size: .88rem; }
+.support-events li { border-top: 1px solid var(--support-line); padding: .8rem 0; }
+.support-events time { display: inline-block; margin-inline-start: .5rem; }
+.support-events p { white-space: pre-wrap; margin: .4rem 0; }
+.support-guidance { border-inline-start: .2rem solid var(--support-accent); padding: .2rem 1rem; margin-block: 1rem; }
+.support-guidance p { margin: .35rem 0; }

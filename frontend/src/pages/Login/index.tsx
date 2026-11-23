@@ -17,6 +17,11 @@ import { useIsDarkMode, useAutoThemeSwitch } from '../../theme';
 
 type NoticeKind = 'register' | 'forgot' | null;
 
+function signedInDestination(token: string | null): string {
+    if (new URLSearchParams(window.location.search).get('returnTo') === 'support') return '/support';
+    return isAdminToken(token) ? '/dashboard' : '/';
+}
+
 const DARK_MODAL_THEME = {
     algorithm: antdTheme.darkAlgorithm,
     token: {
@@ -74,7 +79,7 @@ const Login: React.FC = () => {
     useEffect(() => {
         const token = getToken();
         if (token) {
-            navigate(isAdminToken(token) ? '/dashboard' : '/');
+            navigate(signedInDestination(token));
         }
     }, [navigate]);
 
@@ -124,7 +129,7 @@ const Login: React.FC = () => {
                 // 令牌此刻已写入 localStorage（store 的 setToken 顺便派发 auth-change，
                 // 头部据此把登录态从 0 翻到 1——头部是常驻组件，不重挂载，不靠刷新）
                 const token = getToken();
-                setTimeout(() => navigate(isAdminToken(token) ? '/dashboard' : '/'), 500);
+                setTimeout(() => navigate(signedInDestination(token)), 500);
             } else {
                 // result.message 的类型退化成 {}（store 的返回类型没写细），运行时是后端的中文串
                 messageApi.error(typeof result.message === 'string' && result.message

@@ -218,6 +218,13 @@ const Dashboard = () => {
             icon: 'icon-zhexiantu',
             to: 'analytics',
             active: false
+        },
+        {
+            index: 9,
+            name: '客服工作台',
+            icon: 'icon-pinglun2',
+            to: 'support',
+            active: false
         }
     ]
 

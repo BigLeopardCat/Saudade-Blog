@@ -4,6 +4,7 @@ import '../../utils/chatMarkdown';
 import '../../frontHome/Content/ReadArticle/zoomOverlay';
 import {loadAgent} from './loader';
 import {installWeatherContext, warmWeather} from './weather';
+import SupportMode from './SupportMode';
 
 const Live2dAgent: React.FC = () => {
   useReaderLayout();
@@ -12,7 +13,7 @@ const Live2dAgent: React.FC = () => {
     void loadAgent().then(() => warmWeather()).catch(error => console.error('[Live2dAgent]', error));
     return cleanup;
   }, []);
-  return null;
+  return <SupportMode/>;
 };
 Live2dAgent.displayName = 'Live2dAgent';
 export default Live2dAgent;
