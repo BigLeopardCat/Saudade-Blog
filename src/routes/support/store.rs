@@ -7,7 +7,7 @@ use sea_orm::{
 use serde::Serialize;
 
 const PAGE_SIZE: usize = 30;
-const FIELDS: &str = "id, owner_id, kind, subject, status, version, updated_at";
+const FIELDS: &str = "id, owner_id, kind, subject, status, assignee, version, updated_at";
 
 #[derive(FromQueryResult, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +17,7 @@ pub(super) struct Case {
     kind: String,
     subject: String,
     status: String,
+    assignee: String,
     version: i32,
     updated_at: DateTime<Utc>,
 }
@@ -67,7 +68,8 @@ pub(super) async fn list(
     w: Window,
 ) -> Result<Page<Case>> {
     let query = format!(
-        "SELECT {FIELDS} FROM support_case WHERE (owner_id=$1 OR $2)
+        "SELECT {FIELDS} FROM support_case WHERE
+        ((NOT $2 AND owner_id=$1) OR ($2 AND assignee='staff'))
         AND ($3::integer IS NULL OR id<$3) AND ($4::text IS NULL OR status=$4)
         ORDER BY id DESC LIMIT $5"
     );
@@ -285,11 +287,18 @@ pub(super) async fn change(
                 "waiting_staff"
             },
         ),
-        "escalate" if case.kind == "question" && case.status != "resolved" => {
+        "escalate" if case.assignee == "assistant" && case.status != "resolved" => {
             ("ticket", "waiting_staff")
         }
         "resolve" if case.status != "resolved" => (case.kind.as_str(), "resolved"),
-        "reopen" if case.status == "resolved" => (case.kind.as_str(), "waiting_staff"),
+        "reopen" if case.status == "resolved" => (
+            case.kind.as_str(),
+            if !desk.staff() && case.assignee == "assistant" {
+                "waiting_user"
+            } else {
+                "waiting_staff"
+            },
+        ),
         _ => {
             return Err(Failure(
                 axum::http::StatusCode::CONFLICT,
@@ -297,12 +306,17 @@ pub(super) async fn change(
             ))
         }
     };
+    let assignee = if desk.staff() || p.action == "escalate" {
+        "staff"
+    } else {
+        case.assignee.as_str()
+    };
     let next = Case::find_by_statement(sql(
         format!(
-            "UPDATE support_case SET kind=$2,status=$3,version=version+1,
+            "UPDATE support_case SET kind=$2,status=$3,assignee=$4,version=version+1,
         updated_at=clock_timestamp() WHERE id=$1 RETURNING {FIELDS}"
         ),
-        vec![id.into(), kind.into(), status.into()],
+        vec![id.into(), kind.into(), status.into(), assignee.into()],
     ))
     .one(&tx)
     .await?

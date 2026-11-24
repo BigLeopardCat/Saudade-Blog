@@ -15,18 +15,35 @@ from lunima import Context, Decision, Grant, Reconciliation, Runtime, Tool
 
 READ_FAQ = "support.read_public_help"
 FIND_ARTICLE = "support.find_public_article"
-HANDOFF = "喵，我已把这段对话转成工单。站点客服会在这里回复，你也可以继续补充。"
+HANDOFF = "喵，我已把这段对话交给站点客服。客服会在这里回复，你也可以继续补充。"
 SENSITIVE = re.compile(
-    r"密码|验证码|账号找回|找回账号|解封|权限|私钥|密钥|令牌|管理员|删除|封禁|退款|付款|支付|举报|"
-    r"\b(?:password|verification code|api[ _-]?key|private key|token|admin|permission|delete|refund|payment|moderation)\b",
+    r"(?:找回|重置|修改|忘记).{0,6}(?:密码|账号)|账号找回|密码忘了|验证码|"
+    r"(?:发送|提供|透露|泄露).{0,6}(?:密码|密钥|私钥|令牌)|"
+    r"(?:帮我|请你|替我).{0,6}(?:删除|修改|解封|封禁|退款|付款|举报)|"
+    r"(?:授予|开通|提升|撤销).{0,6}(?:权限|管理员)|"
+    r"\b(?:(?:reset|forgot|change)(?: my)? password|verification code|"
+    r"(?:send|reveal|leak)(?: my| the)? (?:api[ _-]?key|private key|token)|"
+    r"(?:grant|revoke|escalate)(?: my| the)? (?:permissions?|admin)|refund my)\b",
     re.I,
 )
 QUOTED = re.compile(r'[《「“"]([^》」”"\r\n]{2,60})[》」”"]')
+MARKDOWN_LINK = re.compile(r"!?\[([^\]\n]*)\]\([^\n)]*\)")
+COMMON_TERMS = frozenset(
+    "文章 博客 请问 帮忙 解释 介绍 有没有 是否 如何 为什么 怎么 什么 哪些 哪里 "
+    "可以 能够 需要 使用 通过 这个 那个 里面 其中 具体 作用 问题 内容 方法 一下 "
+    "article blog please which what where how why about from with this that".split()
+)
 GENERAL = {
     "find-article": "找文章或归档",
     "guestbook": "公开留言与私下反馈",
     "follow-ticket": "查看工单进度",
 }
+HELP_INTENTS = {
+    "find-article": re.compile(r"(?:怎么|怎样|如何|在哪).{0,6}(?:找文章|查文章|搜索文章|看归档)|归档在哪"),
+    "guestbook": re.compile(r"留言.{0,8}(?:公开|私密|所有人|别人.{0,3}看到)"),
+    "follow-ticket": re.compile(r"(?:哪里|在哪|怎么|怎样|如何).{0,6}(?:看工单|查工单|看回复)|工单.{0,2}(?:进度|在哪看)"),
+}
+ASK_FOR_STAFF = re.compile(r"转(?:接)?人工|(?:找|联系|需要|请)[一下]?人[工员]客服|\b(?:human agent|talk to staff)\b", re.I)
 TOOL_TIMEOUT = 2.5
 
 
@@ -90,28 +107,23 @@ class Support:
         if not turn:
             return human()
         previous, history = turn
-        if previous >= 3 or any(
-            SENSITIVE.search(message["body"]) for message in history if message["sender"] == "customer"
-        ):
-            return human()
         text = history[-1]["body"]
-        if QUOTED.search(text) and ("文章" in text or re.search(r"\barticle\b", text, re.I)):
-            return reply("", "search")
+        if SENSITIVE.search(text) or ASK_FOR_STAFF.search(text):
+            return human()
+        words = normalized(text)
         try:
             topics = await asyncio.to_thread(self.lookup, "/api/public/support/topics")
-            words = normalized(text)
-            exact = [t for t in topics if normalized(t["question"]) == words]
-            named = [t for t in topics if normalized(GENERAL.get(t["id"], "")) == words]
-            matching = [t for t in topics if sum(normalized(w) in words for w in t["keywords"]) >= 2]
-            hits = exact or named or matching
+            hits = [t for t in topics if words and (
+                words in {normalized(t["question"]), normalized(GENERAL.get(t["id"], ""))}
+                or (not QUOTED.search(text) and t["id"] in HELP_INTENTS and HELP_INTENTS[t["id"]].search(text))
+            )]
             if len(hits) == 1:
                 return reply("喵，" + hits[0]["answer"])
-            if previous == 0 and (len(hits) > 1 or len(words) < 9):
-                options = [GENERAL[t["id"]] for t in (hits or topics) if t["id"] in GENERAL]
-                return reply("喵，想确认一下，你问的是" + "、".join(options) + "，还是别的问题？", "clarify")
         except (OSError, ValueError, IndexError, KeyError, TypeError):
             logging.warning("public help unavailable")
-        return human()
+        if len(words) < 4 and previous == 0:
+            return reply("喵，可以补充一下你想找的文章、遇到问题的页面或具体表现吗？", "clarify")
+        return reply("", "search") if words else human()
 
     async def search(self, call):
         turn = await self.current_turn(call)
@@ -119,16 +131,37 @@ class Support:
             return human()
         text = turn[1][-1]["body"]
         found = QUOTED.search(text)
-        if not found or SENSITIVE.search(text):
+        if SENSITIVE.search(text):
             return human()
         try:
             data = await asyncio.to_thread(self.lookup, "/api/public/search",
-                data={"keyword": found[1], "type": "note", "page": 1, "pageSize": 5})
-            exact = [hit for hit in data["notes"] if normalized(hit["title"]) == normalized(found[1])]
+                data={"keyword": found[1] if found else text.strip()[:128],
+                      "type": "note", "page": 1, "pageSize": 4})
+            exact = [hit for hit in data["notes"]
+                     if normalized(hit["title"]) == normalized(found[1] if found else text)]
             if len(exact) == 1:
                 return reply("喵，找到公开文章《" + exact[0]["title"] + "》。可在博客顶部搜索这个标题查看。")
+            terms = {word for term in data["terms"] if len(word := normalized(term)) > 1
+                     and word not in COMMON_TERMS}
+            if len(terms) >= 2:
+                evidence = []
+                for hit in data["notes"][:4]:
+                    article = await asyncio.to_thread(self.lookup, f"/api/public/notes/{int(hit['key'])}")
+                    for paragraph in article["content"].splitlines():
+                        passage = MARKDOWN_LINK.sub(r"\1", paragraph).strip(" #>*-")
+                        if not 28 <= len(passage) <= 500 or passage.startswith(("|", "```", "<")):
+                            continue
+                        folded = normalized(passage)
+                        matches = {term for term in terms if term in folded}
+                        evidence.append((len(matches), max(map(len, matches), default=0), hit["title"], passage))
+                if evidence:
+                    score, _, title, passage = max(evidence, key=lambda item: item[:2])
+                    if score >= max(2, (len(terms) + 1) // 2):
+                        return reply(f"喵，公开文章《{title}》里有一段相关说明：\n\n{passage}\n\n可在博客顶部搜索文章标题查看原文。")
         except (OSError, ValueError, IndexError, KeyError, TypeError):
             logging.warning("public article search unavailable")
+        if turn[0] == 0 and len(normalized(text)) < 12:
+            return reply("喵，能再说说你想确认的具体问题吗？有文章标题或页面名称也可以一起发来。", "clarify")
         return human()
 
     async def publish(self, db, runtime, row):

@@ -9,9 +9,11 @@ const states: Record<Status, string> = {waiting_staff: '待客服回复', waitin
 const kinds: Record<CaseKind, string> = {question: '问题咨询', ticket: '工单'};
 const sender: Record<Entry['sender'], string> = {staff: '站点客服', customer: '用户', assistant: '泠月喵客服'};
 const actions: Record<Entry['action'], string> = {
-    open_question: '发起咨询', open_ticket: '提交工单', reply: '回复', escalate: '转为工单', resolve: '标记已解决', reopen: '重新打开',
+    open_question: '发起咨询', open_ticket: '提交工单', reply: '回复', escalate: '转人工', resolve: '标记已解决', reopen: '重新打开',
 };
 const date = (value: string, locale: string) => new Date(value).toLocaleString(locale);
+const stateLabel = (record: Ticket) => record.status === 'waiting_staff' && record.assignee === 'assistant'
+    ? '泠月喵正在处理' : states[record.status];
 
 function Knowledge() {
     const [filter, setFilter] = useState('');
@@ -66,7 +68,7 @@ function Thread({token, base, id, compact, back}: {token: string; base: string; 
     }
     return <section className="support-panel"><div className="support-actions"><button onClick={back}>{t('返回列表')}</button><button onClick={latest}>{t('刷新记录')}</button></div>
         {!result && <p role="status">{t('加载中')}</p>}{result?.error && <p role="alert">{t(result.error)}</p>}
-        {record && result?.data && <><h2>#{record.id} {record.subject}</h2><p>{t(kinds[record.kind])} · {t(states[record.status])}</p>
+        {record && result?.data && <><h2>#{record.id} {record.subject}</h2><p>{t(kinds[record.kind])} · {t(stateLabel(record))}</p>
             <div className="support-actions">{result.data.events.nextBefore && <button onClick={() => setBefore(result.data!.events.nextBefore)}>{t('更早的记录')}</button>}
                 {before && <button onClick={latest}>{t('返回最新记录')}</button>}</div>
             <ol className="support-events">{result.data.events.items.map(event => <li key={event.id}>
@@ -78,10 +80,8 @@ function Thread({token, base, id, compact, back}: {token: string; base: string; 
                     {result.data.guidance.topic.href !== '/support' && <Link to={result.data.guidance.topic.href}>{t('前往相关页面')}</Link>}</>
                     : <p>{t('未匹配到公开解答，已转人工跟进。')}</p>}
             </aside>}
-            {record.kind === 'question' && record.status === 'waiting_staff' && !before &&
-                <p className="support-status" role="status">{t('泠月喵正在查看；你也可以转人工。')}</p>}
             {!before && <><div className="support-actions">
-                {record.status !== 'resolved' && record.kind === 'question' && <button disabled={write.busy} onClick={() => void submit('escalate')}>{t(actions.escalate)}</button>}
+                {record.status !== 'resolved' && record.assignee === 'assistant' && <button disabled={write.busy} onClick={() => void submit('escalate')}>{t('转人工')}</button>}
                 <button disabled={write.busy} onClick={() => void submit(record.status === 'resolved' ? 'reopen' : 'resolve')}>{t(record.status === 'resolved' ? actions.reopen : actions.resolve)}</button>
             </div>{record.status !== 'resolved' && <form className="support-form" onSubmit={e => {e.preventDefault(); void submit('reply');}}>
                 <label>{t('回复内容')}<textarea required rows={3} maxLength={4000} value={reply} onChange={e => setReply(e.target.value)}/></label>
@@ -113,18 +113,18 @@ export function Desk({staff, token, compact = false}: {staff: boolean; token: st
         {!result && <p role="status">{t('加载中')}</p>}{result?.error && <p role="alert">{t(result.error)}</p>}
         {result?.data?.items.length === 0 && <p>{t('暂无记录')}</p>}
         <ul className="support-list">{result?.data?.items.map(row => <li key={row.id}><button onClick={() => select(row.id)}>
-            <strong>#{row.id} {row.subject}</strong><span>{t(kinds[row.kind])} · {t(states[row.status])} · {date(row.updatedAt, locale)}</span></button></li>)}</ul>
+            <strong>#{row.id} {row.subject}</strong><span>{t(kinds[row.kind])} · {t(stateLabel(row))} · {date(row.updatedAt, locale)}</span></button></li>)}</ul>
         <div className="support-actions">{before && <button onClick={() => setCursors(v => v.slice(0,-1))}>{t('上一页')}</button>}
             {result?.data?.nextBefore && <button onClick={() => setCursors(v => [...v, result.data!.nextBefore!])}>{t('下一页')}</button>}</div>
     </section>;
 }
 
-export default function Support({staff = false}: {staff?: boolean}) {
+export default function Support() {
     useLocale();
     const token = useAuthToken();
-    return <main className={'support-center' + (staff ? ' support-admin' : '')}><h1>{t(staff ? '客服工作台' : '客服中心')}</h1>
-        {!staff && <Knowledge/>}
-        {token ? <Desk key={token} token={token} staff={staff}/> : <section className="support-panel"><h2>{t('我的咨询与工单')}</h2>
+    return <main className="support-center"><h1>{t('客服中心')}</h1>
+        <Knowledge/>
+        {token ? <Desk key={token} token={token} staff={false}/> : <section className="support-panel"><h2>{t('我的咨询与工单')}</h2>
             <Link to="/login?returnTo=support">{t('请先登录')}</Link></section>}
     </main>;
 }

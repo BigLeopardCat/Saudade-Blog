@@ -9,7 +9,7 @@ test('switches the widget into support and returns to the existing chat', async 
   })
   await page.route(new RegExp('/api/protected/support/cases(?:/|[?]|$)'), async route => {
     const request = route.request()
-    const item = {id:65,ownerId:17,kind:'ticket',status:'waiting_staff',version:2,subject:'账号问题',updatedAt:'2026-11-23T09:00:00Z'}
+    const item = {id:65,ownerId:17,kind:'ticket',assignee:'staff',status:'waiting_staff',version:2,subject:'账号问题',updatedAt:'2026-11-23T09:00:00Z'}
     const data = request.method() === 'POST' ? item : new URL(request.url()).pathname.endsWith('/65') ?
       {case:item,events:{items:[{id:2,sender:'assistant',action:'escalate',body:'已转人工。',createdAt:item.updatedAt}],nextBefore:null}} :
       {items:[],nextBefore:null}
@@ -36,7 +36,7 @@ test('guest help and authenticated consultation survive a lost create response',
   const requests: string[] = []
   let promoted = false
   const item = () => ({id:32,ownerId:17,kind:promoted?'ticket':'question',version:promoted?2:1,
-    status:'waiting_staff',subject:'无法打开归档',updatedAt:'2026-11-23T08:00:00Z'})
+    assignee:promoted?'staff':'assistant',status:'waiting_staff',subject:'无法打开归档',updatedAt:'2026-11-23T08:00:00Z'})
   await page.route('**/api/**', route => {
     const req=route.request(), path=new URL(req.url()).pathname
     const ok=(data:unknown)=>route.fulfill({json:{code:200,data}})
@@ -75,7 +75,8 @@ test('guest help and authenticated consultation survive a lost create response',
   expect(requests).toHaveLength(2)
   expect(requests[0]).toBeTruthy()
   expect(requests[1]).toBe(requests[0])
-  await page.getByRole('button',{name:'转为工单'}).click()
+  await expect(page.getByText('问题咨询 · 泠月喵正在处理',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'转人工'}).click()
   await expect(page.getByText('工单 · 待客服回复',{exact:true})).toBeVisible()
   await page.evaluate(() => { localStorage.removeItem('tokenKey'); window.dispatchEvent(new Event('auth-change')) })
   await expect(page.getByRole('link',{name:'请先登录'})).toBeVisible()

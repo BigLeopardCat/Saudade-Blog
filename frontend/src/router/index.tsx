@@ -128,7 +128,7 @@ const router = createBrowserRouter([
             },
             {
                 path: 'support',
-                element: routePage(<Support staff />)
+                element: <Navigate to="/dashboard/users?tab=support" replace />
             },
             {
                 // 旧「留言管理」地址 → 用户管理页（评论管理 Tab 内）

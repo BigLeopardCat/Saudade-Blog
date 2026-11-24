@@ -6,7 +6,7 @@ import {runtimeBaseURL} from '../../utils/runtimeApi';
 export type CaseKind = 'question' | 'ticket';
 export type Status = 'waiting_staff' | 'waiting_user' | 'resolved';
 export type Action = 'reply' | 'escalate' | 'resolve' | 'reopen';
-export interface Ticket {id: number; ownerId: number; kind: CaseKind; subject: string; status: Status; version: number; updatedAt: string}
+export interface Ticket {id: number; ownerId: number; kind: CaseKind; subject: string; status: Status; assignee: 'assistant' | 'staff'; version: number; updatedAt: string}
 export interface Entry {id: number; sender: 'customer' | 'staff' | 'assistant'; action: Action | 'open_question' | 'open_ticket'; body: string; createdAt: string}
 export interface Page<T> {items: T[]; nextBefore: number | null}
 export interface Detail {case: Ticket; events: Page<Entry>; guidance?: {topic: Topic | null} | null}

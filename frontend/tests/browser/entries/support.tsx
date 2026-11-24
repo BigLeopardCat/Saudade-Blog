@@ -13,4 +13,4 @@ createRoot(document.getElementById('root')!).render(<MemoryRouter>{mode === '#wi
     <div data-chat-host-panel></div>
   </section>
   <SupportMode/>
-</> : <Support staff={mode === '#staff'}/>}</MemoryRouter>)
+</> : <Support/>}</MemoryRouter>)

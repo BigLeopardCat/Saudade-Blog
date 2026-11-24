@@ -1,13 +1,14 @@
 import {beforeAll, describe, expect, it, vi} from 'vitest';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {StyleProvider} from '@ant-design/cssinjs/lib/index.js';
+import {MemoryRouter} from 'react-router-dom';
 import Users from '../../src/pages/Dashboard/Users';
 const {post} = vi.hoisted(() => ({post: vi.fn()}));
 vi.mock('../../src/apis/axios.tsx', () => ({default: {post}}));
-vi.mock('react-router-dom', () => ({useSearchParams: () => [new URLSearchParams()]}));
 vi.mock('../../src/pages/Dashboard/BoardManage', () => ({default: () => <div>河灯审核面板</div>}));
 vi.mock('../../src/pages/Dashboard/CommentManage', () => ({default: () => <div>文章评论审核面板</div>}));
 vi.mock('../../src/pages/Dashboard/QuotaManage', () => ({default: () => <div>额度审批面板</div>}));
+vi.mock('../../src/pages/Support', () => ({Desk: () => <div>人工客服队列</div>}));
 vi.mock('../../src/utils/liveRefresh.ts', () => ({useLiveRefresh: () => undefined}));
 vi.mock('../../src/pages/Dashboard/Users/tempUsers.ts', () => ({
     useTempUsers: () => ({users: [
@@ -19,6 +20,9 @@ vi.mock('../../src/pages/Dashboard/Users/tempUsers.ts', () => ({
     refreshTempUsers: vi.fn(), invalidateTempUsers: vi.fn(),
 }));
 const token = (role: string, sub = 1) => `test.${btoa(JSON.stringify({role, sub, exp: Date.now()/1000 + 60}))}.signature`;
+const renderUsers = () => render(
+    <MemoryRouter><StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider></MemoryRouter>
+);
 beforeAll(() => {
     const computed = window.getComputedStyle.bind(window);
     window.getComputedStyle = element => computed(element);
@@ -30,7 +34,7 @@ describe('account credential controls', () => {
         localStorage.setItem('tokenKey', token('admin'));
         let resolve!: (value: unknown) => void;
         post.mockReturnValueOnce(new Promise(done => {resolve = done;}));
-        render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
+        renderUsers();
         const generate = screen.getByRole('button', {name: '生成恢复码'});
         fireEvent.click(generate);
         fireEvent.click(generate);
@@ -43,7 +47,7 @@ describe('account credential controls', () => {
     });
     it('hides forbidden actions, allows managed users, and revokes an already open password dialog', async () => {
         localStorage.setItem('tokenKey', token('admin'));
-        render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
+        renderUsers();
         expect(screen.getAllByRole('button', {name: '修改密码'})).toHaveLength(1);
         expect(screen.getAllByRole('button', {name: '生成恢复码'})).toHaveLength(1);
         fireEvent.click(screen.getByRole('button', {name: '修改密码'}));
@@ -55,13 +59,18 @@ describe('account credential controls', () => {
 });
 
 
-it('tab labels open their corresponding account, guestbook, comment, and quota panels', async () => {
+it('tab labels open their corresponding administration panels', async () => {
     localStorage.setItem('tokenKey', token('admin'));
-    render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
+    renderUsers();
     expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
-        '账号管理', '留言管理', '评论管理', '额度管理',
+        '账号管理', '留言管理', '评论管理', '额度管理', '工单处理',
     ]);
-    for (const [label, contents] of [['留言管理', '河灯审核面板'], ['评论管理', '文章评论审核面板'], ['额度管理', '额度审批面板']]) {
+    for (const [label, contents] of [
+        ['留言管理', '河灯审核面板'],
+        ['评论管理', '文章评论审核面板'],
+        ['额度管理', '额度审批面板'],
+        ['工单处理', '人工客服队列'],
+    ]) {
         const tab = screen.getByRole('tab', {name: label});
         fireEvent.click(tab);
         await waitFor(() => expect(tab.getAttribute('aria-selected')).toBe('true'));

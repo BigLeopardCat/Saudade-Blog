@@ -285,7 +285,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             flexDirection: 'column',
                             gap: '5px'
                         }}>
-                            <Link className="theme-btn" to="/support">{tr("客服中心")}</Link>
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={openUserCenter}>{tr("设置")}</div>

@@ -238,7 +238,44 @@ async fn consultation_escalation_staff_handoff_and_private_retries() {
     ticket["requestId"] = json!(Uuid::new_v4().to_string());
     let (_, direct) = call(&app, "POST", user_cases, Some(&owner), Some(ticket)).await;
     assert_eq!(direct["data"]["kind"], "ticket");
+    assert_eq!(direct["data"]["assignee"], "assistant");
     let direct_id = direct["data"]["id"].as_i64().unwrap() as i32;
+    let (_, staff_queue) = call(&app, "GET", staff_cases, Some(&staff), None).await;
+    assert!(staff_queue["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["id"] != direct_id));
+    let pending = || {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT event_id, version FROM public.support_pending_turn WHERE case_id=$1",
+            [direct_id.into()],
+        )
+    };
+    let source = db.query_one(pending()).await.unwrap().unwrap();
+    let publish = |event_id: i32, version: i32, handoff: bool| {
+        Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT public.support_publish_assistant($1,$2,$3,'公开解答',$4) AS accepted",
+            [
+                direct_id.into(),
+                event_id.into(),
+                version.into(),
+                handoff.into(),
+            ],
+        )
+    };
+    assert_eq!(source.try_get::<i32>("", "version").unwrap(), 1);
+    let source_id: i32 = source.try_get("", "event_id").unwrap();
+    for _ in 0..2 {
+        let receipt = db
+            .query_one(publish(source_id, 1, false))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(receipt.try_get::<bool>("", "accepted").unwrap());
+    }
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT public.support_record_guidance($1,'guestbook')",
@@ -255,6 +292,40 @@ async fn consultation_escalation_staff_handoff_and_private_retries() {
     )
     .await;
     assert_eq!(handled["data"]["guidance"], Value::Null);
+    assert_eq!(handled["data"]["case"]["kind"], "ticket");
+    assert_eq!(handled["data"]["case"]["status"], "waiting_user");
+    assert_eq!(handled["data"]["case"]["assignee"], "assistant");
+    let timeline = handled["data"]["events"]["items"].as_array().unwrap();
+    assert_eq!(timeline.len(), 2);
+    assert_eq!(timeline[1]["sender"], "assistant");
+    let direct_writes = format!("{user_cases}/{direct_id}/events");
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &direct_writes,
+            Some(&owner),
+            Some(action("reply", 2, "需要人工核实"))
+        )
+        .await
+        .0,
+        200
+    );
+    let updated = db.query_one(pending()).await.unwrap().unwrap();
+    let next_source: i32 = updated.try_get("", "event_id").unwrap();
+    let receipt = db
+        .query_one(publish(next_source, 3, true))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(receipt.try_get::<bool>("", "accepted").unwrap());
+    assert!(db.query_one(pending()).await.unwrap().is_none());
+    let (_, staff_queue) = call(&app, "GET", staff_cases, Some(&staff), None).await;
+    assert!(staff_queue["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == direct_id && item["assignee"] == "staff"));
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE \"user\" SET role='user' WHERE id=$1",
