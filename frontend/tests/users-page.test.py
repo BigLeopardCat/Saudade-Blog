@@ -1397,8 +1397,8 @@ with sync_playwright() as p:
     pg.wait_for_timeout(400)
     tabs = pg.evaluate("""() => [...document.querySelectorAll('.ant-tabs-tab')]
         .map((t) => t.textContent.replace(/\\s+/g, ''))""")
-    check("四个页签都在（账号管理 / 留言管理 / 评论管理 / 额度管理）",
-          tabs == ["账号管理", "留言管理", "评论管理", "额度管理"], str(tabs))
+    check("用户管理页签齐全",
+          tabs == ["账号管理", "留言管理", "评论管理", "额度管理", "工单处理"], str(tabs))
     check("`?tab=quota` 深链落在额度管理上",
           pg.evaluate("() => !!document.querySelector('.QuotaManage')"), str(tabs))
     _sel = pg.evaluate("() => document.querySelector('.qm-tabs .sel').textContent")
