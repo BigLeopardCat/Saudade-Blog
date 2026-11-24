@@ -46,6 +46,7 @@ LOAD = [
     "0039_rag_corpus.sql",
     "0040_customer_support.sql",
     "0041_lunima_support_turns.sql",
+    "0042_support_assistant_first.sql",
 ]
 
 EXCLUDED = {

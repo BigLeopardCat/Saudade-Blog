@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
 import CommentManage from '../CommentManage';
 import QuotaManage from '../QuotaManage';
+import { Desk as SupportDesk } from '../../Support';
 import http from "../../../apis/axios.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { invalidateTempUsers, refreshTempUsers, useTempUsers, type TempUser } from "./tempUsers.ts";
@@ -70,11 +71,9 @@ const quotaChip = (u: any): { text: string; level: QuotaLevel | null } => {
 const NO_USERS: TempUser[] = []
 
 const Users = () => {
-    const [searchParams] = useSearchParams()
-    const [tab, setTab] = useState(() => {
-        const t = searchParams.get('tab')
-        return t === 'review' || t === 'comment' || t === 'quota' ? t : 'accounts'
-    })
+    const [searchParams, setSearchParams] = useSearchParams()
+    const selectedTab = searchParams.get('tab')
+    const tab = selectedTab && ['review', 'comment', 'quota', 'support'].includes(selectedTab) ? selectedTab : 'accounts'
 
     const { users: cachedUsers, failed: usersFailed } = useTempUsers(tab === 'accounts')
     /** 给下面那几处渲染用的数组形态。`null`（还没成功读到过）不能塌成 `[]`——
@@ -767,11 +766,16 @@ const Users = () => {
             label: '额度管理',
             children: <QuotaManage />,
         },
+        {
+            key: 'support',
+            label: '工单处理',
+            children: tab === 'support' && authToken && <SupportDesk key={authToken} token={authToken} staff />,
+        },
     ];
 
     return (
         <div className="users-page">
-            <Tabs activeKey={tab} onChange={setTab} items={items} />
+            <Tabs activeKey={tab} onChange={key => setSearchParams({tab: key})} items={items} />
         </div>
     );
 };

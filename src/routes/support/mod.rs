@@ -165,12 +165,12 @@ const TOPICS: &[Topic] = &[
     },
     Topic {
         id: "guestbook", question: "留言和私下联系客服有什么区别？",
-        answer: "留言板用于公开交流。涉及账号或需要站方跟进的问题，请在客服中心提交私有咨询。", href: "/guestbook",
+        answer: "留言板用于公开交流。需要私下反馈时，用看板娘的「问题反馈」提交咨询。", href: "/guestbook",
         keywords: &["留言", "私下", "公开", "私密", "guestbook", "private", "public"],
     },
     Topic {
         id: "follow-ticket", question: "提交的问题在哪里看回复？",
-        answer: "用提交时的账号登录客服中心，从「我的咨询与工单」打开原记录。你可以继续补充，或把需要跟进的咨询转为工单。", href: "/support",
+        answer: "用提交时的账号登录，从「我的咨询与工单」打开原记录。你可以继续补充，也可以选择「转人工」。", href: "/support",
         keywords: &["工单", "进度", "看回复", "查询", "ticket", "status", "replies"],
     },
 ];

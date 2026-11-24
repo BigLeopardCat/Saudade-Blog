@@ -8,7 +8,6 @@
     color: var(--support-ink);
     line-height: 1.6;
 }
-.support-center.support-admin { margin: 1.5rem auto; }
 .frontDark .support-center, .dark .support-center, .washiDark .support-center {
     --support-paper: #292635; --support-ink: #f4e9ef; --support-line: #665968; --support-accent: #ffc2db;
     color-scheme: dark;
